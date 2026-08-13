@@ -6,14 +6,16 @@ export type QueryIntent =
   | 'localized_vendor' 
   | 'pricing_roi';
 
-export type AiEngine = 'Gemini' | 'ChatGPT' | 'Perplexity' | 'Claude' | 'SearchGPT';
+export type AiEngine = 'Gemini' | 'ChatGPT' | 'Perplexity' | 'Claude';
 
-export type RecommendationStatus = 
-  | 'recommended_leader' 
-  | 'secondary_mention' 
-  | 'omitted' 
-  | 'inaccurate_claim' 
-  | 'negative_sentiment';
+export type RecommendationStatus =
+  | 'recommended_leader'
+  | 'secondary_mention'
+  | 'omitted'
+  | 'inaccurate_claim'
+  | 'negative_sentiment'
+  /** The engine call failed; excluded from every metric rather than scored as absent. */
+  | 'retrieval_failed';
 
 export interface EngineResult {
   engine: AiEngine;
@@ -115,7 +117,8 @@ export interface AuditReport {
   geoVisibilityScore: number; // 0 - 100 Generative Engine Optimization Score
   shareOfVoice: number; // % of queries business appeared in
   leaderShare: number; // % of queries where business was #1 recommended
-  accuracyRate: number; // % of mentions that were accurate
+  /** % of mentions free of inaccuracies. null when the brand was never mentioned. */
+  accuracyRate: number | null;
   executiveSummary: string;
   queriesTested: AuditQuery[];
   inaccuracies: InaccuracyItem[];
@@ -125,6 +128,14 @@ export interface AuditReport {
   historicalScores?: { date: string; score: number; sov: number }[];
   /** Domains the answer engine cited, ranked by frequency. */
   citationSources?: CitationSource[];
+  /** Vendors the engines named that the client never asked us to track. */
+  untrackedRivals?: string[];
+  /** True when the audit could not collect evidence; metrics are not measurements. */
+  degraded?: boolean;
+  degradedReason?: string;
+  observationsAttempted?: number;
+  observationsWithEvidence?: number;
+  enginesRequested?: string[];
   /** Engines genuinely queried in this audit - never a claim about untested ones. */
   measuredEngines?: string[];
   /** Average prominence (0-100) of the brand across answers where it appeared. */

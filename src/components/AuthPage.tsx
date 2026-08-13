@@ -128,7 +128,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
               Audit Brand Visibility in AI Search Engines
             </h2>
             <p className="text-xs text-slate-300 leading-relaxed mb-6">
-              Monitor recommendations, detect inaccuracies, and optimize share of voice across Gemini, ChatGPT, Perplexity, Claude, and SearchGPT.
+              Monitor recommendations, detect inaccuracies, and optimize share of voice across Gemini, ChatGPT, Perplexity, and Claude.
             </p>
 
             {/* Feature Highlights */}

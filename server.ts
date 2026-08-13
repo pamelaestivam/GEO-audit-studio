@@ -9,14 +9,24 @@ import {
   buildBrandMatcher,
   buildCitationSourceMap,
   buildScorecards,
-  extractDomain,
+  dedupeMatchers,
+  findFirstMention,
   type QueryEvidence,
 } from './src/analysis';
+import {
+  askEngine,
+  configuredEngines,
+  dedupeCitations,
+  type EngineName,
+} from './src/providers';
 
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 
 /** Single source of truth for the audit model, so it can be swapped in one place. */
 const AUDIT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+
+/** Bounds audit cost and runtime; each query fans out across every engine. */
+const MAX_AUDIT_QUERIES = Number(process.env.MAX_AUDIT_QUERIES || 8);
 
 async function startServer() {
   const app = express();
@@ -77,120 +87,6 @@ async function startServer() {
     }
   }
 
-  // Helper: Fuzzy matching for Brand and Domain in grounding results
-  const isBrandOrDomainCited = (
-    businessName: string | undefined,
-    domain: string | undefined,
-    groundedText: string | undefined,
-    groundingChunks: any[] | undefined
-  ): boolean => {
-    if (!businessName && !domain) return false;
-
-    const textLower = (groundedText || '').toLowerCase();
-
-    // 1. Clean domain and extract domain root (e.g. "archeraviation.com" -> "archeraviation")
-    const rawDomain = (domain || '')
-      .toLowerCase()
-      .trim()
-      .replace(/^https?:\/\//, '')
-      .replace(/\/.*$/, '')
-      .replace(/^www\./, '');
-
-    const domainParts = rawDomain.split('.').filter((p) => p.length >= 2);
-    const domainRoot = domainParts[0] || rawDomain;
-
-    // Check if domain or domainRoot appears in groundedText or groundingChunks
-    let domainFound = false;
-
-    if (rawDomain && rawDomain.length >= 3 && textLower.includes(rawDomain)) {
-      domainFound = true;
-    }
-    if (!domainFound && domainRoot && domainRoot.length >= 3 && textLower.includes(domainRoot)) {
-      domainFound = true;
-    }
-
-    if (!domainFound && groundingChunks && Array.isArray(groundingChunks)) {
-      for (const chunk of groundingChunks) {
-        const uri = (chunk.web?.uri || '').toLowerCase();
-        const title = (chunk.web?.title || '').toLowerCase();
-
-        if (rawDomain && (uri.includes(rawDomain) || title.includes(rawDomain))) {
-          domainFound = true;
-          break;
-        }
-        if (domainRoot && domainRoot.length >= 3 && (uri.includes(domainRoot) || title.includes(domainRoot))) {
-          domainFound = true;
-          break;
-        }
-      }
-    }
-
-    if (domainFound) return true;
-
-    // 2. Clean brand name & sub-tokens (e.g. "Archer Aviation" -> "archer aviation", "archer")
-    const rawBrand = (businessName || '').toLowerCase().trim();
-    const stopWords = new Set([
-      'inc',
-      'llc',
-      'corp',
-      'corporation',
-      'ltd',
-      'company',
-      'the',
-      'and',
-      'app',
-      'io',
-      'com',
-      'ai',
-      'co',
-      'group',
-      'services',
-      'solutions',
-      'software',
-      'tech',
-      'technologies'
-    ]);
-
-    const brandWords = rawBrand
-      .replace(/[^a-z0-9\s]/g, '')
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !stopWords.has(w));
-
-    const primaryBrandWord = brandWords[0] || rawBrand;
-
-    let brandFound = false;
-
-    // Check if full brand name or primary brand word appears in grounded response text
-    if (rawBrand && textLower.includes(rawBrand)) {
-      brandFound = true;
-    } else if (primaryBrandWord && primaryBrandWord.length >= 3 && textLower.includes(primaryBrandWord)) {
-      brandFound = true;
-    }
-
-    // Check if brand or brand words appear in search snippet titles
-    if (!brandFound && groundingChunks && Array.isArray(groundingChunks)) {
-      for (const chunk of groundingChunks) {
-        const title = (chunk.web?.title || '').toLowerCase();
-        if (rawBrand && title.includes(rawBrand)) {
-          brandFound = true;
-          break;
-        }
-        if (primaryBrandWord && primaryBrandWord.length >= 3 && title.includes(primaryBrandWord)) {
-          brandFound = true;
-          break;
-        }
-        for (const bw of brandWords) {
-          if (bw.length >= 3 && title.includes(bw)) {
-            brandFound = true;
-            break;
-          }
-        }
-        if (brandFound) break;
-      }
-    }
-
-    return brandFound;
-  };
 
   // Health check API
   app.get('/api/health', (req, res) => {
@@ -432,7 +328,7 @@ Return a valid JSON object matching the requested schema.`;
 
       const prompt = `You are a Generative Engine Optimization (GEO) & AI Search auditor.
 Using live web search grounding, generate the 3 most relevant, real-world search queries that target customers actually use when searching for or evaluating "${businessName}" (Domain: ${domain || 'N/A'}, Industry: "${industry || 'B2B/Tech'}").
-Focus on high-intent real-world buyer queries that prospective customers ask AI search engines (like Perplexity, ChatGPT Search, Gemini, Claude, SearchGPT) regarding core offerings: "${coreOfferings || 'products & services'}".
+Focus on high-intent real-world buyer queries that prospective customers ask AI search engines (like Perplexity, ChatGPT Search, Gemini, Claude) regarding core offerings: "${coreOfferings || 'products & services'}".
 Main competitors include: ${Array.isArray(competitors) ? competitors.join(', ') : (competitors || 'industry leaders')}.
 
 Categorize each query under one of these intents:
@@ -488,203 +384,140 @@ Return a JSON array of exactly 3 query objects.`;
   });
 
   // POST: Evaluate search visibility across AI search engines for a single query (auto or manually added)
+  /**
+   * Append one manually-typed query to a live audit.
+   *
+   * Uses the same evidence-first pipeline as a full audit: every engine is
+   * genuinely queried, and the returned position is computed from the answer
+   * text rather than asserted by a model.
+   */
   app.post('/api/audit/evaluate-query', async (req, res) => {
     try {
-      const {
-        businessName,
-        domain,
-        industry,
-        coreOfferings,
-        targetAudience,
-        competitors,
-        queryText
-      } = req.body;
+      const { businessName, domain, competitors, queryText } = req.body;
 
       if (!businessName || !queryText) {
         return res.status(400).json({ error: 'businessName and queryText are required' });
       }
 
       const ai = getGeminiClient();
-      const queryId = `q-user-${Date.now()}`;
+      const engines = configuredEngines();
 
-      if (!ai) {
-        return res.json({
-          evaluatedQuery: {
-            id: queryId,
-            intent: 'feature_specific',
-            queryText,
-            targetPersona: 'Target Customer',
-            monthlySearchVolumeEstimate: '8,500/mo',
-            engines: {
-              Gemini: { engine: 'Gemini', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding unavailable.', citations: [] },
-              ChatGPT: { engine: 'ChatGPT', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding unavailable.', citations: [] },
-              Perplexity: { engine: 'Perplexity', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding unavailable.', citations: [] },
-              Claude: { engine: 'Claude', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding unavailable.', citations: [] },
-              SearchGPT: { engine: 'SearchGPT', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding unavailable.', citations: [] }
-            }
-          }
-        });
-      }
-
-      // Step 1: Execute real grounded search using Gemini with googleSearch enabled and threshold 0.0
-      let liveSourceUrls: string[] = [];
-      let groundedText = '';
-      let groundingChunks: any[] = [];
-
-      try {
-        const searchGrounded = await generateContentWithRetry(ai, {
-          model: AUDIT_MODEL,
-          contents: `Search Query: "${queryText}". Answer this user query as an AI Search Engine using live web search data. Indicate top recommended solutions and evaluate "${businessName}" (${domain || 'N/A'}) if relevant.`,
-          config: {
-            systemInstruction: 'You are a strict data auditing tool. Rely strictly on live web search grounding. Do not generate placeholders.',
-            tools: [{ googleSearch: {} }]
-          }
-        });
-
-        groundedText = searchGrounded.text || '';
-        const candidate = searchGrounded.candidates?.[0];
-        groundingChunks = candidate?.groundingMetadata?.groundingChunks || [];
-
-        // Debug Log Output for Grounding Metadata
-        console.log('=== GROUNDING METADATA DEBUG (evaluate-query) ===');
-        console.log(JSON.stringify(candidate?.groundingMetadata, null, 2));
-
-        const extractedUrls = groundingChunks
-          .map((c: any) => c.web?.uri)
-          .filter((uri: any): uri is string => typeof uri === 'string' && uri.length > 0);
-
-        liveSourceUrls = Array.from(new Set(extractedUrls));
-      } catch (searchErr) {
-        console.log('Single query grounding info: Fallback engaged');
-      }
-
-      // Fuzzy Brand & URL Matching
-      const isBrandCited = isBrandOrDomainCited(businessName, domain, groundedText, groundingChunks);
-
-      // Step 2: Evaluate 5 AI engine positions with live grounding context
-      const evaluatePrompt = `You are an expert AI Search & Generative Engine Optimization (GEO) Auditor.
-Evaluate how 5 AI Search Engines (Gemini, ChatGPT, Perplexity, Claude, SearchGPT) respond to this search query regarding "${businessName}" (Domain: ${domain || 'company.com'}):
-
-QUERY: "${queryText}"
-LIVE GROUNDED SEARCH RESPONSE:
-${groundedText}
-
-REAL GROUNDING SOURCE URLS FROM WEBPAGE CHUNKS:
-${JSON.stringify(liveSourceUrls)}
-
-IS BRAND CITED IN SEARCH GROUNDING: ${isBrandCited ? 'YES' : 'NO'}
-
-INSTRUCTIONS:
-Evaluate how each of the 5 AI Search engines responds:
-- status: "recommended_leader" (ranked #1), "secondary_mention" (ranked #2 or #3), "omitted" (left out), "inaccurate_claim", or "negative_sentiment".
-- position: 1, 2, 3, or null if omitted.
-- excerpt: Concise summary quote.
-- citations: Array of actual source URLs selected from REAL GROUNDING SOURCE URLS. If omitted, return [].
-- keyInaccuracy: (if status is inaccurate_claim) brief explanation.
-- keyOmissionReason: (if status is omitted) reason for omission.
-
-Return a JSON object matching the schema.`;
-
-      const engineResultSchema = {
-        type: Type.OBJECT,
-        properties: {
-          engine: { type: Type.STRING },
-          status: { type: Type.STRING },
-          position: { type: Type.INTEGER },
-          excerpt: { type: Type.STRING },
-          citations: { type: Type.ARRAY, items: { type: Type.STRING } },
-          keyInaccuracy: { type: Type.STRING },
-          keyOmissionReason: { type: Type.STRING }
-        },
-        required: ['engine', 'status', 'excerpt', 'citations']
+      const query = {
+        id: `q-manual-${Date.now()}`,
+        intent: 'feature_specific',
+        queryText: String(queryText).trim(),
+        targetPersona: 'Target Customer',
+        monthlySearchVolumeEstimate: 'n/a',
       };
 
-      const response = await generateContentWithRetry(ai, {
-        model: AUDIT_MODEL,
-        contents: evaluatePrompt,
-        config: {
-          systemInstruction: 'You are a strict data auditing tool. Do not generate fictional URLs or metrics. Use only provided live source URLs.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              intent: { type: Type.STRING },
-              targetPersona: { type: Type.STRING },
-              monthlySearchVolumeEstimate: { type: Type.STRING },
-              engines: {
-                type: Type.OBJECT,
-                properties: {
-                  Gemini: engineResultSchema,
-                  ChatGPT: engineResultSchema,
-                  Perplexity: engineResultSchema,
-                  Claude: engineResultSchema,
-                  SearchGPT: engineResultSchema
-                },
-                required: ['Gemini', 'ChatGPT', 'Perplexity', 'Claude', 'SearchGPT']
-              }
-            },
-            required: ['intent', 'targetPersona', 'monthlySearchVolumeEstimate', 'engines']
-          }
-        }
-      });
-
-      const parsed = parseJsonText(response.text);
-      if (parsed && parsed.engines) {
-        // Guarantee actual grounding URLs are attached if engine citations empty
-        Object.keys(parsed.engines).forEach((engKey) => {
-          const engObj = parsed.engines[engKey];
-          if (!engObj.citations || engObj.citations.length === 0) {
-            engObj.citations = isBrandCited ? liveSourceUrls : [];
-          }
-        });
-
-        return res.json({
-          evaluatedQuery: {
-            id: queryId,
-            intent: parsed.intent || 'feature_specific',
-            queryText,
-            targetPersona: parsed.targetPersona || 'Target Customer',
-            monthlySearchVolumeEstimate: parsed.monthlySearchVolumeEstimate || '10,000/mo',
-            engines: parsed.engines,
-            isBrandCited
-          }
+      if (!ai || engines.length === 0) {
+        return res.status(503).json({
+          error: 'No answer engine is configured, so this query cannot be measured.',
         });
       }
 
-      throw new Error('Failed to parse query evaluation response');
-    } catch (err: any) {
-      console.log('Single query evaluation info: Fallback engaged');
-      const { queryText } = req.body;
-      res.json({
-        evaluatedQuery: {
-          id: `q-user-${Date.now()}`,
-          intent: 'feature_specific',
-          queryText: queryText || 'Target Query',
-          targetPersona: 'Target Customer',
-          monthlySearchVolumeEstimate: '8,500/mo',
-          engines: {
-            Gemini: { engine: 'Gemini', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding returned no results.', citations: [] },
-            ChatGPT: { engine: 'ChatGPT', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding returned no results.', citations: [] },
-            Perplexity: { engine: 'Perplexity', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding returned no results.', citations: [] },
-            Claude: { engine: 'Claude', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding returned no results.', citations: [] },
-            SearchGPT: { engine: 'SearchGPT', status: 'omitted', position: null, excerpt: 'Insufficient Data - Live search grounding returned no results.', citations: [] }
-          }
+      const competitorList = (Array.isArray(competitors) ? competitors : [competitors])
+        .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
+        .map((c: string) => c.trim());
+
+      const evidence = await collectQueryEvidence(ai, query, engines);
+      const usable = evidence.filter((e) => !e.error && e.answerText.trim().length > 0);
+
+      if (usable.length === 0) {
+        const failures = Array.from(new Set(evidence.map((e) => e.error).filter(Boolean)));
+        return res.status(502).json({
+          error: `No engine returned an answer for this query. ${failures.slice(0, 2).join(' | ')}`,
+        });
+      }
+
+      const clientMatcher = buildBrandMatcher(businessName, domain);
+      const discovered = (await discoverVendors(ai, evidence)).filter(
+        (v) =>
+          v.toLowerCase() !== clientMatcher.label.toLowerCase() &&
+          !competitorList.some((c: string) => c.toLowerCase() === v.toLowerCase())
+      );
+
+      const allMatchers = dedupeMatchers([
+        clientMatcher,
+        ...competitorList.map((c: string) => buildBrandMatcher(c)),
+        ...discovered.map((d) => buildBrandMatcher(d)),
+      ]);
+
+      const engineResults: Record<string, any> = {};
+      let bestProminence = 0;
+      const aheadUnion = new Set<string>();
+
+      for (const ev of evidence) {
+        if (ev.error || !ev.answerText.trim()) {
+          engineResults[ev.engine] = {
+            engine: ev.engine,
+            status: 'retrieval_failed',
+            position: null,
+            excerpt: `No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}.`,
+            citations: [],
+          };
+          continue;
         }
-      });
+
+        const rows = analyseAnswer(ev, allMatchers);
+        const client = rows.find((r) => r.brand === clientMatcher.label);
+        const ahead = rows
+          .filter((r) => r.rank && (!client?.rank || r.rank < client.rank))
+          .sort((a, b) => (a.rank || 0) - (b.rank || 0))
+          .map((r) => r.brand);
+        ahead.forEach((b) => aheadUnion.add(b));
+        bestProminence = Math.max(bestProminence, client?.prominence ?? 0);
+
+        engineResults[ev.engine] = {
+          engine: ev.engine,
+          status: !client || !client.mentioned
+            ? 'omitted'
+            : client.rank === 1
+              ? 'recommended_leader'
+              : 'secondary_mention',
+          position: client?.rank ?? null,
+          excerpt:
+            client?.excerpt ||
+            `${businessName} was not named. Vendors named instead: ${ahead.join(', ') || 'none identified'}.`,
+          citations: ev.citations.map((c) => c.url),
+          keyOmissionReason:
+            !client?.mentioned && ahead.length > 0
+              ? `Answer surface taken by: ${ahead.slice(0, 5).join(', ')}`
+              : undefined,
+        };
+      }
+
+      const evaluatedQuery = {
+        ...query,
+        engines: engineResults,
+        evidence: evidence.map((ev) => ({
+          engine: ev.engine,
+          answerText: ev.answerText,
+          citations: ev.citations,
+          searchQueries: ev.searchQueries,
+          capturedAt: ev.capturedAt,
+          error: ev.error,
+        })),
+        competitorsAhead: Array.from(aheadUnion),
+        prominence: bestProminence,
+      };
+
+      res.json({ evaluatedQuery });
+    } catch (err: any) {
+      console.log(`evaluate-query failed: ${err?.message || err}`);
+      res.status(500).json({ error: err?.message || 'Failed to evaluate query' });
     }
   });
 
   // POST: Execute complete live AI Search Audit
   /**
    * Layer 1 - Evidence collection.
-   * Runs one grounded answer-engine query and captures exactly what came back:
-   * verbatim text, real source URLs, and the searches the engine actually ran.
+   * Queries one answer engine and captures exactly what came back: verbatim
+   * text, real publisher domains, and the searches the engine actually ran.
    */
-  async function collectQueryEvidence(
+  async function collectGeminiEvidence(
     aiInstance: any,
-    query: any,
-    businessName: string,
-    domain?: string
+    query: any
   ): Promise<QueryEvidence> {
     const base: QueryEvidence = {
       queryId: query.id,
@@ -693,7 +526,7 @@ Return a JSON object matching the schema.`;
       citations: [],
       searchQueries: [],
       capturedAt: new Date().toISOString(),
-      engine: 'Gemini (Google Search grounded)',
+      engine: 'Gemini',
     };
 
     try {
@@ -702,7 +535,7 @@ Return a JSON object matching the schema.`;
         contents: `${query.queryText}`,
         config: {
           systemInstruction:
-            'You are an AI search assistant answering a real user question. Use live web search. Recommend the specific vendors, products or providers that genuinely best answer the question, naming them explicitly. Do not mention that you are part of an audit.',
+            'You are an AI search assistant answering a real user question. Use live web search and recommend the specific vendors, products or providers that genuinely best answer the question, naming each one explicitly. Do not mention that you are part of an audit.',
           tools: [{ googleSearch: {} }],
         },
       });
@@ -711,23 +544,12 @@ Return a JSON object matching the schema.`;
       const metadata = candidate?.groundingMetadata;
       const chunks = metadata?.groundingChunks || [];
 
-      const seen = new Set<string>();
-      const citations = chunks
-        .map((chunk: any) => {
-          const url = chunk?.web?.uri || '';
-          const title = chunk?.web?.title || '';
-          // Grounding chunks expose the real publisher in `title` (often a bare
-          // domain) while `uri` is a vertexaisearch redirect, so prefer the title.
-          const domain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(title.trim())
-            ? title.trim().toLowerCase()
-            : extractDomain(url);
-          return { url, title, domain };
-        })
-        .filter((c: any) => {
-          if (!c.url || seen.has(c.url)) return false;
-          seen.add(c.url);
-          return true;
-        });
+      const citations = dedupeCitations(
+        chunks.map((chunk: any) => ({
+          url: chunk?.web?.uri || '',
+          title: chunk?.web?.title || '',
+        }))
+      );
 
       return {
         ...base,
@@ -736,29 +558,113 @@ Return a JSON object matching the schema.`;
         searchQueries: metadata?.webSearchQueries || [],
       };
     } catch (err: any) {
-      console.log(`Evidence collection failed for "${query.queryText}": ${err?.message || err}`);
+      console.log(`[Gemini] evidence failed for "${query.queryText}": ${err?.message || err}`);
       return { ...base, error: err?.message || 'grounded search failed' };
+    }
+  }
+
+  /** Collect evidence for one query across every configured engine. */
+  async function collectQueryEvidence(
+    aiInstance: any,
+    query: any,
+    engines: EngineName[]
+  ): Promise<QueryEvidence[]> {
+    const tasks = engines.map(async (engine): Promise<QueryEvidence> => {
+      if (engine === 'Gemini') return collectGeminiEvidence(aiInstance, query);
+
+      const answer = await askEngine(engine, query.queryText);
+      return {
+        queryId: query.id,
+        queryText: query.queryText,
+        answerText: answer.answerText,
+        citations: answer.citations,
+        searchQueries: answer.searchQueries,
+        capturedAt: new Date().toISOString(),
+        engine,
+        error: answer.error,
+      };
+    });
+
+    return Promise.all(tasks);
+  }
+
+  /**
+   * Layer 2a - Vendor discovery.
+   *
+   * Ranking a brand only against the competitors the user happened to type
+   * overstates its position: if the engine names four vendors and the user
+   * tracks one, the client can look like #2 while actually placing #5. So we
+   * read the vendors named in each answer, then DISCARD any that do not
+   * literally appear in the source text. The model is used to perceive names,
+   * never to judge - anything it invents is dropped before it can affect a metric.
+   */
+  async function discoverVendors(
+    aiInstance: any,
+    evidenceForQuery: QueryEvidence[]
+  ): Promise<string[]> {
+    const usable = evidenceForQuery.filter((e) => !e.error && e.answerText.trim().length > 0);
+    if (usable.length === 0) return [];
+
+    const combined = usable
+      .map((e) => `--- ${e.engine} answer ---\n${e.answerText.slice(0, 4000)}`)
+      .join('\n\n');
+
+    try {
+      const response = await generateContentWithRetry(aiInstance, {
+        model: AUDIT_MODEL,
+        contents: `List every company, product, vendor or service provider named as an option in the answers below. Return only proper names exactly as written. Exclude generic category words, publications, and review sites.\n\n${combined}`,
+        config: {
+          systemInstruction: 'You extract named entities verbatim. Never add names that are not present.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: { vendors: { type: Type.ARRAY, items: { type: Type.STRING } } },
+            required: ['vendors'],
+          },
+        },
+      });
+
+      const parsed = parseJsonText(response.text);
+      const candidates: string[] = Array.isArray(parsed?.vendors) ? parsed.vendors : [];
+
+      // Verification gate: keep only names that genuinely occur in the text.
+      const verified: string[] = [];
+      for (const name of candidates) {
+        const clean = String(name || '').trim();
+        if (clean.length < 2 || clean.length > 60) continue;
+        const matcher = buildBrandMatcher(clean);
+        const appears = usable.some((e) => findFirstMention(e.answerText, matcher) >= 0);
+        if (appears && !verified.some((v) => v.toLowerCase() === clean.toLowerCase())) {
+          verified.push(clean);
+        }
+      }
+      return verified;
+    } catch (err: any) {
+      console.log(`Vendor discovery failed: ${err?.message || err}`);
+      return [];
     }
   }
 
   /**
    * Layer 3 - Narrative interpretation.
-   * The model is given the captured evidence and the already-computed metrics.
-   * It is asked only for qualitative judgement, never for numbers.
+   * The model receives captured evidence and the already-computed metrics, and
+   * is asked only for qualitative judgement. It is never asked for a number.
    */
   async function generateNarrative(aiInstance: any, ctx: any) {
-    const evidenceDigest = ctx.evidenceList
-      .map((ev: QueryEvidence, i: number) => {
-        const row = ctx.perQuery[i].find((r: any) => r.brand === ctx.businessName);
+    const evidenceDigest = ctx.usableEvidence
+      .slice(0, 20)
+      .map((ev: QueryEvidence) => {
+        const rows = ctx.analysisByEvidence.get(ev);
+        const client = rows?.find((r: any) => r.brand === ctx.clientLabel);
+        const ahead = (rows || [])
+          .filter((r: any) => r.rank && (!client?.rank || r.rank < client.rank))
+          .map((r: any) => r.brand);
         return [
-          `QUERY ${i + 1}: "${ev.queryText}"`,
-          `Client mentioned: ${row?.mentioned ? `YES (named #${row.rank} of the brands listed)` : 'NO'}`,
-          `Brands named ahead of client: ${ctx.perQuery[i]
-            .filter((r: any) => r.rank && (!row?.rank || r.rank < row.rank))
-            .map((r: any) => r.brand)
-            .join(', ') || 'none'}`,
-          `Sources the engine cited: ${ev.citations.map((c) => c.domain).join(', ') || 'none'}`,
-          `Answer excerpt: ${(ev.answerText || '').slice(0, 1200)}`,
+          `[${ev.engine}] QUERY: "${ev.queryText}"`,
+          `Client named: ${client?.mentioned ? `YES (position ${client.rank} of ${(rows || []).filter((r: any) => r.rank).length} vendors named)` : 'NO'}`,
+          `Vendors named ahead of client: ${ahead.join(', ') || 'none'}`,
+          `Sources cited: ${ev.citations.map((c) => c.domain).join(', ') || 'none'}`,
+          `Answer excerpt: ${(ev.answerText || '').slice(0, 1000)}`,
         ].join('\n');
       })
       .join('\n\n---\n\n');
@@ -772,31 +678,33 @@ Return a JSON object matching the schema.`;
 
 Industry: ${ctx.industry}
 Core offerings: ${ctx.coreOfferings}
-Tracked competitors: ${ctx.competitorList.join(', ') || 'none supplied'}
+Competitors the client asked us to track: ${ctx.competitorList.join(', ') || 'none supplied'}
+Engines actually queried: ${ctx.measuredEngines.join(', ')}
 
-MEASURED RESULTS (already computed from captured evidence - do NOT recompute or contradict these):
-- Answer-engine visibility: cited in ${ctx.clientScore.timesMentioned} of ${ctx.totalQueries} queries (${ctx.clientScore.visibility}%)
-- Share of voice vs tracked competitors: ${ctx.clientScore.shareOfVoice}%
-- Named first in ${ctx.clientScore.timesFirst} of ${ctx.totalQueries} queries
-- Client's own domain appeared as a cited source ${ctx.clientScore.citedAsSourceCount} times
+MEASURED RESULTS (computed from captured evidence - do NOT recompute or contradict):
+- Cited in ${ctx.clientScore.timesMentioned} of ${ctx.totalObservations} engine answers (${ctx.clientScore.visibility}% visibility)
+- Share of voice against every vendor named by the engines: ${ctx.clientScore.shareOfVoice}%
+- Named first in ${ctx.clientScore.timesFirst} answers
+- Client's own domain cited as a source ${ctx.clientScore.citedAsSourceCount} times
 
-COMPETITOR SCORECARD:
-${ctx.scorecards.map((s: any) => `- ${s.brand}: mentioned in ${s.timesMentioned}/${ctx.totalQueries} queries, ${s.shareOfVoice}% share of voice, named first ${s.timesFirst}x`).join('\n')}
+VENDOR SCOREBOARD (all vendors the engines actually named):
+${ctx.scorecards.map((s: any) => `- ${s.brand}: named in ${s.timesMentioned}/${ctx.totalObservations} answers, ${s.shareOfVoice}% share of voice, first ${s.timesFirst}x`).join('\n')}
 
-SOURCES THE ANSWER ENGINE ACTUALLY RELIED ON:
+SOURCES THE ENGINES RELIED ON:
 ${topSources || 'none captured'}
 
 RAW EVIDENCE:
 ${evidenceDigest}
 
 Write the analysis. Rules:
-- Ground every statement in the evidence above. Never invent a statistic, a citation, or a competitor.
-- "inaccuracies": only list claims the engine made about ${ctx.businessName} that are wrong or misleading, quoting the claim verbatim from the evidence. If the evidence shows none, return an empty array. Never fabricate one to fill space.
-- "omissions": explain WHY the brand is absent where it is absent, tied to the specific source domains above (e.g. absent from the review aggregators and comparison pages the engine cites). Use category values from: "Schema & Entity Data", "Review & Directory Signals", "Comparison & Top 10 Coverage", "Reddit / Forum Sentiment", "Pricing & Feature Clarity".
-- "remediationPlan": 4-7 concrete tasks the client's marketing team can execute, each targeting a specific gap visible in the evidence. Prefer naming the exact source domains to go after. Include a realistic codeSnippet (valid JSON-LD) only where genuinely useful.
+- Ground every statement in the evidence above. Never invent a statistic, citation or competitor.
+- If competitors appear in the scoreboard that the client did not ask us to track, call that out explicitly - discovering an unexpected rival is a valuable finding.
+- "inaccuracies": only claims made about ${ctx.businessName} that are wrong or misleading, quoting the claim verbatim. Return an empty array if the evidence shows none. Never invent one to fill space.
+- "omissions": explain WHY the brand is absent where it is absent, tied to the specific source domains above. Categories: "Schema & Entity Data", "Review & Directory Signals", "Comparison & Top 10 Coverage", "Reddit / Forum Sentiment", "Pricing & Feature Clarity".
+- "remediationPlan": 4-7 concrete tasks, each targeting a gap visible in the evidence, naming the exact source domains to pursue. Include valid JSON-LD in codeSnippet only where genuinely useful.
   priority: "P0 Critical" | "P1 High" | "P2 Medium" | "P3 Maintenance"
   effort: "Quick Win (< 2h)" | "Moderate (1-2 days)" | "Strategic (1-2 weeks)"
-- "executiveSummary": 3-5 sentences a CMO can read. State the visibility position, who is winning the answer surface and why, and the single highest-leverage move.
+- "executiveSummary": 3-5 sentences a CMO can read: the visibility position, who owns the answer surface and why, and the highest-leverage move.
 
 Return valid JSON matching the schema.`;
 
@@ -816,6 +724,7 @@ Return valid JSON matching the schema.`;
               items: {
                 type: Type.OBJECT,
                 properties: {
+                  engine: { type: Type.STRING },
                   queryText: { type: Type.STRING },
                   claimedFact: { type: Type.STRING },
                   actualFact: { type: Type.STRING },
@@ -887,62 +796,108 @@ Return valid JSON matching the schema.`;
         .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
         .map((c: string) => c.trim());
 
-      const queryList =
+      const queryList = (
         Array.isArray(queries) && queries.length > 0
           ? queries
-          : getFallbackQueries(businessName, domain, industry, coreOfferings, competitorList);
+          : getFallbackQueries(businessName, domain, industry, coreOfferings, competitorList)
+      ).slice(0, MAX_AUDIT_QUERIES);
 
-      if (!ai) {
+      const engines = configuredEngines();
+
+      if (!ai || engines.length === 0) {
         return res.json({
-          report: generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitorList, queryList),
+          report: {
+            ...generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitorList, queryList),
+            degraded: true,
+            degradedReason: 'No answer engine is configured, so nothing could be measured. Add an engine API key and re-run.',
+          },
+          degraded: true,
         });
       }
 
-      // ---------- Layer 1: collect evidence ----------
-      const evidenceList: QueryEvidence[] = [];
+      // ---------- Layer 1: collect evidence across every configured engine ----------
+      const evidenceByQuery: QueryEvidence[][] = [];
       for (let i = 0; i < queryList.length; i++) {
         if (i > 0) await delay(1200);
-        evidenceList.push(await collectQueryEvidence(ai, queryList[i], businessName, domain));
+        evidenceByQuery.push(await collectQueryEvidence(ai, queryList[i], engines));
       }
 
-      const usable = evidenceList.filter((e) => !e.error && e.answerText.length > 0);
-      if (usable.length === 0) {
+      const allEvidence = evidenceByQuery.flat();
+      const usableEvidence = allEvidence.filter((e) => !e.error && e.answerText.trim().length > 0);
+
+      if (usableEvidence.length === 0) {
+        const failures = Array.from(new Set(allEvidence.map((e) => e.error).filter(Boolean)));
         const degraded = generateSynthesizedAudit(
           businessName, domain, industry, coreOfferings, competitorList, queryList
         );
         degraded.executiveSummary =
-          `Audit could not complete: live search grounding returned no answers for any of the ${queryList.length} queries. ` +
-          `This is an upstream retrieval failure, not a finding about ${businessName}. Re-run the audit; if it persists the grounding quota or API key needs attention.`;
-        return res.json({ report: degraded, degraded: true });
+          `Audit could not complete: every engine request failed, so no evidence was collected. ` +
+          `This is an upstream retrieval failure, not a finding about ${businessName}. ` +
+          `Errors: ${failures.slice(0, 3).join(' | ') || 'unknown'}`;
+        return res.json({
+          report: {
+            ...degraded,
+            degraded: true,
+            degradedReason: `Every engine request failed, so no evidence was collected. ${failures.slice(0, 2).join(' | ') || ''}`.trim(),
+          },
+          degraded: true,
+        });
       }
 
-      // ---------- Layer 2: deterministic analysis ----------
+      // ---------- Layer 2: deterministic analysis over successful evidence only ----------
       const clientMatcher = buildBrandMatcher(businessName, domain);
-      const competitorMatchers = competitorList.map((c: string) => buildBrandMatcher(c));
-      const allMatchers = [clientMatcher, ...competitorMatchers];
+      const clientLabel = clientMatcher.label;
 
-      const perQuery = evidenceList.map((ev) => analyseAnswer(ev, allMatchers));
-      const scorecards = buildScorecards(perQuery, allMatchers);
-      const citationSources = buildCitationSourceMap(evidenceList, clientMatcher);
+      // Discover the vendors each answer actually named, so ranking is against
+      // the real field rather than only the competitors the user typed.
+      const discovered: string[] = [];
+      for (const group of evidenceByQuery) {
+        const vendors = await discoverVendors(ai, group);
+        for (const v of vendors) {
+          const isClient = v.toLowerCase() === clientLabel.toLowerCase();
+          const alreadyTracked = competitorList.some((c: string) => c.toLowerCase() === v.toLowerCase());
+          const alreadyFound = discovered.some((d) => d.toLowerCase() === v.toLowerCase());
+          if (!isClient && !alreadyTracked && !alreadyFound) discovered.push(v);
+        }
+      }
+
+      const trackedMatchers = competitorList.map((c: string) => buildBrandMatcher(c));
+      const discoveredMatchers = discovered.map((d) => buildBrandMatcher(d));
+      // Collapse name variants ("Stripe" vs "Stripe, Inc.") so one company
+      // cannot occupy two ranks or double-count in share of voice.
+      const allMatchers = dedupeMatchers([clientMatcher, ...trackedMatchers, ...discoveredMatchers]);
+
+      const analysisByEvidence = new Map<QueryEvidence, ReturnType<typeof analyseAnswer>>();
+      const perObservation = usableEvidence.map((ev) => {
+        const rows = analyseAnswer(ev, allMatchers);
+        analysisByEvidence.set(ev, rows);
+        return rows;
+      });
+
+      const scorecards = buildScorecards(perObservation, allMatchers);
+      const citationSources = buildCitationSourceMap(usableEvidence, clientMatcher);
       const clientScore = scorecards[0];
-      const totalQueries = evidenceList.length;
+      const totalObservations = perObservation.length;
+      const measuredEngines = Array.from(new Set(usableEvidence.map((e) => e.engine)));
 
       // ---------- Layer 3: narrative ----------
       let narrative: any = null;
       try {
-        await delay(800);
+        await delay(600);
         narrative = await generateNarrative(ai, {
           businessName,
+          clientLabel,
           domain: domain || 'company.com',
           industry: industry || 'Technology',
           coreOfferings: coreOfferings || 'Products and services',
           competitorList,
-          evidenceList,
-          perQuery,
+          usableEvidence,
+          analysisByEvidence,
           scorecards,
           clientScore,
           citationSources,
-          totalQueries,
+          totalObservations,
+          measuredEngines,
         });
       } catch (narrativeErr: any) {
         console.log(`Narrative synthesis failed: ${narrativeErr?.message || narrativeErr}`);
@@ -950,56 +905,71 @@ Return valid JSON matching the schema.`;
 
       // ---------- Layer 4: assemble an honest report ----------
       const queriesTested = queryList.map((q: any, idx: number) => {
-        const ev = evidenceList[idx];
-        const row = perQuery[idx]?.find((r) => r.brand === businessName);
-        const aheadOf = perQuery[idx]
-          ?.filter((r) => r.rank && (!row?.rank || r.rank < row.rank))
-          .map((r) => r.brand) || [];
+        const group = evidenceByQuery[idx] || [];
+        const engineResults: Record<string, any> = {};
+        let bestProminence = 0;
+        const aheadUnion = new Set<string>();
 
-        const status = !row || !row.mentioned
-          ? 'omitted'
-          : row.rank === 1
-            ? 'recommended_leader'
-            : 'secondary_mention';
+        for (const ev of group) {
+          const rows = analysisByEvidence.get(ev);
 
-        const excerpt = row?.excerpt
-          || (ev?.error
-            ? `Retrieval error: ${ev.error}`
-            : `${businessName} was not named in this answer. Brands named instead: ${aheadOf.join(', ') || 'none identified'}.`);
+          if (!rows) {
+            engineResults[ev.engine] = {
+              engine: ev.engine,
+              status: 'retrieval_failed',
+              position: null,
+              excerpt: `No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}. This query was excluded from all metrics.`,
+              citations: [],
+            };
+            continue;
+          }
+
+          const client = rows.find((r) => r.brand === clientLabel);
+          const ahead = rows
+            .filter((r) => r.rank && (!client?.rank || r.rank < client.rank))
+            .sort((a, b) => (a.rank || 0) - (b.rank || 0))
+            .map((r) => r.brand);
+          ahead.forEach((b) => aheadUnion.add(b));
+          bestProminence = Math.max(bestProminence, client?.prominence ?? 0);
+
+          engineResults[ev.engine] = {
+            engine: ev.engine,
+            status: !client || !client.mentioned
+              ? 'omitted'
+              : client.rank === 1
+                ? 'recommended_leader'
+                : 'secondary_mention',
+            position: client?.rank ?? null,
+            excerpt:
+              client?.excerpt ||
+              `${businessName} was not named. Vendors named instead: ${ahead.join(', ') || 'none identified'}.`,
+            citations: ev.citations.map((c) => c.url),
+            keyOmissionReason:
+              !client?.mentioned && ahead.length > 0
+                ? `Answer surface taken by: ${ahead.slice(0, 5).join(', ')}`
+                : undefined,
+          };
+        }
 
         return {
           ...q,
-          engines: {
-            Gemini: {
-              engine: 'Gemini',
-              status,
-              position: row?.rank ?? null,
-              excerpt,
-              citations: ev?.citations.map((c) => c.url) || [],
-              keyOmissionReason:
-                status === 'omitted' && aheadOf.length > 0
-                  ? `Answer surface was taken by: ${aheadOf.join(', ')}`
-                  : undefined,
-            },
-          },
-          evidence: ev
-            ? {
-                answerText: ev.answerText,
-                citations: ev.citations,
-                searchQueries: ev.searchQueries,
-                capturedAt: ev.capturedAt,
-                engine: ev.engine,
-                error: ev.error,
-              }
-            : undefined,
-          competitorsAhead: aheadOf,
-          prominence: row?.prominence ?? 0,
+          engines: engineResults,
+          evidence: group.map((ev) => ({
+            engine: ev.engine,
+            answerText: ev.answerText,
+            citations: ev.citations,
+            searchQueries: ev.searchQueries,
+            capturedAt: ev.capturedAt,
+            error: ev.error,
+          })),
+          competitorsAhead: Array.from(aheadUnion),
+          prominence: bestProminence,
         };
       });
 
       const inaccuracies = (narrative?.inaccuracies || []).map((item: any, i: number) => ({
         id: `inacc-${i + 1}`,
-        engine: 'Gemini',
+        engine: measuredEngines.includes(item.engine) ? item.engine : measuredEngines[0],
         queryId: queryList.find((q: any) => q.queryText === item.queryText)?.id || queryList[0]?.id || `q-${i}`,
         queryText: item.queryText,
         claimedFact: item.claimedFact,
@@ -1008,10 +978,19 @@ Return valid JSON matching the schema.`;
         sourceOriginUrl: item.sourceOriginUrl,
       }));
 
+      // Accuracy is only meaningful where the brand was actually discussed.
       const mentionCount = clientScore.timesMentioned;
-      const accuracyRate = mentionCount > 0
-        ? Math.max(0, Math.round(((mentionCount - inaccuracies.length) / mentionCount) * 100))
-        : 0;
+      const accuracyRate =
+        mentionCount > 0
+          ? Math.max(0, Math.round(((mentionCount - inaccuracies.length) / mentionCount) * 100))
+          : null;
+
+      const untrackedRivals = scorecards
+        .filter((s) => discovered.some((d) => d.toLowerCase() === s.brand.toLowerCase()))
+        .filter((s) => s.timesMentioned > 0)
+        .sort((a, b) => b.shareOfVoice - a.shareOfVoice)
+        .slice(0, 8)
+        .map((s) => s.brand);
 
       const report = {
         id: `audit-${Date.now()}`,
@@ -1032,7 +1011,7 @@ Return valid JSON matching the schema.`;
 
         executiveSummary:
           narrative?.executiveSummary ||
-          `${businessName} was cited in ${clientScore.timesMentioned} of ${totalQueries} audited answer-engine queries (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against ${competitorList.length} tracked competitors.`,
+          `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.`,
 
         queriesTested,
         inaccuracies,
@@ -1040,7 +1019,7 @@ Return valid JSON matching the schema.`;
           id: `om-${i + 1}`,
           category: o.category,
           description: o.description,
-          affectedQueriesCount: o.affectedQueriesCount ?? totalQueries - clientScore.timesMentioned,
+          affectedQueriesCount: o.affectedQueriesCount ?? totalObservations - clientScore.timesMentioned,
           rootCause: o.rootCause,
           recommendation: o.recommendation,
         })),
@@ -1058,22 +1037,27 @@ Return valid JSON matching the schema.`;
           completed: false,
         })),
 
-        competitorBenchmarks: scorecards.map((s) => ({
-          name: s.brand === businessName ? `${s.brand} (Your Business)` : s.brand,
-          domain: s.domain || '',
-          shareOfVoice: s.shareOfVoice,
-          topRecommendedCount: s.timesFirst,
-          mainCitationSources: citationSources
-            .filter((src) => !src.isOwned)
-            .slice(0, 4)
-            .map((src) => src.domain),
-        })),
+        competitorBenchmarks: scorecards
+          .filter((s) => s.brand === clientLabel || s.timesMentioned > 0)
+          .map((s) => ({
+            name: s.brand === clientLabel ? `${s.brand} (Your Business)` : s.brand,
+            domain: s.domain || '',
+            shareOfVoice: s.shareOfVoice,
+            topRecommendedCount: s.timesFirst,
+            mainCitationSources: citationSources
+              .filter((src) => !src.isOwned)
+              .slice(0, 4)
+              .map((src) => src.domain),
+            discovered: discovered.some((d) => d.toLowerCase() === s.brand.toLowerCase()),
+          })),
 
-        // New evidence-first artefacts.
         citationSources,
-        measuredEngines: ['Gemini (Google Search grounded)'],
+        measuredEngines,
+        untrackedRivals,
         queriesAttempted: queryList.length,
-        queriesWithEvidence: usable.length,
+        observationsAttempted: allEvidence.length,
+        observationsWithEvidence: usableEvidence.length,
+        enginesRequested: engines,
       };
 
       res.json({ report });
@@ -1088,7 +1072,14 @@ Return valid JSON matching the schema.`;
         req.body?.queries
       );
       fallback.executiveSummary = `Audit failed to complete (${err?.message || 'unknown error'}). No findings were generated; these are placeholder values, not measurements.`;
-      res.json({ report: fallback, degraded: true });
+      res.json({
+        report: {
+          ...fallback,
+          degraded: true,
+          degradedReason: `The audit threw before completing: ${err?.message || 'unknown error'}`,
+        },
+        degraded: true,
+      });
     }
   });
 
@@ -1178,13 +1169,6 @@ function generateSynthesizedAudit(
           excerpt: 'Insufficient Data - Live search grounding returned no citation results.',
           citations: []
         },
-        SearchGPT: {
-          engine: 'SearchGPT',
-          status: 'omitted',
-          position: null,
-          excerpt: 'Insufficient Data - Live search grounding returned no citation results.',
-          citations: []
-        }
       }
     })),
     inaccuracies: [],

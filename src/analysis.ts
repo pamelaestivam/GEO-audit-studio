@@ -104,6 +104,30 @@ export function findFirstMention(text: string, matcher: BrandMatcher): number {
   return earliest;
 }
 
+/**
+ * Drop matchers that would double-count the same company.
+ *
+ * Vendor discovery returns names as written, so "Stripe" and "Stripe, Inc."
+ * can both arrive. Left alone, each would score its own mention of the same
+ * sentence, inflating the share-of-voice denominator and letting one company
+ * occupy two ranks. Earlier matchers win, so the client (always first) and the
+ * competitors the user explicitly tracked survive over discovered variants.
+ */
+export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
+  const kept: BrandMatcher[] = [];
+  for (const candidate of matchers) {
+    if (!candidate.label) continue;
+    const overlaps = kept.some(
+      (existing) =>
+        findFirstMention(candidate.label, existing) >= 0 ||
+        findFirstMention(existing.label, candidate) >= 0 ||
+        (!!existing.domain && existing.domain === candidate.domain)
+    );
+    if (!overlaps) kept.push(candidate);
+  }
+  return kept;
+}
+
 /** True when the brand's own domain appears among the cited sources. */
 export function isCitedAsSource(citations: QueryEvidence['citations'], matcher: BrandMatcher): boolean {
   if (!matcher.domain) return false;

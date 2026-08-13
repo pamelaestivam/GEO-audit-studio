@@ -154,7 +154,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
     const validCompetitors = competitors.map((c) => c.trim()).filter(Boolean);
 
     try {
-      setAuditProgressMessage('Simulating AI Search queries across Gemini, ChatGPT, Perplexity, Claude & SearchGPT...');
+      setAuditProgressMessage('Simulating AI Search queries across Gemini, ChatGPT, Perplexity & Claude...');
       
       const response = await fetch('/api/audit/run', {
         method: 'POST',
@@ -437,7 +437,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
               </div>
               <div className="flex items-center gap-2 text-indigo-400 font-medium">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                <span>Simulating Perplexity, ChatGPT, Gemini, Claude & SearchGPT</span>
+                <span>Simulating Perplexity, ChatGPT, Gemini & Claude</span>
               </div>
               <div className="flex items-center gap-2 text-slate-500">
                 <span className="w-3.5 h-3.5 rounded-full border border-slate-600 inline-block" />
