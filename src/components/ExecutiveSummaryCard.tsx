@@ -49,16 +49,18 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-2xl font-bold text-white tracking-tight">{audit.businessName}</h2>
-            <a
-              href={`https://${audit.domain}`}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 transition"
-            >
-              <Globe className="h-3 w-3" />
-              <span>{audit.domain}</span>
-              <ExternalLink className="h-2.5 w-2.5 opacity-70" />
-            </a>
+            {audit.domain && (
+              <a
+                href={`https://${audit.domain}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium bg-indigo-500/10 px-2.5 py-1 rounded-md border border-indigo-500/20 transition"
+              >
+                <Globe className="h-3 w-3" />
+                <span>{audit.domain}</span>
+                <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+              </a>
+            )}
             <span className="inline-flex items-center gap-1 text-xs text-slate-300 bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700/60">
               <Building2 className="h-3 w-3 text-slate-400" />
               <span>{audit.industry}</span>
@@ -103,6 +105,38 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
           </div>
         </div>
       </div>
+
+      {/*
+        Competitors are optional input, so the audit discovers who actually
+        occupies the answer surface. Surfacing rivals the user never listed is
+        the finding they cannot get anywhere else.
+      */}
+      {(audit.untrackedRivals || []).length > 0 && (
+        <div className="mt-5 bg-blue-500/10 border border-blue-500/25 rounded-xl p-4">
+          <div className="flex items-start gap-2.5">
+            <TrendingUp className="h-4 w-4 text-blue-300 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-blue-100">
+                Rivals the engines named that you did not list
+              </div>
+              <p className="text-xs text-blue-200/80 mt-1 leading-relaxed">
+                These brands appeared in answers to your buyer queries. They are competing for the
+                same recommendation whether or not you were tracking them.
+              </p>
+              <div className="flex flex-wrap gap-1.5 mt-2.5">
+                {(audit.untrackedRivals || []).map((rival) => (
+                  <span
+                    key={rival}
+                    className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-200 border border-blue-500/30"
+                  >
+                    {rival}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Key Metric Indicators */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-6 pb-6 border-b border-slate-800">

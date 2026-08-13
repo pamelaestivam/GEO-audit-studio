@@ -11,6 +11,7 @@ import {
   buildScorecards,
   dedupeMatchers,
   findFirstMention,
+  normaliseDomain,
   type QueryEvidence,
 } from './src/analysis';
 import { describeProviderError, parseRetryDelaySeconds, summariseFailures } from './src/errors';
@@ -255,6 +256,9 @@ Use live web search to identify real current details:
 
 Return a valid JSON object matching the requested schema.`;
 
+          // No retries: this runs while the user waits on the form, and a
+          // quota back-off here is what surfaced as "Brand lookup could not be
+          // reached". Failing fast keeps their typed values and moves on.
           const response = await generateContentWithRetry(ai, {
             model: AUDIT_MODEL,
             contents: prompt,
@@ -275,7 +279,7 @@ Return a valid JSON object matching the requested schema.`;
                 required: ['businessName', 'domain', 'industry', 'coreOfferings', 'targetAudience', 'competitors']
               }
             }
-          });
+          }, 0);
 
           details = parseJsonText(response.text);
         } catch (genErr) {
@@ -345,24 +349,23 @@ Return a valid JSON object matching the requested schema.`;
   };
 
   // POST: Generate viewer-intent query matrix for a business (3 top real-world queries)
-  app.post('/api/audit/generate-queries', async (req, res) => {
-    try {
-      const { businessName, domain, industry, coreOfferings, competitors } = req.body;
+  /**
+   * Build the query matrix for a business. Shared by the endpoint and by the
+   * audit job, so a browser never has to hold a request open for it.
+   */
+  async function generateAuditQueries(
+    aiInstance: any,
+    opts: { businessName: string; domain?: string; industry?: string; coreOfferings?: string; competitors?: any }
+  ): Promise<any[]> {
+    const { businessName, domain, industry, coreOfferings, competitors } = opts;
+    const competitorText = Array.isArray(competitors) && competitors.length > 0
+      ? competitors.join(', ')
+      : 'none supplied - infer the real competitors from live search';
 
-      if (!businessName) {
-        return res.status(400).json({ error: 'businessName is required' });
-      }
-
-      const ai = getGeminiClient();
-
-      if (!ai) {
-        return res.json({ queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors) });
-      }
-
-      const prompt = `You are a Generative Engine Optimization (GEO) & AI Search auditor.
-Using live web search grounding, generate the 3 most relevant, real-world search queries that target customers actually use when searching for or evaluating "${businessName}" (Domain: ${domain || 'N/A'}, Industry: "${industry || 'B2B/Tech'}").
-Focus on high-intent real-world buyer queries that prospective customers ask AI search engines (like Perplexity, ChatGPT Search, Gemini, Claude) regarding core offerings: "${coreOfferings || 'products & services'}".
-Main competitors include: ${Array.isArray(competitors) ? competitors.join(', ') : (competitors || 'industry leaders')}.
+    const prompt = `You are a Generative Engine Optimization (GEO) & AI Search auditor.
+Using live web search grounding, generate the 3 most relevant, real-world search queries that target customers actually use when searching for or evaluating "${businessName}"${domain ? ` (Domain: ${domain})` : ''}${industry ? `, which operates in: "${industry}"` : ''}.
+Write the queries the way a real buyer would type them into an AI assistant. If the business is local or physical, include the kind of location-aware phrasing buyers actually use.
+Competitors: ${competitorText}.
 
 Categorize each query under one of these intents:
 - commercial_comparison
@@ -374,44 +377,61 @@ Categorize each query under one of these intents:
 
 Return a JSON array of exactly 3 query objects.`;
 
-      let queries = null;
-      try {
-        const response = await generateContentWithRetry(ai, {
-          model: AUDIT_MODEL,
-          contents: prompt,
-          config: {
-            systemInstruction: 'You are a strict data auditing tool. Do not generate fictional or inferred metrics. If live data or search citations are unavailable for a query, explicitly return null/empty arrays instead of generating placeholders.',
-            tools: [{ googleSearch: {} }],
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING, description: 'Unique query id, e.g. q-1' },
-                  intent: { type: Type.STRING, description: 'One of the allowed query intent strings' },
-                  queryText: { type: Type.STRING, description: 'Exact search query string' },
-                  targetPersona: { type: Type.STRING, description: 'Target user persona asking this query' }
-                },
-                required: ['id', 'intent', 'queryText', 'targetPersona']
-              }
+    try {
+      const response = await generateContentWithRetry(aiInstance, {
+        model: AUDIT_MODEL,
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'You produce realistic buyer search queries. Never invent metrics or statistics.',
+          tools: [{ googleSearch: {} }],
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING, description: 'Unique query id, e.g. q-1' },
+                intent: { type: Type.STRING, description: 'One of the allowed query intent strings' },
+                queryText: { type: Type.STRING, description: 'Exact search query string' },
+                targetPersona: { type: Type.STRING, description: 'Target user persona asking this query' }
+              },
+              required: ['id', 'intent', 'queryText', 'targetPersona']
             }
           }
-        });
-        queries = parseJsonText(response.text);
-      } catch (genErr: any) {
-        // Query generation fallback engaged cleanly
-      }
+        }
+      });
+      const parsed = parseJsonText(response.text);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed.slice(0, 3);
+    } catch (genErr: any) {
+      console.log(`Query generation failed: ${describeProviderError(genErr, 'Gemini').message}`);
+    }
 
-      if (!queries || !Array.isArray(queries) || queries.length === 0) {
-        queries = getFallbackQueries(businessName, domain, industry, coreOfferings, competitors);
-      } else if (queries.length > 3) {
-        queries = queries.slice(0, 3);
-      }
+    return getFallbackQueries(businessName, domain, industry, coreOfferings, competitors);
+  }
 
+  app.post('/api/audit/generate-queries', async (req, res) => {
+    try {
+      const { businessName, domain, industry, coreOfferings, competitors } = req.body;
+      if (!businessName) {
+        return res.status(400).json({ error: 'A business or brand name is required.' });
+      }
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.json({ queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors) });
+      }
+      const queries = await generateAuditQueries(ai, { businessName, domain, industry, coreOfferings, competitors });
       res.json({ queries });
     } catch (err: any) {
-      res.json({ queries: getFallbackQueries(req.body?.businessName || 'Business', req.body?.domain, req.body?.industry, req.body?.coreOfferings, req.body?.competitors) });
+      res.json({
+        queries: getFallbackQueries(
+          req.body?.businessName || 'Business',
+          req.body?.domain,
+          req.body?.industry,
+          req.body?.coreOfferings,
+          req.body?.competitors
+        ),
+      });
     }
   });
 
@@ -818,7 +838,15 @@ Return valid JSON matching the schema.`;
     return parseJsonText(response.text);
   }
 
-  app.post('/api/audit/run', async (req, res) => {
+  /**
+   * Run a full audit and return the response payload.
+   *
+   * Deliberately separated from the HTTP handler: an audit can take minutes
+   * once engine pacing and quota back-off are involved, and a browser (mobile
+   * Safari especially) aborts a request that long. The endpoint starts this as
+   * a background job and the client polls for the result.
+   */
+  async function performAudit(req: { body: any }): Promise<any> {
     try {
       const {
         businessName,
@@ -831,19 +859,30 @@ Return valid JSON matching the schema.`;
       } = req.body;
 
       if (!businessName) {
-        return res.status(400).json({ error: 'businessName is required' });
+        return { error: 'businessName is required', badRequest: true };
       }
 
       const ai = getGeminiClient();
+      // Users paste full URLs into the domain field; store the bare host so
+      // links render correctly and source matching compares like with like.
+      const cleanDomain = normaliseDomain(domain || '');
       const competitorList = (Array.isArray(competitors) ? competitors : [competitors])
         .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
         .map((c: string) => c.trim());
 
-      const queryList = (
-        Array.isArray(queries) && queries.length > 0
-          ? queries
-          : getFallbackQueries(businessName, domain, industry, coreOfferings, competitorList)
-      ).slice(0, MAX_AUDIT_QUERIES);
+      const suppliedQueries = Array.isArray(queries) ? queries.filter((q: any) => q?.queryText) : [];
+      let generatedQueries: any[] = [];
+
+      // Generating the query matrix used to be a separate request the browser
+      // held open. It now happens inside the job, so nothing slow sits in the
+      // request path where a phone can abort it.
+      if (suppliedQueries.length === 0) {
+        generatedQueries = ai
+          ? await generateAuditQueries(ai, { businessName, domain: cleanDomain, industry, coreOfferings, competitors: competitorList })
+          : getFallbackQueries(businessName, cleanDomain, industry, coreOfferings, competitorList);
+      }
+
+      const queryList = [...generatedQueries, ...suppliedQueries].slice(0, MAX_AUDIT_QUERIES);
 
       const engines = configuredEngines();
 
@@ -852,14 +891,14 @@ Return valid JSON matching the schema.`;
         const reason = !ai && others.length
           ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured. Nothing was measured.`
           : 'No answer engine is configured, so nothing could be measured. Add an engine API key and re-run.';
-        return res.json({
+        return {
           report: {
-            ...generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitorList, queryList),
+            ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList),
             degraded: true,
             degradedReason: reason,
           },
           degraded: true,
-        });
+        };
       }
 
       // ---------- Layer 1: collect evidence across every configured engine ----------
@@ -876,22 +915,22 @@ Return valid JSON matching the schema.`;
         const failures = allEvidence.map((e) => e.error).filter(Boolean);
         const readable = summariseFailures(failures, 'The answer engine');
         const degraded = generateSynthesizedAudit(
-          businessName, domain, industry, coreOfferings, competitorList, queryList
+          businessName, cleanDomain, industry, coreOfferings, competitorList, queryList
         );
         degraded.executiveSummary =
           `Audit could not complete: ${readable.message} No evidence was collected, so nothing below is a finding about ${businessName}.`;
-        return res.json({
+        return {
           report: {
             ...degraded,
             degraded: true,
             degradedReason: readable.message,
           },
           degraded: true,
-        });
+        };
       }
 
       // ---------- Layer 2: deterministic analysis over successful evidence only ----------
-      const clientMatcher = buildBrandMatcher(businessName, domain);
+      const clientMatcher = buildBrandMatcher(businessName, cleanDomain);
       const clientLabel = clientMatcher.label;
 
       // Discover the vendors each answer actually named, so ranking is against
@@ -930,9 +969,9 @@ Return valid JSON matching the schema.`;
         narrative = await generateNarrative(ai, {
           businessName,
           clientLabel,
-          domain: domain || 'company.com',
-          industry: industry || 'Technology',
-          coreOfferings: coreOfferings || 'Products and services',
+          domain: cleanDomain,
+          industry: industry || 'not specified',
+          coreOfferings: coreOfferings || 'not specified',
           competitorList,
           usableEvidence,
           analysisByEvidence,
@@ -1039,8 +1078,8 @@ Return valid JSON matching the schema.`;
         id: `audit-${Date.now()}`,
         createdAt: new Date().toISOString(),
         businessName,
-        domain: domain || 'company.com',
-        industry: industry || 'Technology',
+        domain: cleanDomain,
+        industry: industry || '',
         coreOfferings: coreOfferings || 'Products and services',
         targetAudience: targetAudience || 'Buyers and decision makers',
         competitors: competitorList,
@@ -1103,28 +1142,116 @@ Return valid JSON matching the schema.`;
         enginesRequested: engines,
       };
 
-      res.json({ report });
+      return { report };
     } catch (err: any) {
       console.log(`Audit run failed: ${err?.message || err}`);
+      const readableFailure = describeProviderError(err, 'The audit service');
       const fallback = generateSynthesizedAudit(
         req.body?.businessName || 'Business',
-        req.body?.domain,
+        normaliseDomain(req.body?.domain || ''),
         req.body?.industry,
         req.body?.coreOfferings,
         req.body?.competitors,
         req.body?.queries
       );
-      const readableFailure = describeProviderError(err, 'The audit service');
       fallback.executiveSummary = `Audit failed to complete: ${readableFailure.message} No findings were generated; these are placeholder values, not measurements.`;
-      res.json({
-        report: {
-          ...fallback,
-          degraded: true,
-          degradedReason: readableFailure.message,
-        },
+      return {
+        report: { ...fallback, degraded: true, degradedReason: readableFailure.message },
         degraded: true,
+      };
+    }
+  }
+
+  /** In-memory audit jobs. Lost on restart; see TECH_DEBT.md for persistence. */
+  interface AuditJob {
+    id: string;
+    status: 'running' | 'done' | 'error';
+    startedAt: number;
+    result?: any;
+    error?: string;
+  }
+  const auditJobs = new Map<string, AuditJob>();
+  const JOB_TTL_MS = 30 * 60 * 1000;
+
+  function pruneJobs() {
+    const now = Date.now();
+    for (const [id, job] of auditJobs) {
+      if (now - job.startedAt > JOB_TTL_MS) auditJobs.delete(id);
+    }
+  }
+
+  /** Bounds on user input, so one request cannot exhaust quota or memory. */
+  const MAX_NAME_LENGTH = 120;
+  const MAX_COMPETITORS = 20;
+
+  app.post('/api/audit/run', async (req, res) => {
+    const rawName = typeof req.body?.businessName === 'string' ? req.body.businessName.trim() : '';
+    if (!rawName) {
+      return res.status(400).json({ error: 'A business or brand name is required to run an audit.' });
+    }
+    if (rawName.length > MAX_NAME_LENGTH) {
+      return res.status(400).json({
+        error: `That business name is too long (${rawName.length} characters). Please shorten it to ${MAX_NAME_LENGTH} characters or fewer.`,
       });
     }
+
+    // Normalise the shape once so the pipeline never sees ragged input.
+    req.body.businessName = rawName;
+    const rawCompetitors = req.body?.competitors;
+    req.body.competitors = (
+      Array.isArray(rawCompetitors)
+        ? rawCompetitors
+        : typeof rawCompetitors === 'string'
+          ? rawCompetitors.split(',')
+          : []
+    )
+      .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
+      .map((c: string) => c.trim().slice(0, MAX_NAME_LENGTH))
+      .slice(0, MAX_COMPETITORS);
+
+    req.body.queries = (Array.isArray(req.body?.queries) ? req.body.queries : [])
+      .filter((q: any) => q && typeof q.queryText === 'string' && q.queryText.trim().length > 0)
+      .map((q: any, i: number) => ({
+        id: typeof q.id === 'string' && q.id ? q.id : `q-user-${i + 1}`,
+        intent: typeof q.intent === 'string' ? q.intent : 'feature_specific',
+        queryText: q.queryText.trim().slice(0, 300),
+        targetPersona: typeof q.targetPersona === 'string' ? q.targetPersona : 'Target Customer',
+      }));
+
+    pruneJobs();
+    const id = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const job: AuditJob = { id, status: 'running', startedAt: Date.now() };
+    auditJobs.set(id, job);
+
+    // Kick the work off and answer immediately; the client polls for the result.
+    performAudit({ body: req.body })
+      .then((payload) => {
+        job.status = 'done';
+        job.result = payload;
+      })
+      .catch((err: any) => {
+        job.status = 'error';
+        job.error = describeProviderError(err, 'The audit service').message;
+        console.log(`Audit job ${id} failed: ${err?.message || err}`);
+      });
+
+    res.status(202).json({ jobId: id, status: 'running' });
+  });
+
+  app.get('/api/audit/job/:id', (req, res) => {
+    const job = auditJobs.get(req.params.id);
+    if (!job) {
+      return res.status(404).json({
+        error: 'That audit is no longer available. It may have expired or the server restarted; please run it again.',
+      });
+    }
+    if (job.status === 'running') {
+      return res.json({ status: 'running', elapsedMs: Date.now() - job.startedAt });
+    }
+    if (job.status === 'error') {
+      return res.status(500).json({ status: 'error', error: job.error });
+    }
+    return res.json({ status: 'done', ...job.result });
   });
 
   // Vite development middleware or production static files
@@ -1150,7 +1277,7 @@ Return valid JSON matching the schema.`;
 // Fallback audit generator for offline/resilient audit execution
 function generateSynthesizedAudit(
   businessName: string,
-  domain: string = 'example.com',
+  domain: string = '',
   industry: string = 'Software',
   coreOfferings: string = 'Products',
   competitors: any = [],

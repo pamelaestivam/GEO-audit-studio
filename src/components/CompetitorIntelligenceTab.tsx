@@ -93,14 +93,19 @@ export const CompetitorIntelligenceTab: React.FC<CompetitorIntelligenceTabProps>
                       </span>
                     )}
                   </h4>
-                  <a
-                    href={`https://${comp.domain}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-slate-400 hover:text-indigo-300 transition"
-                  >
-                    {comp.domain}
-                  </a>
+                  {comp.domain ? (
+                    <a
+                      href={`https://${comp.domain}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-slate-400 hover:text-indigo-300 transition"
+                    >
+                      {comp.domain}
+                    </a>
+                  ) : (
+                    // Rivals discovered in the answers have no domain supplied.
+                    <span className="text-xs text-slate-500">Found in AI answers</span>
+                  )}
                 </div>
 
                 <div className="text-right">

@@ -47,27 +47,61 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Reduce anything a user might type - "https://www.poke.house/", "Poke.House",
+ * "poke.house/menu" - to the bare host. Users paste full URLs into fields
+ * labelled "domain", and an unnormalised value produces broken links like
+ * "https://https://www.poke.house/".
+ */
+export function normaliseDomain(value: string): string {
+  const trimmed = (value || '').trim().toLowerCase();
+  if (!trimmed) return '';
+  const withoutScheme = trimmed.replace(/^[a-z]+:\/\//, '');
+  const host = withoutScheme.split('/')[0].split('?')[0].split('#')[0];
+  return host.replace(/^www\./, '').replace(/\.$/, '');
+}
+
 export function extractDomain(url: string): string {
   try {
-    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+    const hasScheme = /^[a-z]+:\/\//i.test(url);
+    const parsed = new URL(hasScheme ? url : `https://${url}`);
     return parsed.hostname.replace(/^www\./, '').toLowerCase();
   } catch {
-    return '';
+    return normaliseDomain(url);
   }
 }
 
 export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
   const label = (name || '').trim();
-  const cleanDomain = extractDomain(domain || '') || (domain || '').trim().toLowerCase();
+  const cleanDomain = normaliseDomain(domain || '');
   const domainRoot = cleanDomain.split('.')[0] || '';
 
-  // "Archer Aviation" -> ["archer aviation", "archer"]; keep the full phrase first.
   const lower = label.toLowerCase();
   const words = lower.split(/\s+/).filter(Boolean);
   const tokens: string[] = [];
   if (lower) tokens.push(lower);
-  if (words.length > 1 && words[0].length >= 4) tokens.push(words[0]);
-  if (domainRoot && domainRoot.length >= 3 && !tokens.includes(domainRoot)) {
+
+  /*
+   * A multi-word brand is matched on its full name only.
+   *
+   * Matching the first word alone is how "Poke House" came to be scored as
+   * present in any answer mentioning "poke bowls" - the audit reported the
+   * brand as cited, and ranked first, in answers that never named it. Many
+   * real businesses lead with their category word ("The Gym Group", "Pizza
+   * Express"), so the first token is not safe to match on its own.
+   *
+   * The distinctive domain root is still matched, which recovers most
+   * shorthand references without the false positives.
+   */
+  const domainRootIsBrandWord = words.length > 1 && words.includes(domainRoot);
+  if (
+    domainRoot &&
+    domainRoot.length >= 4 &&
+    !tokens.includes(domainRoot) &&
+    // "poke.house" reduces to "poke", which is just the category word from
+    // "Poke House" again and matches every answer about poke bowls.
+    !domainRootIsBrandWord
+  ) {
     tokens.push(domainRoot);
   }
 
@@ -92,7 +126,12 @@ export function findFirstMention(text: string, matcher: BrandMatcher): number {
     const needle = matcher.strictCase
       ? token.charAt(0).toUpperCase() + token.slice(1)
       : token;
-    const pattern = new RegExp(`\\b${escapeRegex(needle)}\\b`, matcher.strictCase ? 'g' : 'gi');
+    // \b only works between a word and a non-word character. Brands ending or
+    // starting in punctuation ("Yahoo!", "(Parens) Co") would never match if we
+    // demanded a boundary on that side.
+    const leading = /^\w/.test(needle) ? '\\b' : '';
+    const trailing = /\w$/.test(needle) ? '\\b' : '';
+    const pattern = new RegExp(`${leading}${escapeRegex(needle)}${trailing}`, matcher.strictCase ? 'g' : 'gi');
 
     const hit = pattern.exec(text);
     if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;

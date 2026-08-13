@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { AuditReport } from '../types';
 import { mergeDetectedDetails } from '../detection';
+import { runAuditJob } from '../auditClient';
 
 interface CleanStartDashboardProps {
   onAuditComplete: (newReport: AuditReport) => void;
@@ -28,7 +29,6 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
   const [businessName, setBusinessName] = useState('');
   const [domain, setDomain] = useState('');
   const [industry, setIndustry] = useState('');
-  const [coreOfferings, setCoreOfferings] = useState('');
   const [competitorsText, setCompetitorsText] = useState('');
   const [manualQueriesInput, setManualQueriesInput] = useState('');
 
@@ -103,7 +103,6 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
       if (!businessName.trim() && d.businessName) setBusinessName(d.businessName);
       if (!domain.trim() && d.domain) setDomain(d.domain);
       if (!industry.trim() && d.industry) setIndustry(d.industry);
-      if (!coreOfferings.trim() && d.coreOfferings) setCoreOfferings(d.coreOfferings);
       if (!competitorsText.trim() && Array.isArray(d.competitors) && d.competitors.length > 0) {
         setCompetitorsText(d.competitors.join(', '));
       }
@@ -128,7 +127,6 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     bName: string,
     bDomain: string,
     bIndustry: string,
-    bOfferings: string,
     bCompetitors: string[]
   ) => {
     setIsLoading(true);
@@ -153,52 +151,31 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     }, 3800);
 
     try {
-      // First generate targeted query matrix via real API
-      const queryRes = await fetch('/api/audit/generate-queries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          businessName: bName,
-          domain: bDomain,
-          industry: bIndustry,
-          coreOfferings: bOfferings,
-          competitors: bCompetitors,
-        }),
-      });
-
-      const queryData = await queryRes.json();
-      const generatedQueries = queryData.queries || [];
-
-      // Combine 3 auto-generated queries with any user manually typed queries
-      const extraManualQueries = manualQueriesInput
+      // Only the user's own queries are sent; the audit job generates the rest
+      // so no slow request is held open by the browser.
+      const combinedQueries = manualQueriesInput
         .split(',')
         .map((q) => q.trim())
         .filter(Boolean)
         .map((qText, idx) => ({
-          id: `q-init-manual-${idx + 1}`,
+          id: `q-manual-${idx + 1}`,
           intent: 'feature_specific',
           queryText: qText,
           targetPersona: 'Target Customer',
         }));
 
-      const combinedQueries = [...generatedQueries, ...extraManualQueries];
-
-      // Run live audit endpoint
-      const auditRes = await fetch('/api/audit/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // Runs as a background job so no request is held open long enough for a
+      // phone browser to abort it.
+      const auditData = await runAuditJob(
+        {
           businessName: bName,
-          domain: bDomain,
-          industry: bIndustry,
-          coreOfferings: bOfferings,
-          targetAudience: 'Enterprise decision makers & procurement managers',
+          domain: bDomain || undefined,
+          industry: bIndustry || undefined,
           competitors: bCompetitors,
           queries: combinedQueries,
-        }),
-      });
-
-      const auditData = await auditRes.json();
+        },
+        setStatusMessage
+      );
 
       clearTimeout(timer1);
       clearTimeout(timer2);
@@ -230,7 +207,6 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     let bName = businessName.trim();
     let bDomain = domain.trim();
     let bIndustry = industry.trim();
-    let bOfferings = coreOfferings.trim();
     let comps = competitorsText
       .split(',')
       .map((c) => c.trim())
@@ -238,31 +214,29 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
 
     // Fill in only what the user left blank. Values they typed always win:
     // an audit must describe their business, not a guessed one.
-    if (!bDomain || !bIndustry || !bOfferings || comps.length === 0) {
+    if (!bDomain || !bIndustry) {
       const detected = await handleAutoDetectUrl(bName);
       const merged = mergeDetectedDetails(
-        { businessName: bName, domain: bDomain, industry: bIndustry, coreOfferings: bOfferings, competitors: comps },
+        { businessName: bName, domain: bDomain, industry: bIndustry, coreOfferings: '', competitors: comps },
         detected
       );
       bName = merged.businessName;
       bDomain = merged.domain;
       bIndustry = merged.industry;
-      bOfferings = merged.coreOfferings;
       comps = merged.competitors;
     }
 
-    executeAudit(bName, bDomain, bIndustry, bOfferings, comps);
+    executeAudit(bName, bDomain, bIndustry, comps);
   };
 
   const handleSelectSample = (sample: typeof sampleBrands[0]) => {
     setBusinessName(sample.name);
     setDomain(sample.domain);
     setIndustry(sample.industry);
-    setCoreOfferings(sample.offerings);
     setCompetitorsText(sample.competitors);
 
     const comps = sample.competitors.split(',').map((c) => c.trim()).filter(Boolean);
-    executeAudit(sample.name, sample.domain, sample.industry, sample.offerings, comps);
+    executeAudit(sample.name, sample.domain, sample.industry, comps);
   };
 
   return (
@@ -360,22 +334,9 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
             </div>
 
             <div>
-              <label htmlFor="core-offerings-input" className="block text-xs font-semibold text-slate-400 mb-1.5">
-                Core Offerings
-              </label>
-              <input
-                id="core-offerings-input"
-                type="text"
-                value={coreOfferings}
-                onChange={(e) => setCoreOfferings(e.target.value)}
-                placeholder="Online payments, invoicing, fraud prevention"
-                className="w-full px-3.5 py-2.5 bg-slate-950 text-slate-200 text-xs rounded-lg border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-600"
-              />
-            </div>
-
-            <div>
               <label htmlFor="competitors-input" className="block text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1.5">
-                <Users className="h-3.5 w-3.5 text-indigo-400" /> Key Competitors (Comma-separated)
+                <Users className="h-3.5 w-3.5 text-indigo-400" /> Known Competitors
+                <span className="font-normal text-slate-500">(optional)</span>
               </label>
               <input
                 id="competitors-input"

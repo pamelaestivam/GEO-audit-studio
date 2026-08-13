@@ -122,6 +122,27 @@ function post(path: string, body: unknown) {
   });
 }
 
+/**
+ * Audits now run as background jobs, so the client starts one and polls.
+ * Holding a single request open for minutes is what produced "Load failed"
+ * on mobile.
+ */
+async function runAudit(body: unknown, timeoutMs = 120000) {
+  const startRes = await post('/api/audit/run', body);
+  const start = await startRes.json();
+  if (!start.jobId) return { startRes, start, final: null as any };
+
+  const began = Date.now();
+  while (Date.now() - began < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 400));
+    const res = await fetch(`${BASE}/api/audit/job/${start.jobId}`);
+    const data = await res.json();
+    if (data.status === 'running') continue;
+    return { startRes, start, final: data };
+  }
+  return { startRes, start, final: null as any };
+}
+
 async function waitForServer(timeoutMs = 20000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -182,23 +203,19 @@ async function main() {
     );
 
     // ---- a failed audit must announce failure, not report zeros as findings
-    const runRes = await post('/api/audit/run', {
+    const runOutcome = await runAudit({
       businessName: 'City Sports',
-      domain: 'citysports.com',
+      domain: 'https://www.citysports.com/',
       industry: 'Gym',
       competitors: ['PureGym'],
       queries: [
-        {
-          id: 'q1',
-          intent: 'direct_recommendation',
-          queryText: 'best gym near me',
-          targetPersona: 'Member',
-          monthlySearchVolumeEstimate: 'n/a',
-        },
+        { id: 'q1', intent: 'direct_recommendation', queryText: 'best gym near me', targetPersona: 'Member' },
       ],
     });
-    const runBody = await runRes.json();
-    const report = runBody.report;
+    check('starting an audit returns a job id', typeof runOutcome.start.jobId, 'string');
+    check('starting an audit answers immediately with 202', runOutcome.startRes.status, 202);
+    assert('the audit job completes', runOutcome.final !== null);
+    const report = runOutcome.final.report;
 
     check('a failed audit is flagged degraded', report.degraded, true);
     assert(
@@ -237,7 +254,7 @@ async function main() {
       JSON.stringify(report.queriesTested).slice(0, 200)
     );
 
-    const noCompetitorRes = await post('/api/audit/run', {
+    const noCompetitorOutcome = await runAudit({
       businessName: 'City Sports',
       domain: 'citysports.com',
       industry: 'Gym',
@@ -246,7 +263,7 @@ async function main() {
         { id: 'q1', intent: 'direct_recommendation', queryText: 'best gym near me', targetPersona: 'Member' },
       ],
     });
-    const noCompetitorReport = (await noCompetitorRes.json()).report;
+    const noCompetitorReport = noCompetitorOutcome.final.report;
     assert(
       'an audit with no competitors invents none',
       containsFabricatedPlaceholder(noCompetitorReport.competitorBenchmarks) === null,
@@ -256,6 +273,90 @@ async function main() {
       'a degraded audit reports no fabricated score history',
       !noCompetitorReport.historicalScores || noCompetitorReport.historicalScores.length === 0,
       JSON.stringify(noCompetitorReport.historicalScores)
+    );
+
+    // ---- input the product must survive
+    assert(
+      'a pasted URL is stored as a bare host, so links are not doubled',
+      report.domain === 'citysports.com',
+      `domain was: ${report.domain}`
+    );
+
+    const missingName = await post('/api/audit/run', { domain: 'example.com' });
+    check('an audit with no business name is rejected', missingName.status, 400);
+    const missingBody = await missingName.json();
+    assert(
+      'the missing-name error is a sentence',
+      typeof missingBody.error === 'string' && !missingBody.error.includes('{'),
+      missingBody.error
+    );
+
+    const unknownJob = await fetch(`${BASE}/api/audit/job/job-does-not-exist`);
+    check('an unknown job id returns 404', unknownJob.status, 404);
+    const unknownBody = await unknownJob.json();
+    assert(
+      'an expired job explains what to do',
+      /run it again|no longer available/i.test(unknownBody.error || ''),
+      unknownBody.error
+    );
+
+    // Brand names with punctuation, and no competitors supplied at all.
+    const awkward = await runAudit({
+      businessName: "Ben & Jerry's",
+      domain: 'benjerry.com',
+      queries: [
+        { id: 'q1', intent: 'direct_recommendation', queryText: 'best ice cream', targetPersona: 'Buyer' },
+      ],
+    });
+    assert('a brand name with punctuation completes an audit', awkward.final !== null);
+    assert(
+      'a punctuated brand name survives into the report',
+      awkward.final?.report?.businessName === "Ben & Jerry's",
+      awkward.final?.report?.businessName
+    );
+
+    // No industry, no competitors, no queries: the minimum a user can submit.
+    const minimal = await runAudit({ businessName: 'Poke House', domain: 'https://www.poke.house/' });
+    assert('the most minimal submission still completes', minimal.final !== null);
+    assert(
+      'a minimal submission still normalises the domain',
+      minimal.final?.report?.domain === 'poke.house',
+      minimal.final?.report?.domain
+    );
+    assert(
+      'a minimal submission invents no industry',
+      !/Software & Technology/i.test(JSON.stringify(minimal.final?.report ?? {})),
+      'fabricated industry leaked'
+    );
+
+    // ---- input the product must refuse or tame
+    const blankName = await post('/api/audit/run', { businessName: '   ' });
+    check('a whitespace-only business name is rejected', blankName.status, 400);
+
+    const hugeName = await post('/api/audit/run', { businessName: 'A'.repeat(500) });
+    check('an absurdly long business name is rejected', hugeName.status, 400);
+    const hugeBody = await hugeName.json();
+    assert(
+      'the too-long error says what to do',
+      /shorten/i.test(hugeBody.error || ''),
+      hugeBody.error
+    );
+
+    const raggedInput = await runAudit({
+      businessName: 'Acme',
+      competitors: 'Foo, Bar',
+      queries: [{ nope: 1 }, null, 'not-an-object'],
+    });
+    assert('competitors given as a string are accepted', raggedInput.final !== null);
+    assert(
+      'malformed query objects are discarded rather than crashing',
+      Array.isArray(raggedInput.final?.report?.queriesTested),
+      JSON.stringify(raggedInput.final?.report?.queriesTested)
+    );
+    assert(
+      'every surviving query has real text',
+      (raggedInput.final?.report?.queriesTested || []).every((q: any) => typeof q.queryText === 'string' && q.queryText.length > 0),
+      'a query without text survived'
     );
 
     // ---- the manual-query endpoint must fail loudly rather than fabricate

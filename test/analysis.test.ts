@@ -151,8 +151,9 @@ const deduped = dedupeMatchers([
 ]);
 check('name variants collapse to one company each', deduped.map((m) => m.label), ['Stripe', 'Adyen']);
 
-// Without dedupe the same sentence would be counted twice for one company.
-const dupMatchers = [buildBrandMatcher('Adyen'), buildBrandMatcher('Adyen N.V.'), stripe];
+// The same company arriving twice (typed by the user and again from vendor
+// discovery, once with a domain) would otherwise score the same sentence twice.
+const dupMatchers = [buildBrandMatcher('Adyen'), buildBrandMatcher('Adyen', 'adyen.com'), stripe];
 const dupRows = analyseAnswer(answer, dupMatchers);
 check('duplicate matchers would inflate mention count', dupRows.filter((r) => r.mentioned).length, 3);
 const cleanRows = analyseAnswer(answer, dedupeMatchers(dupMatchers));
@@ -162,6 +163,40 @@ check(
   buildScorecards([cleanRows], dedupeMatchers(dupMatchers)).find((s) => s.brand === 'Stripe')!.shareOfVoice,
   50
 );
+
+// ---------------------------------------------------------------- real-world brand names
+// Regression: "Poke House" scored as present in any answer mentioning "poke
+// bowls", because a multi-word brand also matched on its first word. Many small
+// businesses lead with their category word.
+const pokeHouse = buildBrandMatcher('Poke House', 'https://www.poke.house/');
+check('a category word in a brand name is not a mention', findFirstMention('I love poke bowls near me.', pokeHouse), -1);
+check('a capitalised category word is not a mention', findFirstMention('Poke bowls are trending.', pokeHouse), -1);
+check('the full brand name is still matched', findFirstMention('Try Poke House downtown.', pokeHouse) >= 0, true);
+check('a pasted URL is reduced to a bare host', pokeHouse.domain, 'poke.house');
+
+const gymGroup = buildBrandMatcher('The Gym Group', 'thegymgroup.com');
+check('a generic first word is not a mention', findFirstMention('Gym memberships vary widely.', gymGroup), -1);
+check('the distinctive domain root still matches', findFirstMention('See thegymgroup for prices.', gymGroup) >= 0, true);
+
+// Names containing regex metacharacters must never throw.
+for (const raw of ["Ben & Jerry's", 'AT&T', "L'Occitane", 'C++ Institute', 'Café Nero', 'Yahoo!', '(Parens) Co']) {
+  const m = buildBrandMatcher(raw);
+  let ok = true;
+  try {
+    findFirstMention(`We recommend ${raw} for this.`, m);
+  } catch {
+    ok = false;
+  }
+  check(`"${raw}" is matched without throwing`, ok, true);
+  check(`"${raw}" matches its own name`, findFirstMention(`We recommend ${raw} today.`, m) >= 0, true);
+}
+
+// Empty and malformed inputs must degrade quietly.
+check('an empty brand name matches nothing', findFirstMention('anything', buildBrandMatcher('')), -1);
+check('an empty brand yields no tokens', buildBrandMatcher('').tokens.length, 0);
+check('a blank domain normalises to empty', buildBrandMatcher('Acme', '   ').domain, '');
+check('a domain with a path is reduced to the host', buildBrandMatcher('Acme', 'acme.com/menu?x=1').domain, 'acme.com');
+check('an uppercase URL normalises', buildBrandMatcher('Acme', 'HTTPS://WWW.ACME.COM/').domain, 'acme.com');
 
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
