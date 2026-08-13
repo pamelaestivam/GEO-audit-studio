@@ -49,12 +49,16 @@ model.
 `GEMINI_MODEL`, `OPENAI_MODEL`, `PERPLEXITY_MODEL`, `ANTHROPIC_MODEL` override
 model IDs without a code change.
 
-## Known gaps (not yet built)
+## Known gaps
 
-- Auth auto-registers any email/password into an in-memory `Map`; it is wiped on
-  restart and is not real authentication.
-- Audits are not persisted, so history and Continuous Sweeps have no real data
-  behind them. Both need a datastore.
+See `TECH_DEBT.md` — it tracks known debt, expansion ideas, and **open actions
+awaiting the owner's decision**. Read it at the start of a session and raise the
+open actions (currently: whether to pay for the ChatGPT / Perplexity / Claude
+API keys, which are the only thing standing between the code and genuine
+multi-engine audits).
+
+Record anything knowingly left imperfect there rather than leaving it for the
+next session to rediscover.
 
 ## Commands
 

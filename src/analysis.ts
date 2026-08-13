@@ -86,17 +86,13 @@ export function findFirstMention(text: string, matcher: BrandMatcher): number {
   let earliest = -1;
   for (const token of matcher.tokens) {
     if (token.length < 3) continue;
-    const flags = matcher.strictCase ? 'g' : 'gi';
-    const pattern = new RegExp(`\\b${escapeRegex(token)}\\b`, flags);
 
-    if (matcher.strictCase) {
-      // Require a capitalised occurrence: "Square" the company, not "square" the adjective.
-      const capitalised = token.charAt(0).toUpperCase() + token.slice(1);
-      const strict = new RegExp(`\\b${escapeRegex(capitalised)}\\b`, 'g');
-      const hit = strict.exec(text);
-      if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
-      continue;
-    }
+    // Common-word brands must appear capitalised ("Square" the company, not
+    // "square" the adjective); everything else matches case-insensitively.
+    const needle = matcher.strictCase
+      ? token.charAt(0).toUpperCase() + token.slice(1)
+      : token;
+    const pattern = new RegExp(`\\b${escapeRegex(needle)}\\b`, matcher.strictCase ? 'g' : 'gi');
 
     const hit = pattern.exec(text);
     if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;

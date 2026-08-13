@@ -45,7 +45,8 @@ export interface AuditQuery {
   monthlySearchVolumeEstimate: string;
   /** Only engines actually queried appear here. */
   engines: Partial<Record<AiEngine, EngineResult>>;
-  evidence?: QueryEvidenceRecord;
+  /** One record per engine queried for this query. */
+  evidence?: QueryEvidenceRecord[];
   /** Brands the engine named ahead of the audited business. */
   competitorsAhead?: string[];
   /** 0-100; how early the brand appears in the answer. */

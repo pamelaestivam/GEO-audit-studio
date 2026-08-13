@@ -410,7 +410,18 @@ Return a JSON array of exactly 3 query objects.`;
         monthlySearchVolumeEstimate: 'n/a',
       };
 
-      if (!ai || engines.length === 0) {
+      // Vendor discovery runs on Gemini, so Gemini is required even when other
+      // engines are configured. Say which key is missing rather than claiming
+      // nothing is configured.
+      if (!ai) {
+        const others = engines.filter((e) => e !== 'Gemini');
+        return res.status(503).json({
+          error: others.length
+            ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured.`
+            : 'No answer engine is configured, so this query cannot be measured.',
+        });
+      }
+      if (engines.length === 0) {
         return res.status(503).json({
           error: 'No answer engine is configured, so this query cannot be measured.',
         });
@@ -805,11 +816,15 @@ Return valid JSON matching the schema.`;
       const engines = configuredEngines();
 
       if (!ai || engines.length === 0) {
+        const others = engines.filter((e) => e !== 'Gemini');
+        const reason = !ai && others.length
+          ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured. Nothing was measured.`
+          : 'No answer engine is configured, so nothing could be measured. Add an engine API key and re-run.';
         return res.json({
           report: {
             ...generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitorList, queryList),
             degraded: true,
-            degradedReason: 'No answer engine is configured, so nothing could be measured. Add an engine API key and re-run.',
+            degradedReason: reason,
           },
           degraded: true,
         });
