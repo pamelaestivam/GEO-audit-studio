@@ -1,6 +1,0 @@
-GEO Audit Studio - access verification test file.
-
-Created to confirm branch creation, file push, and PR workflow are working
-correctly for this repository.
-
-Timestamp: 2026-08-13
