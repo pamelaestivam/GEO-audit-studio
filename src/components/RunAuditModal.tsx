@@ -82,21 +82,18 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
             intent: 'alternatives_search',
             queryText: `Best ${industry || 'software'} alternatives to ${validCompetitors[0] || 'competitors'} for modern teams`,
             targetPersona: 'Decision Maker',
-            monthlySearchVolumeEstimate: '18,000/mo',
           },
           {
             id: 'q-custom-2',
             intent: 'commercial_comparison',
             queryText: `${businessName} vs ${validCompetitors[0] || 'leading competitor'} in-depth feature breakdown`,
             targetPersona: 'Evaluator',
-            monthlySearchVolumeEstimate: '14,500/mo',
           },
           {
             id: 'q-custom-3',
             intent: 'pricing_roi',
             queryText: `${businessName} pricing free tier limits and enterprise ROI`,
             targetPersona: 'Procurement / CTO',
-            monthlySearchVolumeEstimate: '12,000/mo',
           },
         ]);
       }
@@ -110,14 +107,12 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
           intent: 'alternatives_search',
           queryText: `Top recommended solutions for ${industry || 'business'} in 2026`,
           targetPersona: 'Buyer',
-          monthlySearchVolumeEstimate: '15,000/mo',
         },
         {
           id: 'q-fallback-2',
           intent: 'commercial_comparison',
           queryText: `${businessName} customer reviews, pros and cons, and pricing`,
           targetPersona: 'Evaluator',
-          monthlySearchVolumeEstimate: '10,000/mo',
         },
       ]);
       setStep(2);
@@ -135,7 +130,6 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
         intent: 'feature_specific',
         queryText: newQueryText.trim(),
         targetPersona: 'Target Customer',
-        monthlySearchVolumeEstimate: '5,000/mo',
       },
     ]);
     setNewQueryText('');
@@ -154,7 +148,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
     const validCompetitors = competitors.map((c) => c.trim()).filter(Boolean);
 
     try {
-      setAuditProgressMessage('Simulating AI Search queries across Gemini, ChatGPT, Perplexity & Claude...');
+      setAuditProgressMessage('Querying Gemini, ChatGPT, Perplexity & Claude...');
       
       const response = await fetch('/api/audit/run', {
         method: 'POST',
@@ -437,7 +431,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
               </div>
               <div className="flex items-center gap-2 text-indigo-400 font-medium">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                <span>Simulating Perplexity, ChatGPT, Gemini & Claude</span>
+                <span>Querying Perplexity, ChatGPT, Gemini & Claude</span>
               </div>
               <div className="flex items-center gap-2 text-slate-500">
                 <span className="w-3.5 h-3.5 rounded-full border border-slate-600 inline-block" />

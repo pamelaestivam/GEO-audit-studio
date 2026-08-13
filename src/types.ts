@@ -42,7 +42,11 @@ export interface AuditQuery {
   intent: QueryIntent;
   queryText: string;
   targetPersona: string;
-  monthlySearchVolumeEstimate: string;
+  /**
+   * Search volume is not measured by this product - it would need a keyword
+   * data provider. Absent unless a real source supplies it.
+   */
+  monthlySearchVolumeEstimate?: string;
   /** Only engines actually queried appear here. */
   engines: Partial<Record<AiEngine, EngineResult>>;
   /** One record per engine queried for this query. */

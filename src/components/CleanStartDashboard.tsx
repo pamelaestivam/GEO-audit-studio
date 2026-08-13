@@ -12,8 +12,11 @@ import {
   BarChart3,
   CheckCircle2,
   RefreshCw,
+  Info,
+  AlertCircle,
 } from 'lucide-react';
 import { AuditReport } from '../types';
+import { mergeDetectedDetails } from '../detection';
 
 interface CleanStartDashboardProps {
   onAuditComplete: (newReport: AuditReport) => void;
@@ -31,6 +34,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
 
   const [isLoading, setIsLoading] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
+  const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
   const [loadingStep, setLoadingStep] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -66,10 +70,17 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     },
   ];
 
-  // Auto-detect brand details from URL or query string via server API
+  /**
+   * Look up brand details, filling only the fields the user left blank.
+   *
+   * What the user typed is the source of truth. Detection previously
+   * overwrote it, so entering "Gym" as the industry could come back as
+   * something else entirely.
+   */
   const handleAutoDetectUrl = async (inputStr: string) => {
     if (!inputStr.trim()) return null;
     setIsDetecting(true);
+    setDetectionNotice(null);
     try {
       const res = await fetch('/api/audit/parse-url', {
         method: 'POST',
@@ -77,19 +88,36 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
         body: JSON.stringify({ input: inputStr }),
       });
       const data = await res.json();
-      if (data.details) {
-        const d = data.details;
-        setBusinessName(d.businessName || inputStr);
-        if (d.domain) setDomain(d.domain);
-        if (d.industry) setIndustry(d.industry);
-        if (d.coreOfferings) setCoreOfferings(d.coreOfferings);
-        if (d.competitors && Array.isArray(d.competitors)) {
-          setCompetitorsText(d.competitors.join(', '));
-        }
-        return d;
+
+      if (!res.ok) {
+        setDetectionNotice(data.error || 'Brand lookup failed. Your entries were kept as typed.');
+        return null;
       }
+
+      const d = data.details;
+      if (!d) {
+        setDetectionNotice('Brand lookup returned nothing. Your entries were kept as typed.');
+        return null;
+      }
+
+      if (!businessName.trim() && d.businessName) setBusinessName(d.businessName);
+      if (!domain.trim() && d.domain) setDomain(d.domain);
+      if (!industry.trim() && d.industry) setIndustry(d.industry);
+      if (!coreOfferings.trim() && d.coreOfferings) setCoreOfferings(d.coreOfferings);
+      if (!competitorsText.trim() && Array.isArray(d.competitors) && d.competitors.length > 0) {
+        setCompetitorsText(d.competitors.join(', '));
+      }
+
+      if (data.detected === false) {
+        setDetectionNotice(
+          `${data.reason || 'Could not look up this brand.'} Anything you left blank stays blank rather than being guessed.`
+        );
+      }
+
+      return d;
     } catch (err) {
       console.warn('Auto-detect URL error:', err);
+      setDetectionNotice('Brand lookup could not be reached. Your entries were kept as typed.');
     } finally {
       setIsDetecting(false);
     }
@@ -151,7 +179,6 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           intent: 'feature_specific',
           queryText: qText,
           targetPersona: 'Target Customer',
-          monthlySearchVolumeEstimate: '8,500/mo',
         }));
 
       const combinedQueries = [...generatedQueries, ...extraManualQueries];
@@ -209,18 +236,19 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
       .map((c) => c.trim())
       .filter(Boolean);
 
-    // Auto-detect if secondary fields are blank or URL was entered
+    // Fill in only what the user left blank. Values they typed always win:
+    // an audit must describe their business, not a guessed one.
     if (!bDomain || !bIndustry || !bOfferings || comps.length === 0) {
       const detected = await handleAutoDetectUrl(bName);
-      if (detected) {
-        bName = detected.businessName || bName;
-        bDomain = detected.domain || bDomain;
-        bIndustry = detected.industry || bIndustry;
-        bOfferings = detected.coreOfferings || bOfferings;
-        if (detected.competitors && Array.isArray(detected.competitors)) {
-          comps = detected.competitors;
-        }
-      }
+      const merged = mergeDetectedDetails(
+        { businessName: bName, domain: bDomain, industry: bIndustry, coreOfferings: bOfferings, competitors: comps },
+        detected
+      );
+      bName = merged.businessName;
+      bDomain = merged.domain;
+      bIndustry = merged.industry;
+      bOfferings = merged.coreOfferings;
+      comps = merged.competitors;
     }
 
     executeAudit(bName, bDomain, bIndustry, bOfferings, comps);
@@ -377,6 +405,25 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
               Appended alongside the 3 LLM auto-generated queries grounded in live web search data.
             </p>
           </div>
+
+          {/* Detection could not fill the blanks - say so instead of guessing. */}
+          {detectionNotice && (
+            <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+              <Info className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-200/90 leading-relaxed">{detectionNotice}</p>
+            </div>
+          )}
+
+          {/* The audit itself failed; previously this was set but never shown. */}
+          {errorMessage && (
+            <div className="flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/30 rounded-lg p-3">
+              <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-rose-200">Audit could not complete</p>
+                <p className="text-xs text-rose-200/85 leading-relaxed mt-0.5">{errorMessage}</p>
+              </div>
+            </div>
+          )}
 
           {/* Submit Action Button */}
           <div className="pt-2">
