@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, Globe, Building2, Users, Plus, Trash2, ArrowRight, RefreshCw, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { runAuditJob } from '../auditClient';
+import { apiFetch } from '../apiClient';
 import { AuditReport, AuditQuery } from '../types';
 
 interface RunAuditModalProps {
@@ -60,7 +61,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
     const validCompetitors = competitors.map((c) => c.trim()).filter(Boolean);
 
     try {
-      const res = await fetch('/api/audit/generate-queries', {
+      const res = await apiFetch('/api/audit/generate-queries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -70,6 +71,8 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
           coreOfferings,
           competitors: validCompetitors,
         }),
+        retries: 2,
+        timeoutMs: 15000,
       });
 
       const data = await res.json();

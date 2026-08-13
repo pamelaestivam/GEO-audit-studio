@@ -4,7 +4,16 @@
  * An audit runs as a background job on the server. Holding a single request
  * open for the whole run is what produced "Load failed" on mobile, so the
  * client starts a job and polls it, keeping every request short.
+ *
+ * Every request goes through `apiFetch`, which retries network-level
+ * failures with backoff. That matters specifically for the very first
+ * request: a Render free instance asleep for 15+ minutes can refuse or
+ * reset the connection while it boots, which throws before the server ever
+ * gets to answer - a raw browser error ("Load failed") with no server-side
+ * translation possible, since the server was never reached.
  */
+
+import { apiFetch } from './apiClient';
 
 export interface AuditRequest {
   businessName: string;
@@ -20,17 +29,19 @@ export interface StartAuditResult {
 }
 
 const POLL_INTERVAL_MS = 2500;
-const MAX_CONSECUTIVE_NETWORK_ERRORS = 5;
+const MAX_CONSECUTIVE_POLL_FAILURES = 4;
 
 export async function runAuditJob(
   payload: AuditRequest,
   onProgress?: (message: string) => void,
   timeoutMs = 8 * 60 * 1000
 ): Promise<StartAuditResult> {
-  const startRes = await fetch('/api/audit/run', {
+  // Full retry budget: this is the request that hits a sleeping instance.
+  const startRes = await apiFetch('/api/audit/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    timeoutMs: 30000,
   });
 
   const start = await startRes.json().catch(() => ({}));
@@ -39,21 +50,24 @@ export async function runAuditJob(
   }
 
   const startedAt = Date.now();
-  let consecutiveNetworkErrors = 0;
+  let consecutivePollFailures = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
 
     let res: Response;
     try {
-      res = await fetch(`/api/audit/job/${start.jobId}`);
-      consecutiveNetworkErrors = 0;
+      // A light retry budget here: the instance is already awake by now (we
+      // got a job id), so a poll failure is more likely a blip than a cold
+      // start, and the outer loop is itself a retry every 2.5s.
+      res = await apiFetch(`/api/audit/job/${start.jobId}`, { retries: 1, timeoutMs: 15000 });
+      consecutivePollFailures = 0;
     } catch {
-      // A sleeping free instance or a flaky mobile connection drops the odd
-      // poll; only give up once several in a row fail.
-      consecutiveNetworkErrors += 1;
-      if (consecutiveNetworkErrors >= MAX_CONSECUTIVE_NETWORK_ERRORS) {
-        throw new Error('Lost connection to the audit service. Please check your connection and try again.');
+      consecutivePollFailures += 1;
+      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+        throw new Error(
+          'Lost connection to the audit service. The audit may still be running on the server - check your connection and try refreshing shortly.'
+        );
       }
       continue;
     }

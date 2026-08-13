@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Sparkles, Eye, EyeOff, Lock, Mail, User as UserIcon, Building2, ArrowRight, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-react';
 import { User } from '../types';
+import { apiFetch } from '../apiClient';
 
 interface AuthPageProps {
   onLoginSuccess: (user: User) => void;
@@ -41,7 +42,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
 
     try {
       const endpoint = isSignUp ? '/api/auth/signup' : '/api/auth/login';
-      const response = await fetch(endpoint, {
+      const response = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, name, company }),

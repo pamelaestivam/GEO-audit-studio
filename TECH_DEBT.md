@@ -86,10 +86,20 @@ Gemini calls are also serialised process-wide to protect the free-tier quota,
 which means two concurrent users queue behind each other. Fine for now; it
 needs a per-key limiter if the product gets real traffic.
 
-### 2.4 Render free tier sleeps (medium)
+### 2.4 Render free tier sleeps (medium - partially mitigated)
 
-First request after ~15 minutes idle takes 50 s or more. Fine for iteration,
-bad for a client demo. A paid instance removes it.
+First request after ~15 minutes idle takes 50 s or more, and the very first
+connection attempt can be refused/reset outright while the container is still
+booting - not just slow. That surfaced as a raw browser error ("Load failed"
+on Safari, "Failed to fetch" on Chrome) reaching the user untranslated,
+because it happens outside any try/catch that touches a server response:
+`fetch()` itself throws before the server exists to answer.
+
+Every request now goes through `src/apiClient.ts` (`apiFetch`), which retries
+network-level failures with backoff (default 3 retries, up to ~10s total) and
+only surfaces a message after retries are genuinely exhausted. This covers
+the cold-start case but not a paid instance's absence - a client demo still
+wants an always-on instance to avoid the 50s wait entirely.
 
 ### 2.5 Accuracy rate is weakly grounded (medium)
 
