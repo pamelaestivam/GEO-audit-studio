@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix AI Search Audit \u0026 Remediation Platform",
+  "description": "A paid audit and monitoring system that tests viewer-intent queries across AI search engines, analyzes recommendations, explains inaccuracies and omissions, and delivers a prioritized marketing remediation plan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
