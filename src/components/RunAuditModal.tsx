@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Sparkles, Globe, Building2, Users, Plus, Trash2, ArrowRight, RefreshCw, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { runAuditJob } from '../auditClient';
 import { AuditReport, AuditQuery } from '../types';
 
 interface RunAuditModalProps {
@@ -150,30 +151,28 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
     try {
       setAuditProgressMessage('Querying Gemini, ChatGPT, Perplexity & Claude...');
       
-      const response = await fetch('/api/audit/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // No invented inputs: a blank field stays blank rather than becoming a
+      // guessed domain, industry or a fictional "Industry Leaders" competitor.
+      const data = await runAuditJob(
+        {
           businessName,
-          domain: domain || `${businessName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`,
-          industry: industry || 'Tech & Software',
-          coreOfferings: coreOfferings || 'Core products and services',
-          targetAudience: 'Buyers & Decision Makers',
-          competitors: validCompetitors.length > 0 ? validCompetitors : ['Industry Leaders'],
+          domain: domain || undefined,
+          industry: industry || undefined,
+          competitors: validCompetitors,
           queries,
-        }),
-      });
+        },
+        setAuditProgressMessage
+      );
 
-      const data = await response.json();
       if (data.report) {
-        setAuditProgressMessage('Audit completed! Indexing results...');
+        setAuditProgressMessage('Audit completed. Indexing results...');
         setTimeout(() => {
           onAuditComplete(data.report);
           onClose();
           setStep(1);
         }, 1200);
       } else {
-        throw new Error(data.error || 'Failed to complete audit');
+        throw new Error('The audit returned no report. Please try again.');
       }
     } catch (err: any) {
       console.error('Audit execution error:', err);

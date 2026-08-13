@@ -73,16 +73,18 @@ timestamp string that nothing checks.
 Anyone with the URL has full access. Do not put this in front of paying clients
 without replacing it (real user table, hashed passwords, signed sessions).
 
-### 2.3 Long audits may hit a proxy timeout (medium)
+### 2.3 Audit jobs live in memory (medium)
 
-Queries run sequentially with a 1.2 s gap; engines within a query run in
-parallel with a 90 s per-request timeout. A slow 8-query audit across several
-engines can therefore exceed typical edge timeouts, and the browser would see a
-dropped connection rather than a result.
+Audits now run as background jobs (`POST /api/audit/run` returns a job id, the
+client polls `/api/audit/job/:id`), which fixed the "Load failed" aborts on
+mobile. The job table is an in-memory `Map` with a 30 minute TTL, so a restart
+or a free-instance sleep loses an in-flight audit. The client reports this
+honestly ("that audit expired before it finished"), but the work is lost.
+Resolved properly by the same datastore that 2.1 needs.
 
-Proper fix: make the audit a background job — return a job id immediately, poll
-for status. That also fixes the "user stares at a spinner for two minutes"
-problem. Interim mitigation: keep `MAX_AUDIT_QUERIES` low.
+Gemini calls are also serialised process-wide to protect the free-tier quota,
+which means two concurrent users queue behind each other. Fine for now; it
+needs a per-key limiter if the product gets real traffic.
 
 ### 2.4 Render free tier sleeps (medium)
 
@@ -97,14 +99,27 @@ solid; the inaccuracy count is a model judgement with no ground truth to check
 against. Treat the number as indicative, not measured. A real version would
 diff engine claims against a client-supplied fact sheet.
 
-### 2.6 Vendor discovery depends on one model reading its own output (low-medium)
+### 2.6 Brand matching trades recall for precision (medium)
+
+A multi-word brand is matched on its full name and its domain root only. The
+first word alone is no longer matched, because "Poke House" was otherwise
+scored as present in every answer about "poke bowls" — the audit reported the
+brand as cited, and ranked first, in answers that never named it. Many small
+businesses lead with their category word.
+
+The cost is recall: a brand referred to only in shorthand ("Archer" for "Archer
+Aviation") is missed unless the shorthand matches the domain root. Understating
+visibility is the safer failure, but an alias list supplied per audit would
+recover it.
+
+### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer
 text or it is discarded — so it cannot invent a competitor. It can still *miss*
 one (a vendor mentioned only obliquely), which would slightly flatter the
 client's rank. Recall is unmeasured.
 
-### 2.7 Smaller items (low)
+### 2.8 Smaller items (low)
 
 - `CitationSource` is declared twice, in `src/types.ts` and `src/analysis.ts`.
   They agree today; nothing enforces that they keep agreeing.
@@ -120,12 +135,22 @@ client's rank. Recall is unmeasured.
 - `generateSynthesizedAudit` still emits placeholder remediation text. It is
   only reachable on the degraded path, which is now clearly banner-flagged, but
   the content itself is invented and should ideally be empty.
-- No automated test covers the Express layer; `npm test` covers the analysis
-  layer only. The provider adapters are untested against real API responses —
-  their parsers are written defensively but have never seen live payloads from
-  OpenAI, Perplexity or Anthropic.
+- The provider adapters are untested against real API responses — their parsers
+  are written defensively but have never seen live payloads from OpenAI,
+  Perplexity or Anthropic. This is the largest remaining untested surface.
+- `Core Offerings` was removed from the audit form as low value; the field still
+  exists in the API and types, unused, and should be retired properly.
+- There is no UI test layer. Interactive regressions (a tile that is not a
+  button, a control below the fold on mobile) are still caught only by eye.
 
 ---
+
+### 2.9 Search volume is gone, not fixed (low)
+
+Every query used to carry an invented monthly search volume. It is now absent
+and labelled "Not measured". Showing a real figure needs a keyword data
+provider (Ahrefs, Semrush, Google Keyword Planner) — worth doing, since buyers
+expect it, but it must come from a source rather than a model.
 
 ## 3. Expansion — worth building next
 
