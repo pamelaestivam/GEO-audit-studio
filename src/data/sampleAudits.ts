@@ -57,13 +57,6 @@ export const SAMPLE_AUDITS: AuditReport[] = [
             excerpt: 'Firebase remains dominant, but Supabase is widely praised for developers who prefer relational SQL schemas over NoSQL document stores.',
             citations: ['https://firebase.google.com', 'https://supabase.com']
           },
-          SearchGPT: {
-            engine: 'SearchGPT',
-            status: 'recommended_leader',
-            position: 1,
-            excerpt: 'For React Native developers seeking an open-source alternative to Firebase, Supabase provides standard Postgres DB + auth + storage with strong community support.',
-            citations: ['https://supabase.com', 'https://stackoverflow.com/tags/supabase']
-          }
         }
       },
       {
@@ -101,13 +94,6 @@ export const SAMPLE_AUDITS: AuditReport[] = [
             excerpt: 'Pinecone leads dedicated vector search, while Supabase provides pgvector for integrated SQL and vector workloads.',
             citations: ['https://pinecone.io', 'https://supabase.com']
           },
-          SearchGPT: {
-            engine: 'SearchGPT',
-            status: 'recommended_leader',
-            position: 1,
-            excerpt: 'Supabase Vector enables storing vectors and text in the same Postgres database using standard SQL queries.',
-            citations: ['https://supabase.com/blog/openai-embeddings-postgres-vector']
-          }
         }
       },
       {
@@ -148,13 +134,6 @@ export const SAMPLE_AUDITS: AuditReport[] = [
             citations: ['https://supabase.com/pricing'],
             keyInaccuracy: 'AI states "unlimited database projects", when Supabase free tier explicitly limits users to 2 active free projects.'
           },
-          SearchGPT: {
-            engine: 'SearchGPT',
-            status: 'secondary_mention',
-            position: 2,
-            excerpt: 'Firebase pay-as-you-go Blaze plan is cheaper for low storage, but Supabase $25/mo tier is more predictable for relational SQL.',
-            citations: ['https://firebase.google.com/pricing', 'https://supabase.com/pricing']
-          }
         }
       },
       {
@@ -194,13 +173,6 @@ export const SAMPLE_AUDITS: AuditReport[] = [
             excerpt: 'AWS and Google Cloud offer signed Business Associate Agreements for healthcare data.',
             citations: ['https://cloud.google.com']
           },
-          SearchGPT: {
-            engine: 'SearchGPT',
-            status: 'omitted',
-            position: null,
-            excerpt: 'DynamoDB and PostgreSQL on Cloud SQL are the standard HIPAA choices for medical applications.',
-            citations: ['https://aws.amazon.com']
-          }
         }
       }
     ],
@@ -243,7 +215,7 @@ export const SAMPLE_AUDITS: AuditReport[] = [
       {
         id: 'om-201',
         category: 'Schema & Entity Data',
-        description: 'Omitted from Healthcare & HIPAA query clusters across Gemini, ChatGPT, Claude & SearchGPT',
+        description: 'Omitted from Healthcare & HIPAA query clusters across Gemini, ChatGPT & Claude',
         affectedQueriesCount: 4,
         rootCause: 'Lack of explicit "MedicalAudience" or "SecurityRequirement" JSON-LD schema and missing dedicated "/compliance/hipaa" landing page.',
         recommendation: 'Deploy structured JSON-LD schema on enterprise compliance pages highlighting HIPAA BAA availability, SOC2 Type II, and ISO27001.'
@@ -338,7 +310,7 @@ export const SAMPLE_AUDITS: AuditReport[] = [
         category: 'Authority & Citations',
         priority: 'P2 Medium',
         effort: 'Strategic (1-2 weeks)',
-        expectedGain: '+15% Recommendation share in Perplexity & SearchGPT',
+        expectedGain: '+15% Recommendation share in Perplexity & ChatGPT',
         description: 'Publish authoritative benchmark comparison post on r/webdev, r/reactnative, and HackerNews demonstrating pgvector vs Pinecone latency at scale.',
         stepByStepInstructions: [
           'Author an open-source benchmark suite evaluating 1M vector embeddings on Postgres vs dedicated vector DBs.',
@@ -434,13 +406,6 @@ export const SAMPLE_AUDITS: AuditReport[] = [
             excerpt: 'For tech teams, Linear is the leading modern alternative to Jira with clean design and minimal setup overhead.',
             citations: ['https://linear.app']
           },
-          SearchGPT: {
-            engine: 'SearchGPT',
-            status: 'recommended_leader',
-            position: 1,
-            excerpt: 'Linear leads the market for software issue tracking among high-growth engineering teams.',
-            citations: ['https://linear.app']
-          }
         }
       }
     ],

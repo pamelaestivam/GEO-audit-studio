@@ -251,7 +251,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
         </h1>
 
         <p className="text-slate-300 text-sm max-w-2xl mx-auto leading-relaxed">
-          Test real buyer intent queries across top AI search models (Gemini, ChatGPT, Perplexity, Claude, SearchGPT). Identify hallucinations, resolve omissions, and get an actionable remediation plan.
+          Test real buyer intent queries across top AI search models (Gemini, ChatGPT, Perplexity, Claude). Identify hallucinations, resolve omissions, and get an actionable remediation plan.
         </p>
       </div>
 
@@ -456,7 +456,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           </div>
           <h3 className="text-sm font-bold text-white">Query Intent Matrix</h3>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Evaluates how Gemini, ChatGPT, Perplexity, Claude, and SearchGPT respond across 6 key buyer intent query types.
+            Evaluates how Gemini, ChatGPT, Perplexity, and Claude respond across 6 key buyer intent query types.
           </p>
         </div>
 

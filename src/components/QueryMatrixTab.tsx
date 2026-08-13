@@ -22,7 +22,21 @@ const INTENT_LABELS: Record<QueryIntent, { label: string; color: string }> = {
  * Only engines the backend genuinely queries are displayed. Listing engines we
  * do not call would mean presenting invented data as measurement.
  */
-const ENGINES: AiEngine[] = ['Gemini'];
+const KNOWN_ENGINES: AiEngine[] = ['Gemini', 'ChatGPT', 'Perplexity', 'Claude'];
+
+/**
+ * Show only engines this audit genuinely queried. Displaying an engine we did
+ * not call would present an absence of data as a finding about the brand.
+ */
+function resolveMeasuredEngines(
+  audit?: { measuredEngines?: string[]; enginesRequested?: string[] } | null
+): AiEngine[] {
+  // Prefer every engine we attempted: an engine whose calls all failed still
+  // deserves a column reading "No data", rather than vanishing silently.
+  const attempted = audit?.enginesRequested?.length ? audit.enginesRequested : audit?.measuredEngines || [];
+  const matched = KNOWN_ENGINES.filter((e) => attempted.includes(e));
+  return matched.length > 0 ? matched : ['Gemini'];
+}
 
 const STATUS_BADGES: Record<RecommendationStatus, { label: string; bg: string; text: string; icon: React.ReactNode }> = {
   recommended_leader: {
@@ -54,6 +68,12 @@ const STATUS_BADGES: Record<RecommendationStatus, { label: string; bg: string; t
     bg: 'bg-amber-500/20 border-amber-500/40',
     text: 'text-amber-300',
     icon: <AlertTriangle className="h-3 w-3 text-amber-400" />
+  },
+  retrieval_failed: {
+    label: 'No data',
+    bg: 'bg-slate-800/60 border-dashed border-slate-600',
+    text: 'text-slate-500',
+    icon: <HelpCircle className="h-3 w-3 text-slate-500" />
   }
 };
 
@@ -77,6 +97,7 @@ const getStatusBadge = (status?: string) => {
 };
 
 export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], businessName, audit, onAppendQueryToAudit }) => {
+  const ENGINES = resolveMeasuredEngines(audit);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIntent, setSelectedIntent] = useState<string>('all');
   const [selectedEngineFilter, setSelectedEngineFilter] = useState<string>('all');
@@ -160,7 +181,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
                 </span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Type any target buyer query to append it to the audit list and test live search visibility across Gemini, ChatGPT, Perplexity, Claude, and SearchGPT.
+                Type any target buyer query to append it to the audit list and test live search visibility across Gemini, ChatGPT, Perplexity, and Claude.
               </p>
             </div>
           </div>
@@ -283,11 +304,11 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
               <tr>
                 <th className="py-3 px-4">Search Query & Target Persona</th>
                 <th className="py-3 px-4">Intent</th>
-                <th className="py-3 px-4 text-center">Gemini</th>
-                <th className="py-3 px-4 text-center">ChatGPT</th>
-                <th className="py-3 px-4 text-center">Perplexity</th>
-                <th className="py-3 px-4 text-center">Claude</th>
-                <th className="py-3 px-4 text-center">SearchGPT</th>
+                {ENGINES.map((eng) => (
+                  <th key={eng} className="py-3 px-4 text-center">
+                    {eng}
+                  </th>
+                ))}
                 <th className="py-3 px-4 text-right">Details</th>
               </tr>
             </thead>

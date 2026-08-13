@@ -27,7 +27,7 @@ Date: ${new Date(audit.createdAt).toLocaleDateString()}
 GEO Visibility Index: ${audit.geoVisibilityScore}/100
 Share of Voice: ${audit.shareOfVoice}%
 Leader Recommendation Share: ${audit.leaderShare}%
-Fact Accuracy Rate: ${audit.accuracyRate}%
+Fact Accuracy Rate: ${audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A (brand not mentioned)' : `${audit.accuracyRate}%`}
 
 EXECUTIVE SUMMARY:
 ${audit.executiveSummary}
@@ -114,7 +114,7 @@ ${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.tit
             </div>
             <div>
               <span className="text-slate-400 block text-[11px]">Fact Accuracy Rate</span>
-              <span className="text-xl font-bold text-sky-400">{audit.accuracyRate}%</span>
+              <span className="text-xl font-bold text-sky-400">{audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A' : `${audit.accuracyRate}%`}</span>
             </div>
           </div>
 

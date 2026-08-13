@@ -86,22 +86,42 @@ export function findFirstMention(text: string, matcher: BrandMatcher): number {
   let earliest = -1;
   for (const token of matcher.tokens) {
     if (token.length < 3) continue;
-    const flags = matcher.strictCase ? 'g' : 'gi';
-    const pattern = new RegExp(`\\b${escapeRegex(token)}\\b`, flags);
 
-    if (matcher.strictCase) {
-      // Require a capitalised occurrence: "Square" the company, not "square" the adjective.
-      const capitalised = token.charAt(0).toUpperCase() + token.slice(1);
-      const strict = new RegExp(`\\b${escapeRegex(capitalised)}\\b`, 'g');
-      const hit = strict.exec(text);
-      if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
-      continue;
-    }
+    // Common-word brands must appear capitalised ("Square" the company, not
+    // "square" the adjective); everything else matches case-insensitively.
+    const needle = matcher.strictCase
+      ? token.charAt(0).toUpperCase() + token.slice(1)
+      : token;
+    const pattern = new RegExp(`\\b${escapeRegex(needle)}\\b`, matcher.strictCase ? 'g' : 'gi');
 
     const hit = pattern.exec(text);
     if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
   }
   return earliest;
+}
+
+/**
+ * Drop matchers that would double-count the same company.
+ *
+ * Vendor discovery returns names as written, so "Stripe" and "Stripe, Inc."
+ * can both arrive. Left alone, each would score its own mention of the same
+ * sentence, inflating the share-of-voice denominator and letting one company
+ * occupy two ranks. Earlier matchers win, so the client (always first) and the
+ * competitors the user explicitly tracked survive over discovered variants.
+ */
+export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
+  const kept: BrandMatcher[] = [];
+  for (const candidate of matchers) {
+    if (!candidate.label) continue;
+    const overlaps = kept.some(
+      (existing) =>
+        findFirstMention(candidate.label, existing) >= 0 ||
+        findFirstMention(existing.label, candidate) >= 0 ||
+        (!!existing.domain && existing.domain === candidate.domain)
+    );
+    if (!overlaps) kept.push(candidate);
+  }
+  return kept;
 }
 
 /** True when the brand's own domain appears among the cited sources. */

@@ -18,6 +18,25 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl mb-8 backdrop-blur-sm">
+      {/*
+        A failed audit must never read as a finding of zero. When no evidence was
+        collected, say so before any number is shown.
+      */}
+      {audit.degraded && (
+        <div className="mb-6 flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+          <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-amber-200">
+              Audit incomplete — the figures below are not measurements
+            </div>
+            <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
+              {audit.degradedReason ||
+                'No evidence could be collected from the answer engines, so this report contains placeholder values rather than findings about this brand.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner: Company Metadata + GEO Score Radial Badge */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-800">
         <div className="space-y-2">
@@ -103,7 +122,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <span>Fact Accuracy Rate</span>
             <CheckCircle2 className="h-3.5 w-3.5 text-sky-400" />
           </div>
-          <div className="text-2xl font-bold text-sky-400">{audit.accuracyRate}%</div>
+          <div className="text-2xl font-bold text-sky-400">{audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A' : `${audit.accuracyRate}%`}</div>
           <p className="text-[11px] text-slate-400 mt-1">Mentions free of false claims or hallucinations</p>
         </div>
 
