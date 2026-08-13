@@ -336,7 +336,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
                           {q.targetPersona}
                         </span>
                         <span>•</span>
-                        <span>{q.monthlySearchVolumeEstimate}</span>
+                        <span>{q.monthlySearchVolumeEstimate || 'Volume not measured'}</span>
                       </div>
 
                       {/* Live Citations Preview */}
@@ -436,7 +436,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
                   </span>
                   <span>•</span>
                   <span>
-                    <strong>Search Volume:</strong> {selectedQueryModal.monthlySearchVolumeEstimate}
+                    <strong>Search Volume:</strong> {selectedQueryModal.monthlySearchVolumeEstimate || 'Not measured'}
                   </span>
                 </div>
               </div>
@@ -451,7 +451,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
             {/* AI Engine Responses Comparison Cards */}
             <div className="space-y-4">
               <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Simulated AI Engine Search Responses & Citations
+                Captured AI Engine Responses & Citations
               </h4>
 
               <div className="grid grid-cols-1 gap-4">

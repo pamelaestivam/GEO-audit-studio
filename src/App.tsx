@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { Sidebar, TabType } from './components/Sidebar';
 import { ExecutiveSummaryCard } from './components/ExecutiveSummaryCard';
@@ -34,6 +34,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('queries');
 
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const [monitoringConfig, setMonitoringConfig] = useState<MonitoringConfig>(DEFAULT_MONITORING_CONFIG);
 
   // Modals
@@ -59,6 +60,17 @@ export default function App() {
   };
 
   const activeAudit = audits.find((a) => a.id === activeAuditId) || (audits.length > 0 ? audits[0] : null);
+
+  /**
+   * On phones the navigation sits above the dashboard, so changing module
+   * swapped content the user could not see and read as a dead button. Bring the
+   * new module into view; on wider screens both are visible already.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+    contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [activeTab]);
 
   // Reset to clean search bar
   const handleResetToFreshSearch = () => {
@@ -203,10 +215,10 @@ export default function App() {
           {activeAudit ? (
             <>
               {/* Executive Summary Card */}
-              <ExecutiveSummaryCard audit={activeAudit} />
+              <ExecutiveSummaryCard audit={activeAudit} onNavigate={setActiveTab} />
 
               {/* Active Module Content Pane */}
-              <div className="mt-6">
+              <div className="mt-6 scroll-mt-4" ref={contentRef}>
                 {activeTab === 'queries' && (
                   <QueryMatrixTab
                     queries={activeAudit.queriesTested}

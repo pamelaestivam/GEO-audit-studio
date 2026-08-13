@@ -1,12 +1,19 @@
 import React from 'react';
 import { ShieldCheck, AlertTriangle, HelpCircle, TrendingUp, CheckCircle2, Globe, Building2, ExternalLink, Award } from 'lucide-react';
 import { AuditReport } from '../types';
+import { TabType } from './Sidebar';
 
 interface ExecutiveSummaryCardProps {
   audit: AuditReport;
+  /** Jump to the module a metric belongs to. */
+  onNavigate?: (tab: TabType) => void;
 }
 
-export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audit }) => {
+export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audit, onNavigate }) => {
+  // Every headline metric is backed by a module. The tiles used to be inert
+  // divs, so tapping the number a user cared about did nothing at all.
+  const tileClass =
+    'text-left w-full bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 transition hover:border-indigo-500/50 hover:bg-slate-900/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 active:scale-[0.99] cursor-pointer';
   const scoreColor =
     audit.geoVisibilityScore >= 80
       ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
@@ -99,34 +106,34 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
 
       {/* Key Metric Indicators */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-6 pb-6 border-b border-slate-800">
-        <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4">
+        <button type="button" onClick={() => onNavigate?.('competitors')} className={tileClass}>
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
             <span>Share of Voice (SOV)</span>
             <TrendingUp className="h-3.5 w-3.5 text-indigo-400" />
           </div>
           <div className="text-2xl font-bold text-white">{audit.shareOfVoice}%</div>
           <p className="text-[11px] text-slate-400 mt-1">Appeared in {audit.shareOfVoice}% of tested search prompts</p>
-        </div>
+        </button>
 
-        <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4">
+        <button type="button" onClick={() => onNavigate?.('queries')} className={tileClass}>
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
             <span>#1 Recommendation Rate</span>
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
           </div>
           <div className="text-2xl font-bold text-emerald-400">{audit.leaderShare}%</div>
           <p className="text-[11px] text-slate-400 mt-1">Ranked as top recommended solution</p>
-        </div>
+        </button>
 
-        <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4">
+        <button type="button" onClick={() => onNavigate?.('inaccuracies')} className={tileClass}>
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
             <span>Fact Accuracy Rate</span>
             <CheckCircle2 className="h-3.5 w-3.5 text-sky-400" />
           </div>
           <div className="text-2xl font-bold text-sky-400">{audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A' : `${audit.accuracyRate}%`}</div>
           <p className="text-[11px] text-slate-400 mt-1">Mentions free of false claims or hallucinations</p>
-        </div>
+        </button>
 
-        <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-4">
+        <button type="button" onClick={() => onNavigate?.('inaccuracies')} className={tileClass}>
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
             <span>Inaccuracies & Omissions</span>
             <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
@@ -137,7 +144,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
           <p className="text-[11px] text-slate-400 mt-1">
             {(audit.inaccuracies || []).length} inaccuracies & {(audit.omissions || []).length} intent omissions
           </p>
-        </div>
+        </button>
       </div>
 
       {/* Executive Narrative */}

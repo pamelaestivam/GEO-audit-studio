@@ -13,6 +13,7 @@ import {
   findFirstMention,
   type QueryEvidence,
 } from './src/analysis';
+import { describeProviderError, parseRetryDelaySeconds, summariseFailures } from './src/errors';
 import {
   askEngine,
   configuredEngines,
@@ -54,35 +55,61 @@ async function startServer() {
   // Helper to delay execution
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Helper: Wrapper for Gemini generateContent with exponential backoff for rate limits (429 / RESOURCE_EXHAUSTED)
+  /**
+   * Serialise Gemini traffic.
+   *
+   * The free tier limits requests per minute, and one audit issues many calls
+   * (brand lookup, query generation, one grounded search per query, vendor
+   * discovery, narrative). Firing them back to back exhausts the quota and the
+   * whole audit fails. Every Gemini call therefore queues behind the previous
+   * one with a minimum gap.
+   */
+  const MIN_GEMINI_INTERVAL_MS = Number(process.env.GEMINI_MIN_INTERVAL_MS || 4000);
+  let geminiChain: Promise<unknown> = Promise.resolve();
+  let lastGeminiCallAt = 0;
+
+  function scheduleGeminiCall<T>(fn: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      const waitFor = lastGeminiCallAt + MIN_GEMINI_INTERVAL_MS - Date.now();
+      if (waitFor > 0) await delay(waitFor);
+      lastGeminiCallAt = Date.now();
+      return fn();
+    };
+    const next = geminiChain.then(run, run);
+    geminiChain = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Gemini call with quota-aware retry. When the API tells us how long to wait
+   * we honour it; per-minute limits need tens of seconds, not the two we used
+   * to wait, which meant every retry failed too.
+   */
   async function generateContentWithRetry(
     aiInstance: GoogleGenAI,
     params: any,
-    maxRetries = 2,
-    initialDelayMs = 2000
+    maxRetries = Number(process.env.GEMINI_MAX_RETRIES || 3)
   ): Promise<any> {
     let attempt = 0;
-    let delayMs = initialDelayMs;
 
     while (true) {
       try {
-        return await aiInstance.models.generateContent(params);
+        return await scheduleGeminiCall(() => aiInstance.models.generateContent(params));
       } catch (err: any) {
         attempt++;
-        const errStr = String(err?.message || err || '');
-        const isRateLimit =
-          errStr.includes('429') ||
-          errStr.includes('RESOURCE_EXHAUSTED') ||
-          errStr.includes('quota') ||
-          errStr.includes('rate limit');
+        const readable = describeProviderError(err, 'Gemini');
+        const retryable = readable.kind === 'quota' || readable.kind === 'timeout' || readable.kind === 'network';
 
-        if (isRateLimit && attempt <= maxRetries) {
-          console.log(`[Gemini API Info] Pacing request due to rate limit (Attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`);
-          await delay(delayMs);
-          delayMs *= 2;
-        } else {
-          throw err;
-        }
+        if (!retryable || attempt > maxRetries) throw err;
+
+        // A daily cap will not clear by waiting a few seconds; fail fast so the
+        // user gets the actionable message instead of a long hang.
+        if (/per day|daily/i.test(String(err?.message || err))) throw err;
+
+        const suggested = parseRetryDelaySeconds(String(err?.message || err));
+        const waitMs = suggested ? suggested * 1000 : Math.min(60000, 15000 * attempt);
+        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}; waiting ${Math.round(waitMs / 1000)}s`);
+        await delay(waitMs);
       }
     }
   }
@@ -213,6 +240,7 @@ async function startServer() {
 
       const ai = getGeminiClient();
       let details = null;
+      let detectionError: unknown = null;
 
       if (ai) {
         try {
@@ -251,25 +279,33 @@ Return a valid JSON object matching the requested schema.`;
 
           details = parseJsonText(response.text);
         } catch (genErr) {
-          console.log('URL parser Gemini call fallback engaged');
+          detectionError = genErr;
+          console.log(`Brand lookup failed: ${describeProviderError(genErr, 'Brand lookup').message}`);
         }
       }
 
+      // Detection either worked or it did not. Inventing an industry, a set of
+      // offerings or a competitor list would put made-up facts about a real
+      // business in front of the user, and the client would then overwrite what
+      // they typed with them. Return only what we actually derived.
       if (!details || !details.businessName) {
-        details = {
-          businessName: parsedBusinessName,
-          domain: parsedDomain,
-          industry: 'Software & Technology Services',
-          coreOfferings: 'Digital cloud services, automation & SaaS platform',
-          targetAudience: 'Enterprise decision makers & procurement',
-          competitors: ['Industry Competitor A', 'Industry Competitor B']
-        };
+        return res.json({
+          details: {
+            businessName: parsedBusinessName,
+            domain: parsedDomain,
+          },
+          detected: false,
+          reason: detectionError
+            ? describeProviderError(detectionError, 'Brand lookup').message
+            : 'Brand lookup returned nothing for this input.',
+        });
       }
 
-      res.json({ details });
+      res.json({ details, detected: true });
     } catch (err: any) {
-      console.log('Error in parse-url route: Fallback engaged');
-      res.status(500).json({ error: 'Failed to analyze URL or brand name' });
+      const readable = describeProviderError(err, 'Brand lookup');
+      console.log(`parse-url failed: ${readable.message}`);
+      res.status(500).json({ error: readable.message });
     }
   });
 
@@ -291,22 +327,19 @@ Return a valid JSON object matching the requested schema.`;
         id: 'q-gen-1',
         intent: 'alternatives_search',
         queryText: `Best ${industry || 'software'} alternatives to ${compFirst} for modern teams`,
-        targetPersona: 'Decision Maker / Buyer',
-        monthlySearchVolumeEstimate: '18,000/mo'
+        targetPersona: 'Decision Maker / Buyer'
       },
       {
         id: 'q-gen-2',
         intent: 'commercial_comparison',
         queryText: `${businessName} vs ${compFirst} comparison and features`,
-        targetPersona: 'Product Evaluator',
-        monthlySearchVolumeEstimate: '22,000/mo'
+        targetPersona: 'Product Evaluator'
       },
       {
         id: 'q-gen-3',
         intent: 'pricing_roi',
         queryText: `${businessName} pricing free tier limits and enterprise contract cost`,
-        targetPersona: 'CTO / Procurement',
-        monthlySearchVolumeEstimate: '12,500/mo'
+        targetPersona: 'CTO / Procurement'
       }
     ];
   };
@@ -358,10 +391,9 @@ Return a JSON array of exactly 3 query objects.`;
                   id: { type: Type.STRING, description: 'Unique query id, e.g. q-1' },
                   intent: { type: Type.STRING, description: 'One of the allowed query intent strings' },
                   queryText: { type: Type.STRING, description: 'Exact search query string' },
-                  targetPersona: { type: Type.STRING, description: 'Target user persona asking this query' },
-                  monthlySearchVolumeEstimate: { type: Type.STRING, description: 'Estimated search volume, e.g. 18,500/mo' }
+                  targetPersona: { type: Type.STRING, description: 'Target user persona asking this query' }
                 },
-                required: ['id', 'intent', 'queryText', 'targetPersona', 'monthlySearchVolumeEstimate']
+                required: ['id', 'intent', 'queryText', 'targetPersona']
               }
             }
           }
@@ -407,7 +439,6 @@ Return a JSON array of exactly 3 query objects.`;
         intent: 'feature_specific',
         queryText: String(queryText).trim(),
         targetPersona: 'Target Customer',
-        monthlySearchVolumeEstimate: 'n/a',
       };
 
       // Vendor discovery runs on Gemini, so Gemini is required even when other
@@ -435,10 +466,11 @@ Return a JSON array of exactly 3 query objects.`;
       const usable = evidence.filter((e) => !e.error && e.answerText.trim().length > 0);
 
       if (usable.length === 0) {
-        const failures = Array.from(new Set(evidence.map((e) => e.error).filter(Boolean)));
-        return res.status(502).json({
-          error: `No engine returned an answer for this query. ${failures.slice(0, 2).join(' | ')}`,
-        });
+        const readable = summariseFailures(
+          evidence.map((e) => e.error).filter(Boolean),
+          'The answer engine'
+        );
+        return res.status(502).json({ error: readable.message });
       }
 
       const clientMatcher = buildBrandMatcher(businessName, domain);
@@ -841,19 +873,18 @@ Return valid JSON matching the schema.`;
       const usableEvidence = allEvidence.filter((e) => !e.error && e.answerText.trim().length > 0);
 
       if (usableEvidence.length === 0) {
-        const failures = Array.from(new Set(allEvidence.map((e) => e.error).filter(Boolean)));
+        const failures = allEvidence.map((e) => e.error).filter(Boolean);
+        const readable = summariseFailures(failures, 'The answer engine');
         const degraded = generateSynthesizedAudit(
           businessName, domain, industry, coreOfferings, competitorList, queryList
         );
         degraded.executiveSummary =
-          `Audit could not complete: every engine request failed, so no evidence was collected. ` +
-          `This is an upstream retrieval failure, not a finding about ${businessName}. ` +
-          `Errors: ${failures.slice(0, 3).join(' | ') || 'unknown'}`;
+          `Audit could not complete: ${readable.message} No evidence was collected, so nothing below is a finding about ${businessName}.`;
         return res.json({
           report: {
             ...degraded,
             degraded: true,
-            degradedReason: `Every engine request failed, so no evidence was collected. ${failures.slice(0, 2).join(' | ') || ''}`.trim(),
+            degradedReason: readable.message,
           },
           degraded: true,
         });
@@ -865,16 +896,13 @@ Return valid JSON matching the schema.`;
 
       // Discover the vendors each answer actually named, so ranking is against
       // the real field rather than only the competitors the user typed.
-      const discovered: string[] = [];
-      for (const group of evidenceByQuery) {
-        const vendors = await discoverVendors(ai, group);
-        for (const v of vendors) {
-          const isClient = v.toLowerCase() === clientLabel.toLowerCase();
-          const alreadyTracked = competitorList.some((c: string) => c.toLowerCase() === v.toLowerCase());
-          const alreadyFound = discovered.some((d) => d.toLowerCase() === v.toLowerCase());
-          if (!isClient && !alreadyTracked && !alreadyFound) discovered.push(v);
-        }
-      }
+      // One discovery call for the whole audit rather than one per query: each
+      // extra Gemini call is quota the audit may not have.
+      const discovered = (await discoverVendors(ai, usableEvidence)).filter((v) => {
+        const isClient = v.toLowerCase() === clientLabel.toLowerCase();
+        const alreadyTracked = competitorList.some((c: string) => c.toLowerCase() === v.toLowerCase());
+        return !isClient && !alreadyTracked;
+      });
 
       const trackedMatchers = competitorList.map((c: string) => buildBrandMatcher(c));
       const discoveredMatchers = discovered.map((d) => buildBrandMatcher(d));
@@ -1086,12 +1114,13 @@ Return valid JSON matching the schema.`;
         req.body?.competitors,
         req.body?.queries
       );
-      fallback.executiveSummary = `Audit failed to complete (${err?.message || 'unknown error'}). No findings were generated; these are placeholder values, not measurements.`;
+      const readableFailure = describeProviderError(err, 'The audit service');
+      fallback.executiveSummary = `Audit failed to complete: ${readableFailure.message} No findings were generated; these are placeholder values, not measurements.`;
       res.json({
         report: {
           ...fallback,
           degraded: true,
-          degradedReason: `The audit threw before completing: ${err?.message || 'unknown error'}`,
+          degradedReason: readableFailure.message,
         },
         degraded: true,
       });
@@ -1124,14 +1153,14 @@ function generateSynthesizedAudit(
   domain: string = 'example.com',
   industry: string = 'Software',
   coreOfferings: string = 'Products',
-  competitors: any = ['Competitor A', 'Competitor B'],
+  competitors: any = [],
   queries: any[] = []
 ) {
   const compList = Array.isArray(competitors) ? competitors : [competitors];
   const queryList = queries.length > 0 ? queries : [
-    { id: 'q-1', intent: 'alternatives_search', queryText: `Best alternatives to ${compList[0] || 'market leader'} for ${industry}`, targetPersona: 'Decision Maker', monthlySearchVolumeEstimate: '16,500/mo' },
-    { id: 'q-2', intent: 'commercial_comparison', queryText: `${businessName} vs ${compList[0] || 'Competitor A'} in-depth feature breakdown`, targetPersona: 'Evaluator', monthlySearchVolumeEstimate: '21,000/mo' },
-    { id: 'q-3', intent: 'pricing_roi', queryText: `${businessName} pricing, enterprise licensing costs and free trial`, targetPersona: 'Procurement Manager', monthlySearchVolumeEstimate: '12,200/mo' }
+    { id: 'q-1', intent: 'alternatives_search', queryText: `Best alternatives to ${businessName} for ${industry}`, targetPersona: 'Decision Maker' },
+    { id: 'q-2', intent: 'commercial_comparison', queryText: `${businessName} feature breakdown and comparison`, targetPersona: 'Evaluator' },
+    { id: 'q-3', intent: 'pricing_roi', queryText: `${businessName} pricing, enterprise licensing costs and free trial`, targetPersona: 'Procurement Manager' }
   ];
 
   return {
@@ -1148,11 +1177,6 @@ function generateSynthesizedAudit(
     leaderShare: 0,
     accuracyRate: 0,
     executiveSummary: `Insufficient Data - Live search grounding returned no citation results for ${businessName} (${domain}). Execute a live search audit to index real-world search citations.`,
-    historicalScores: [
-      { date: 'Jun 2026', score: 0, sov: 0 },
-      { date: 'Jul 2026', score: 0, sov: 0 },
-      { date: 'Aug 2026', score: 0, sov: 0 }
-    ],
     queriesTested: queryList.map((q) => ({
       ...q,
       engines: {
@@ -1228,21 +1252,23 @@ function generateSynthesizedAudit(
         completed: false
       }
     ],
+    // Only brands the user actually named. Inventing "Competitor A" would put a
+    // fictional rival in a report about a real business.
     competitorBenchmarks: [
-      {
-        name: compList[0] || 'Competitor A',
-        domain: 'competitor.com',
-        shareOfVoice: 0,
-        topRecommendedCount: 0,
-        mainCitationSources: []
-      },
       {
         name: `${businessName} (Your Business)`,
         domain: domain,
         shareOfVoice: 0,
         topRecommendedCount: 0,
         mainCitationSources: []
-      }
+      },
+      ...compList.filter(Boolean).map((c: string) => ({
+        name: c,
+        domain: '',
+        shareOfVoice: 0,
+        topRecommendedCount: 0,
+        mainCitationSources: []
+      }))
     ]
   };
 }

@@ -6,6 +6,14 @@
 `main`.** `main` auto-deploys to Render and is what clients see, so a merge is a
 release.
 
+**`npm test` must pass before any merge.** It builds, runs the deterministic
+analysis checks, then boots the real server and asserts the product's contract
+with the user (`test/contract.test.ts`): that failed lookups never invent
+business facts, that what the user typed is never overwritten, and that no
+user-visible message contains raw provider JSON. Every check there maps to a
+defect that actually shipped — treat a failure as a shipped-bug alarm, not a
+flaky test.
+
 A green build is not a review. Before merging, explicitly check:
 
 - **Correctness of the metrics**, not just that code runs. Trace one worked
@@ -18,6 +26,12 @@ A green build is not a review. Before merging, explicitly check:
   Never display a number or an engine we did not genuinely query.
 - **Failure paths say they failed**, and are visually distinguishable from a
   real finding of zero.
+- **User input is never overwritten** by detected or generated values, and no
+  field is filled with a guess when a lookup fails.
+- **Every user-visible error is a sentence**, not a provider payload, and says
+  what to do next.
+- **Anything that looks tappable is tappable**, and on a phone the result of
+  tapping it is brought into view rather than left below the fold.
 
 ## Architecture
 
@@ -66,4 +80,6 @@ next session to rediscover.
 - `npm run build` — client bundle + `dist/server.cjs`
 - `npm start` — run the built server
 - `npm run lint` — `tsc --noEmit`
-- `npx tsx test/analysis.test.ts` — deterministic analysis checks
+- `npm test` — build, analysis checks, then server contract checks
+- `npx tsx test/analysis.test.ts` — deterministic analysis checks only
+- `npx tsx test/contract.test.ts` — contract checks (needs a current `dist/`)
