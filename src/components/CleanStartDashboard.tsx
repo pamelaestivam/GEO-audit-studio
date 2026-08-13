@@ -18,6 +18,7 @@ import {
 import { AuditReport } from '../types';
 import { mergeDetectedDetails } from '../detection';
 import { runAuditJob } from '../auditClient';
+import { apiFetch } from '../apiClient';
 
 interface CleanStartDashboardProps {
   onAuditComplete: (newReport: AuditReport) => void;
@@ -82,10 +83,12 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     setIsDetecting(true);
     setDetectionNotice(null);
     try {
-      const res = await fetch('/api/audit/parse-url', {
+      const res = await apiFetch('/api/audit/parse-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: inputStr }),
+        retries: 2,
+        timeoutMs: 15000,
       });
       const data = await res.json();
 
@@ -114,9 +117,9 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
       }
 
       return d;
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Auto-detect URL error:', err);
-      setDetectionNotice('Brand lookup could not be reached. Your entries were kept as typed.');
+      setDetectionNotice(`${err?.message || 'Brand lookup could not be reached.'} Your entries were kept as typed.`);
     } finally {
       setIsDetecting(false);
     }
