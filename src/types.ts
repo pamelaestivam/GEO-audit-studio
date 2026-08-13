@@ -25,13 +25,39 @@ export interface EngineResult {
   keyOmissionReason?: string;
 }
 
+/** Verbatim record of what an answer engine returned, so findings stay auditable. */
+export interface QueryEvidenceRecord {
+  answerText: string;
+  citations: { url: string; title: string; domain: string }[];
+  searchQueries: string[];
+  capturedAt: string;
+  engine: string;
+  error?: string;
+}
+
 export interface AuditQuery {
   id: string;
   intent: QueryIntent;
   queryText: string;
   targetPersona: string;
   monthlySearchVolumeEstimate: string;
-  engines: Record<AiEngine, EngineResult>;
+  /** Only engines actually queried appear here. */
+  engines: Partial<Record<AiEngine, EngineResult>>;
+  evidence?: QueryEvidenceRecord;
+  /** Brands the engine named ahead of the audited business. */
+  competitorsAhead?: string[];
+  /** 0-100; how early the brand appears in the answer. */
+  prominence?: number;
+}
+
+/** A domain the answer engine relied on when composing its answers. */
+export interface CitationSource {
+  domain: string;
+  citationCount: number;
+  queryCount: number;
+  isOwned: boolean;
+  sampleUrl: string;
+  sampleTitle: string;
 }
 
 export interface InaccuracyItem {
@@ -97,6 +123,14 @@ export interface AuditReport {
   remediationPlan: RemediationTask[];
   competitorBenchmarks: CompetitorBenchmark[];
   historicalScores?: { date: string; score: number; sov: number }[];
+  /** Domains the answer engine cited, ranked by frequency. */
+  citationSources?: CitationSource[];
+  /** Engines genuinely queried in this audit - never a claim about untested ones. */
+  measuredEngines?: string[];
+  /** Average prominence (0-100) of the brand across answers where it appeared. */
+  avgProminence?: number;
+  queriesAttempted?: number;
+  queriesWithEvidence?: number;
 }
 
 export interface User {

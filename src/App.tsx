@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { Sidebar, TabType } from './components/Sidebar';
 import { ExecutiveSummaryCard } from './components/ExecutiveSummaryCard';
 import { QueryMatrixTab } from './components/QueryMatrixTab';
+import { CitationSourceTab } from './components/CitationSourceTab';
 import { InaccuraciesTab } from './components/InaccuraciesTab';
 import { OmissionAnalysisTab } from './components/OmissionAnalysisTab';
 import { RemediationPlanTab } from './components/RemediationPlanTab';
@@ -126,7 +127,8 @@ export default function App() {
         const totalQueries = updatedQueries.length;
         const newGeoScore = totalQueries > 0 ? Math.round((citedQueriesCount / totalQueries) * 100) : 0;
 
-        const ENGINES = ['Gemini', 'ChatGPT', 'Perplexity', 'Claude', 'SearchGPT'] as const;
+        // Only engines the backend actually queries count toward measured metrics.
+        const ENGINES = ['Gemini'] as const;
         let appearedCount = 0;
         let leaderCount = 0;
         const totalPairs = updatedQueries.length * ENGINES.length;
@@ -213,6 +215,8 @@ export default function App() {
                     onAppendQueryToAudit={handleAppendQueryToAudit}
                   />
                 )}
+
+                {activeTab === 'sources' && <CitationSourceTab audit={activeAudit} />}
 
                 {activeTab === 'inaccuracies' && (
                   <InaccuraciesTab

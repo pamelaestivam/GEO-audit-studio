@@ -18,7 +18,11 @@ const INTENT_LABELS: Record<QueryIntent, { label: string; color: string }> = {
   pricing_roi: { label: 'Pricing & ROI', color: 'bg-pink-500/10 text-pink-300 border-pink-500/30' },
 };
 
-const ENGINES: AiEngine[] = ['Gemini', 'ChatGPT', 'Perplexity', 'Claude', 'SearchGPT'];
+/**
+ * Only engines the backend genuinely queries are displayed. Listing engines we
+ * do not call would mean presenting invented data as measurement.
+ */
+const ENGINES: AiEngine[] = ['Gemini'];
 
 const STATUS_BADGES: Record<RecommendationStatus, { label: string; bg: string; text: string; icon: React.ReactNode }> = {
   recommended_leader: {
