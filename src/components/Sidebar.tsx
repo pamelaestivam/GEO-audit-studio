@@ -6,6 +6,7 @@ import {
   Sparkles,
   BarChart3,
   Bell,
+  Globe,
   Building2,
   TrendingUp,
   LogOut,
@@ -15,6 +16,7 @@ import { AuditReport, User } from '../types';
 
 export type TabType =
   | 'queries'
+  | 'sources'
   | 'inaccuracies'
   | 'omissions'
   | 'remediation'
@@ -44,6 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const totalInaccuracies = audit ? (audit.inaccuracies || []).length : 0;
   const totalOmissions = audit ? (audit.omissions || []).length : 0;
   const totalQueries = audit ? (audit.queriesTested || []).length : 0;
+  const totalSources = audit ? (audit.citationSources || []).length : 0;
 
   const navItems = [
     {
@@ -53,6 +56,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: totalQueries,
       badgeStyle: 'bg-slate-800 text-slate-300',
       activeColor: 'border-l-4 border-indigo-500 bg-indigo-500/10 text-indigo-400',
+    },
+    {
+      id: 'sources' as TabType,
+      label: 'Citation Source Map',
+      icon: Globe,
+      badge: totalSources > 0 ? totalSources : null,
+      badgeStyle: 'bg-blue-500/20 text-blue-300 font-bold border border-blue-500/30',
+      activeColor: 'border-l-4 border-blue-500 bg-blue-500/10 text-blue-400',
     },
     {
       id: 'inaccuracies' as TabType,

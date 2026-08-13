@@ -4,8 +4,19 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { SAMPLE_AUDITS } from './src/data/sampleAudits';
+import {
+  analyseAnswer,
+  buildBrandMatcher,
+  buildCitationSourceMap,
+  buildScorecards,
+  extractDomain,
+  type QueryEvidence,
+} from './src/analysis';
 
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+
+/** Single source of truth for the audit model, so it can be swapped in one place. */
+const AUDIT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
 async function startServer() {
   const app = express();
@@ -321,7 +332,7 @@ Use live web search to identify real current details:
 Return a valid JSON object matching the requested schema.`;
 
           const response = await generateContentWithRetry(ai, {
-            model: 'gemini-3.6-flash',
+            model: AUDIT_MODEL,
             contents: prompt,
             config: {
               systemInstruction: 'You are a strict data auditing tool. Do not generate fictional or inferred metrics. If live data or search citations are unavailable for a query, explicitly return null/empty arrays instead of generating placeholders.',
@@ -437,7 +448,7 @@ Return a JSON array of exactly 3 query objects.`;
       let queries = null;
       try {
         const response = await generateContentWithRetry(ai, {
-          model: 'gemini-3.6-flash',
+          model: AUDIT_MODEL,
           contents: prompt,
           config: {
             systemInstruction: 'You are a strict data auditing tool. Do not generate fictional or inferred metrics. If live data or search citations are unavailable for a query, explicitly return null/empty arrays instead of generating placeholders.',
@@ -522,20 +533,11 @@ Return a JSON array of exactly 3 query objects.`;
 
       try {
         const searchGrounded = await generateContentWithRetry(ai, {
-          model: 'gemini-3.6-flash',
+          model: AUDIT_MODEL,
           contents: `Search Query: "${queryText}". Answer this user query as an AI Search Engine using live web search data. Indicate top recommended solutions and evaluate "${businessName}" (${domain || 'N/A'}) if relevant.`,
           config: {
             systemInstruction: 'You are a strict data auditing tool. Rely strictly on live web search grounding. Do not generate placeholders.',
-            tools: [
-              {
-                googleSearch: {
-                  dynamicRetrievalConfig: {
-                    mode: 'MODE_DYNAMIC',
-                    dynamicThreshold: 0.0
-                  }
-                }
-              } as any
-            ]
+            tools: [{ googleSearch: {} }]
           }
         });
 
@@ -598,7 +600,7 @@ Return a JSON object matching the schema.`;
       };
 
       const response = await generateContentWithRetry(ai, {
-        model: 'gemini-3.6-flash',
+        model: AUDIT_MODEL,
         contents: evaluatePrompt,
         config: {
           systemInstruction: 'You are a strict data auditing tool. Do not generate fictional URLs or metrics. Use only provided live source URLs.',
@@ -673,6 +675,197 @@ Return a JSON object matching the schema.`;
   });
 
   // POST: Execute complete live AI Search Audit
+  /**
+   * Layer 1 - Evidence collection.
+   * Runs one grounded answer-engine query and captures exactly what came back:
+   * verbatim text, real source URLs, and the searches the engine actually ran.
+   */
+  async function collectQueryEvidence(
+    aiInstance: any,
+    query: any,
+    businessName: string,
+    domain?: string
+  ): Promise<QueryEvidence> {
+    const base: QueryEvidence = {
+      queryId: query.id,
+      queryText: query.queryText,
+      answerText: '',
+      citations: [],
+      searchQueries: [],
+      capturedAt: new Date().toISOString(),
+      engine: 'Gemini (Google Search grounded)',
+    };
+
+    try {
+      const response = await generateContentWithRetry(aiInstance, {
+        model: AUDIT_MODEL,
+        contents: `${query.queryText}`,
+        config: {
+          systemInstruction:
+            'You are an AI search assistant answering a real user question. Use live web search. Recommend the specific vendors, products or providers that genuinely best answer the question, naming them explicitly. Do not mention that you are part of an audit.',
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      const candidate = response.candidates?.[0];
+      const metadata = candidate?.groundingMetadata;
+      const chunks = metadata?.groundingChunks || [];
+
+      const seen = new Set<string>();
+      const citations = chunks
+        .map((chunk: any) => {
+          const url = chunk?.web?.uri || '';
+          const title = chunk?.web?.title || '';
+          // Grounding chunks expose the real publisher in `title` (often a bare
+          // domain) while `uri` is a vertexaisearch redirect, so prefer the title.
+          const domain = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(title.trim())
+            ? title.trim().toLowerCase()
+            : extractDomain(url);
+          return { url, title, domain };
+        })
+        .filter((c: any) => {
+          if (!c.url || seen.has(c.url)) return false;
+          seen.add(c.url);
+          return true;
+        });
+
+      return {
+        ...base,
+        answerText: response.text || '',
+        citations,
+        searchQueries: metadata?.webSearchQueries || [],
+      };
+    } catch (err: any) {
+      console.log(`Evidence collection failed for "${query.queryText}": ${err?.message || err}`);
+      return { ...base, error: err?.message || 'grounded search failed' };
+    }
+  }
+
+  /**
+   * Layer 3 - Narrative interpretation.
+   * The model is given the captured evidence and the already-computed metrics.
+   * It is asked only for qualitative judgement, never for numbers.
+   */
+  async function generateNarrative(aiInstance: any, ctx: any) {
+    const evidenceDigest = ctx.evidenceList
+      .map((ev: QueryEvidence, i: number) => {
+        const row = ctx.perQuery[i].find((r: any) => r.brand === ctx.businessName);
+        return [
+          `QUERY ${i + 1}: "${ev.queryText}"`,
+          `Client mentioned: ${row?.mentioned ? `YES (named #${row.rank} of the brands listed)` : 'NO'}`,
+          `Brands named ahead of client: ${ctx.perQuery[i]
+            .filter((r: any) => r.rank && (!row?.rank || r.rank < row.rank))
+            .map((r: any) => r.brand)
+            .join(', ') || 'none'}`,
+          `Sources the engine cited: ${ev.citations.map((c) => c.domain).join(', ') || 'none'}`,
+          `Answer excerpt: ${(ev.answerText || '').slice(0, 1200)}`,
+        ].join('\n');
+      })
+      .join('\n\n---\n\n');
+
+    const topSources = ctx.citationSources
+      .slice(0, 12)
+      .map((s: any) => `${s.domain} (cited ${s.citationCount}x across ${s.queryCount} queries)${s.isOwned ? ' [CLIENT-OWNED]' : ''}`)
+      .join('\n');
+
+    const prompt = `You are a senior Generative Engine Optimization (GEO) consultant writing the analysis section of a paid audit for "${ctx.businessName}" (${ctx.domain}).
+
+Industry: ${ctx.industry}
+Core offerings: ${ctx.coreOfferings}
+Tracked competitors: ${ctx.competitorList.join(', ') || 'none supplied'}
+
+MEASURED RESULTS (already computed from captured evidence - do NOT recompute or contradict these):
+- Answer-engine visibility: cited in ${ctx.clientScore.timesMentioned} of ${ctx.totalQueries} queries (${ctx.clientScore.visibility}%)
+- Share of voice vs tracked competitors: ${ctx.clientScore.shareOfVoice}%
+- Named first in ${ctx.clientScore.timesFirst} of ${ctx.totalQueries} queries
+- Client's own domain appeared as a cited source ${ctx.clientScore.citedAsSourceCount} times
+
+COMPETITOR SCORECARD:
+${ctx.scorecards.map((s: any) => `- ${s.brand}: mentioned in ${s.timesMentioned}/${ctx.totalQueries} queries, ${s.shareOfVoice}% share of voice, named first ${s.timesFirst}x`).join('\n')}
+
+SOURCES THE ANSWER ENGINE ACTUALLY RELIED ON:
+${topSources || 'none captured'}
+
+RAW EVIDENCE:
+${evidenceDigest}
+
+Write the analysis. Rules:
+- Ground every statement in the evidence above. Never invent a statistic, a citation, or a competitor.
+- "inaccuracies": only list claims the engine made about ${ctx.businessName} that are wrong or misleading, quoting the claim verbatim from the evidence. If the evidence shows none, return an empty array. Never fabricate one to fill space.
+- "omissions": explain WHY the brand is absent where it is absent, tied to the specific source domains above (e.g. absent from the review aggregators and comparison pages the engine cites). Use category values from: "Schema & Entity Data", "Review & Directory Signals", "Comparison & Top 10 Coverage", "Reddit / Forum Sentiment", "Pricing & Feature Clarity".
+- "remediationPlan": 4-7 concrete tasks the client's marketing team can execute, each targeting a specific gap visible in the evidence. Prefer naming the exact source domains to go after. Include a realistic codeSnippet (valid JSON-LD) only where genuinely useful.
+  priority: "P0 Critical" | "P1 High" | "P2 Medium" | "P3 Maintenance"
+  effort: "Quick Win (< 2h)" | "Moderate (1-2 days)" | "Strategic (1-2 weeks)"
+- "executiveSummary": 3-5 sentences a CMO can read. State the visibility position, who is winning the answer surface and why, and the single highest-leverage move.
+
+Return valid JSON matching the schema.`;
+
+    const response = await generateContentWithRetry(aiInstance, {
+      model: AUDIT_MODEL,
+      contents: prompt,
+      config: {
+        systemInstruction:
+          'You are a rigorous audit analyst. Every claim must trace to supplied evidence. Empty arrays are strongly preferred over invented findings.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            executiveSummary: { type: Type.STRING },
+            inaccuracies: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  queryText: { type: Type.STRING },
+                  claimedFact: { type: Type.STRING },
+                  actualFact: { type: Type.STRING },
+                  impactSeverity: { type: Type.STRING },
+                  sourceOriginUrl: { type: Type.STRING },
+                },
+                required: ['queryText', 'claimedFact', 'actualFact', 'impactSeverity'],
+              },
+            },
+            omissions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  category: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  affectedQueriesCount: { type: Type.INTEGER },
+                  rootCause: { type: Type.STRING },
+                  recommendation: { type: Type.STRING },
+                },
+                required: ['category', 'description', 'rootCause', 'recommendation'],
+              },
+            },
+            remediationPlan: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  priority: { type: Type.STRING },
+                  effort: { type: Type.STRING },
+                  expectedGain: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  stepByStepInstructions: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  codeSnippet: { type: Type.STRING },
+                  targetUrls: { type: Type.ARRAY, items: { type: Type.STRING } },
+                },
+                required: ['title', 'category', 'priority', 'effort', 'description', 'stepByStepInstructions'],
+              },
+            },
+          },
+          required: ['executiveSummary', 'inaccuracies', 'omissions', 'remediationPlan'],
+        },
+      },
+    });
+
+    return parseJsonText(response.text);
+  }
+
   app.post('/api/audit/run', async (req, res) => {
     try {
       const {
@@ -682,7 +875,7 @@ Return a JSON object matching the schema.`;
         coreOfferings,
         targetAudience,
         competitors,
-        queries
+        queries,
       } = req.body;
 
       if (!businessName) {
@@ -690,417 +883,203 @@ Return a JSON object matching the schema.`;
       }
 
       const ai = getGeminiClient();
+      const competitorList = (Array.isArray(competitors) ? competitors : [competitors])
+        .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
+        .map((c: string) => c.trim());
 
-      const queryList = Array.isArray(queries) && queries.length > 0 
-        ? queries 
-        : [
-            { id: 'q-1', intent: 'alternatives_search', queryText: `Best alternatives to ${competitors?.[0] || 'market leader'} in ${industry || 'industry'}`, targetPersona: 'Buyer', monthlySearchVolumeEstimate: '18,000/mo' },
-            { id: 'q-2', intent: 'commercial_comparison', queryText: `${businessName} vs ${competitors?.[0] || 'Competitor'} comparison for business`, targetPersona: 'Evaluator', monthlySearchVolumeEstimate: '14,000/mo' },
-            { id: 'q-3', intent: 'pricing_roi', queryText: `${businessName} pricing plans, free trial, and enterprise cost`, targetPersona: 'Procurement', monthlySearchVolumeEstimate: '10,000/mo' }
-          ];
+      const queryList =
+        Array.isArray(queries) && queries.length > 0
+          ? queries
+          : getFallbackQueries(businessName, domain, industry, coreOfferings, competitorList);
 
       if (!ai) {
-        const syntheticReport = generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitors, queryList);
-        return res.json({ report: syntheticReport });
+        return res.json({
+          report: generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitorList, queryList),
+        });
       }
 
-      // Step 1: Run Real Grounded Searches for EACH audit query to capture groundingMetadata and live citations
-      const querySearchResults: {
-        query: any;
-        summaryText: string;
-        liveCitations: string[];
-        queryChunks: any[];
-        isBrandCited: boolean;
-        isTopRecommended: boolean;
-      }[] = [];
-
+      // ---------- Layer 1: collect evidence ----------
+      const evidenceList: QueryEvidence[] = [];
       for (let i = 0; i < queryList.length; i++) {
-        const q = queryList[i];
-        if (i > 0) {
-          await delay(2000); // Pace requests to avoid rate limit spikes
-        }
-
-        let summaryText = '';
-        let liveCitations: string[] = [];
-        let queryChunks: any[] = [];
-
-        try {
-          const groundedRes = await generateContentWithRetry(ai, {
-            model: 'gemini-3.6-flash',
-            contents: `Query: "${q.queryText}". Answer this user search query as an AI search engine using live web search data. Mention top recommended solutions and evaluate "${businessName}" (${domain || 'N/A'}) if relevant.`,
-            config: {
-              systemInstruction: 'You are a strict data auditing tool. Use live web search grounding to generate factual responses.',
-              tools: [
-                {
-                  googleSearch: {
-                    dynamicRetrievalConfig: {
-                      mode: 'MODE_DYNAMIC',
-                      dynamicThreshold: 0.0
-                    }
-                  }
-                } as any
-              ]
-            }
-          });
-
-          summaryText = groundedRes.text || '';
-          const candidate = groundedRes.candidates?.[0];
-          queryChunks = candidate?.groundingMetadata?.groundingChunks || [];
-
-          // Debug Log Output for Grounding Metadata
-          console.log(`=== GROUNDING METADATA DEBUG (audit/run for "${q.queryText}") ===`);
-          console.log(JSON.stringify(candidate?.groundingMetadata, null, 2));
-
-          const extractedUrls = queryChunks
-            .map((chunk: any) => chunk.web?.uri)
-            .filter((uri: any): uri is string => typeof uri === 'string' && uri.length > 0);
-
-          liveCitations = Array.from(new Set(extractedUrls));
-        } catch (searchErr) {
-          console.log(`Grounded search info for query "${q.queryText}": Fallback engaged`);
-        }
-
-        const isBrandCited = isBrandOrDomainCited(businessName, domain, summaryText, queryChunks);
-
-        // Check if target brand appears in the first 2 sentences or top cited web source
-        const sentences = (summaryText || '').split(/(?<=[.!?])\s+/).filter((s) => s.trim().length > 0);
-        const firstTwoSentences = sentences.slice(0, 2).join(' ');
-        const brandInFirstTwoSentences = isBrandOrDomainCited(businessName, domain, firstTwoSentences, []);
-
-        const topChunk = queryChunks && queryChunks.length > 0 ? queryChunks[0] : null;
-        const topChunkTitle = topChunk?.web?.title || '';
-        const brandInTopSource = isBrandOrDomainCited(businessName, domain, topChunkTitle, topChunk ? [topChunk] : []);
-
-        const isTopRecommended = brandInFirstTwoSentences || brandInTopSource;
-
-        querySearchResults.push({
-          query: q,
-          summaryText,
-          liveCitations,
-          queryChunks,
-          isBrandCited,
-          isTopRecommended
-        });
+        if (i > 0) await delay(1200);
+        evidenceList.push(await collectQueryEvidence(ai, queryList[i], businessName, domain));
       }
 
-      // Step 2: Programmatically Calculate GEO Score = (Number of queries where brand is cited / Total queries) * 100
-      const totalQueriesAudited = querySearchResults.length;
-      const citedQueriesCount = querySearchResults.filter((r) => r.isBrandCited).length;
-      const calculatedGeoScore = totalQueriesAudited > 0 ? Math.round((citedQueriesCount / totalQueriesAudited) * 100) : 0;
+      const usable = evidenceList.filter((e) => !e.error && e.answerText.length > 0);
+      if (usable.length === 0) {
+        const degraded = generateSynthesizedAudit(
+          businessName, domain, industry, coreOfferings, competitorList, queryList
+        );
+        degraded.executiveSummary =
+          `Audit could not complete: live search grounding returned no answers for any of the ${queryList.length} queries. ` +
+          `This is an upstream retrieval failure, not a finding about ${businessName}. Re-run the audit; if it persists the grounding quota or API key needs attention.`;
+        return res.json({ report: degraded, degraded: true });
+      }
 
-      const groundingSummariesText = querySearchResults.map((r, i) => `Query ${i+1}: "${r.query.queryText}"\nBrand Cited: ${r.isBrandCited ? 'YES' : 'NO'}\nSource URLs: ${JSON.stringify(r.liveCitations)}\nSummary Excerpt: ${r.summaryText}`).join('\n\n');
+      // ---------- Layer 2: deterministic analysis ----------
+      const clientMatcher = buildBrandMatcher(businessName, domain);
+      const competitorMatchers = competitorList.map((c: string) => buildBrandMatcher(c));
+      const allMatchers = [clientMatcher, ...competitorMatchers];
 
-      const auditPrompt = `You are an expert AI Search & Generative Engine Optimization (GEO) Auditor.
-Audit whether top AI Search Engines (Gemini, ChatGPT, Perplexity, Claude, SearchGPT) recommend "${businessName}" (Domain: ${domain || 'company.com'}).
+      const perQuery = evidenceList.map((ev) => analyseAnswer(ev, allMatchers));
+      const scorecards = buildScorecards(perQuery, allMatchers);
+      const citationSources = buildCitationSourceMap(evidenceList, clientMatcher);
+      const clientScore = scorecards[0];
+      const totalQueries = evidenceList.length;
 
-REAL GROUNDED SEARCH AUDIT DATA:
-Total Queries Audited: ${totalQueriesAudited}
-Number of Queries Cited/Mentioned in Live Web Grounding: ${citedQueriesCount}
-CALCULATED GEO VISIBILITY INDEX: ${calculatedGeoScore}%
-
-DETAILED QUERY GROUNDING RESPONSES & LIVE CITATIONS:
-${groundingSummariesText}
-
-INSTRUCTIONS:
-For each query, evaluate how 5 key AI Search engines (Gemini, ChatGPT, Perplexity, Claude, SearchGPT) respond based on the live web grounding:
-- status: "recommended_leader" (ranked #1), "secondary_mention" (ranked #2 or #3), "omitted" (left out completely), "inaccurate_claim", or "negative_sentiment".
-- position: 1, 2, 3, or null if omitted.
-- excerpt: Short verbatim quote summarizing what the AI engine tells the user.
-- citations: Array of actual source URLs from the provided live citations list for that query. If brand is omitted or no live citations exist, return [].
-- keyInaccuracy: (if status is inaccurate_claim) explain the false claim.
-- keyOmissionReason: (if status is omitted) explain why AI search left out the business.
-
-ALSO PROVIDE:
-1. geoVisibilityScore: MUST BE EXACTLY ${calculatedGeoScore}
-2. shareOfVoice: Percentage (0-100) of engine mentions across queries
-3. leaderShare: Percentage (0-100) of queries where business is #1 recommended
-4. accuracyRate: Percentage (0-100) of mentions free of hallucinations
-5. executiveSummary: 3-4 concise sentences outlining overall AI recommendation posture based on the ${calculatedGeoScore}% GEO Visibility Index
-6. inaccuracies array
-7. omissions array
-8. remediationPlan array
-9. competitorBenchmarks array
-
-Return a valid JSON object strictly matching the schema.`;
-
-      let reportData: any = null;
-
-      const engineResultSchema = {
-        type: Type.OBJECT,
-        properties: {
-          engine: { type: Type.STRING },
-          status: { type: Type.STRING },
-          position: { type: Type.INTEGER },
-          excerpt: { type: Type.STRING },
-          citations: { type: Type.ARRAY, items: { type: Type.STRING } },
-          keyInaccuracy: { type: Type.STRING },
-          keyOmissionReason: { type: Type.STRING }
-        },
-        required: ['engine', 'status', 'excerpt', 'citations']
-      };
-
+      // ---------- Layer 3: narrative ----------
+      let narrative: any = null;
       try {
-        await delay(1000); // Brief pause before final synthesis
-        const auditResponse = await generateContentWithRetry(ai, {
-          model: 'gemini-3.6-flash',
-          contents: auditPrompt,
-          config: {
-            systemInstruction: 'You are a strict data auditing tool. Do not generate fictional metrics. Set geoVisibilityScore to the calculated percentage.',
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                geoVisibilityScore: { type: Type.INTEGER },
-                shareOfVoice: { type: Type.INTEGER },
-                leaderShare: { type: Type.INTEGER },
-                accuracyRate: { type: Type.INTEGER },
-                executiveSummary: { type: Type.STRING },
-                queriesTested: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      intent: { type: Type.STRING },
-                      queryText: { type: Type.STRING },
-                      targetPersona: { type: Type.STRING },
-                      monthlySearchVolumeEstimate: { type: Type.STRING },
-                      engines: {
-                        type: Type.OBJECT,
-                        properties: {
-                          Gemini: engineResultSchema,
-                          ChatGPT: engineResultSchema,
-                          Perplexity: engineResultSchema,
-                          Claude: engineResultSchema,
-                          SearchGPT: engineResultSchema
-                        }
-                      }
-                    }
-                  }
-                },
-                inaccuracies: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      engine: { type: Type.STRING },
-                      queryId: { type: Type.STRING },
-                      queryText: { type: Type.STRING },
-                      claimedFact: { type: Type.STRING },
-                      actualFact: { type: Type.STRING },
-                      impactSeverity: { type: Type.STRING },
-                      sourceOriginUrl: { type: Type.STRING }
-                    }
-                  }
-                },
-                omissions: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      category: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      affectedQueriesCount: { type: Type.INTEGER },
-                      rootCause: { type: Type.STRING },
-                      recommendation: { type: Type.STRING }
-                    }
-                  }
-                },
-                remediationPlan: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      title: { type: Type.STRING },
-                      category: { type: Type.STRING },
-                      priority: { type: Type.STRING },
-                      effort: { type: Type.STRING },
-                      expectedGain: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      stepByStepInstructions: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      codeSnippet: { type: Type.STRING },
-                      targetUrls: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      completed: { type: Type.BOOLEAN }
-                    }
-                  }
-                },
-                competitorBenchmarks: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      name: { type: Type.STRING },
-                      domain: { type: Type.STRING },
-                      shareOfVoice: { type: Type.INTEGER },
-                      topRecommendedCount: { type: Type.INTEGER },
-                      mainCitationSources: { type: Type.ARRAY, items: { type: Type.STRING } }
-                    }
-                  }
-                }
-              }
-            }
-          }
+        await delay(800);
+        narrative = await generateNarrative(ai, {
+          businessName,
+          domain: domain || 'company.com',
+          industry: industry || 'Technology',
+          coreOfferings: coreOfferings || 'Products and services',
+          competitorList,
+          evidenceList,
+          perQuery,
+          scorecards,
+          clientScore,
+          citationSources,
+          totalQueries,
         });
-
-        reportData = parseJsonText(auditResponse.text);
-      } catch (auditErr: any) {
-        console.log('Full audit Gemini call info: Fallback engaged');
+      } catch (narrativeErr: any) {
+        console.log(`Narrative synthesis failed: ${narrativeErr?.message || narrativeErr}`);
       }
 
-      if (!reportData) {
-        const syntheticReport = generateSynthesizedAudit(businessName, domain, industry, coreOfferings, competitors, queryList);
-        return res.json({ report: syntheticReport });
-      }
+      // ---------- Layer 4: assemble an honest report ----------
+      const queriesTested = queryList.map((q: any, idx: number) => {
+        const ev = evidenceList[idx];
+        const row = perQuery[idx]?.find((r) => r.brand === businessName);
+        const aheadOf = perQuery[idx]
+          ?.filter((r) => r.rank && (!row?.rank || r.rank < row.rank))
+          .map((r) => r.brand) || [];
 
-      // Enforce programmatically calculated metrics based on real live web search grounding
-      reportData.geoVisibilityScore = calculatedGeoScore;
+        const status = !row || !row.mentioned
+          ? 'omitted'
+          : row.rank === 1
+            ? 'recommended_leader'
+            : 'secondary_mention';
 
-      // Calculate real Share of Voice and Leader Share from query engine outputs
-      let totalEngineSlots = 0;
-      let brandEngineMentions = 0;
-      let brandLeaderMentions = 0;
-      let topRecommendedQueryCount = 0;
-
-      if (reportData.queriesTested && Array.isArray(reportData.queriesTested)) {
-        reportData.queriesTested.forEach((qItem: any, idx: number) => {
-          const matchResult = querySearchResults[idx];
-          const isTopRecommended = matchResult ? matchResult.isTopRecommended : false;
-
-          if (isTopRecommended) {
-            topRecommendedQueryCount++;
-          }
-
-          if (qItem.engines) {
-            Object.keys(qItem.engines).forEach((engKey) => {
-              const engObj = qItem.engines[engKey];
-              totalEngineSlots++;
-
-              // If query is top recommended and this is Gemini or engine has brand citations, ensure leader status
-              if (isTopRecommended && (engKey === 'Gemini' || engKey === 'ChatGPT' || engKey === 'Perplexity')) {
-                if (matchResult && matchResult.isBrandCited) {
-                  engObj.status = 'recommended_leader';
-                  engObj.position = 1;
-                }
-              }
-
-              if (!engObj.citations || engObj.citations.length === 0) {
-                engObj.citations = matchResult && matchResult.isBrandCited ? matchResult.liveCitations : [];
-              }
-
-              const isLeader = engObj.status === 'recommended_leader' || engObj.position === 1;
-              const isMentioned =
-                isLeader ||
-                engObj.status === 'secondary_mention' ||
-                engObj.status === 'inaccurate_claim' ||
-                (engObj.position !== null && engObj.position !== undefined) ||
-                (engObj.citations && engObj.citations.length > 0);
-
-              if (isLeader) {
-                brandLeaderMentions++;
-              }
-              if (isMentioned) {
-                brandEngineMentions++;
-              }
-            });
-          }
-        });
-      }
-
-      const realShareOfVoice = totalEngineSlots > 0
-        ? Math.round((brandEngineMentions / totalEngineSlots) * 100)
-        : calculatedGeoScore;
-
-      const realLeaderShare = totalQueriesAudited > 0
-        ? Math.round((topRecommendedQueryCount / totalQueriesAudited) * 100)
-        : 0;
-
-      reportData.shareOfVoice = realShareOfVoice;
-      reportData.leaderShare = realLeaderShare;
-
-      // Compute Real Competitor Benchmarks and Competitor Share of Voice from live search grounding
-      const compInputs = Array.isArray(competitors) ? competitors : [competitors];
-      const competitorEntities = compInputs
-        .filter((c: any) => c && typeof c === 'string' && c.trim().length > 0)
-        .map((cName: string) => ({
-          name: cName.trim(),
-          domain: `${cName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`
-        }));
-
-      const allEntities = [
-        { name: `${businessName} (Your Business)`, domain: domain || 'company.com', isTarget: true, searchBrandName: businessName },
-        ...competitorEntities.map((c) => ({ name: c.name, domain: c.domain, isTarget: false, searchBrandName: c.name }))
-      ];
-
-      const realCompetitorBenchmarks = allEntities.map((ent) => {
-        let entCitedQueries = 0;
-        let entLeaderWins = 0;
-        const citationSourcesSet = new Set<string>();
-
-        querySearchResults.forEach((r) => {
-          const isCited = ent.isTarget
-            ? r.isBrandCited
-            : isBrandOrDomainCited(ent.searchBrandName, ent.domain, r.summaryText, (r as any).queryChunks);
-
-          if (isCited) {
-            entCitedQueries++;
-            const summaryLower = (r.summaryText || '').toLowerCase();
-            const entLower = ent.searchBrandName.toLowerCase();
-            if (
-              summaryLower.includes(`#1 ${entLower}`) ||
-              summaryLower.includes(`1. ${entLower}`) ||
-              summaryLower.includes(`top choice: ${entLower}`) ||
-              summaryLower.includes(`premier ${entLower}`)
-            ) {
-              entLeaderWins++;
-            }
-
-            (r.liveCitations || []).forEach((urlStr: string) => {
-              try {
-                const parsedUrl = new URL(urlStr);
-                const hostname = parsedUrl.hostname.replace(/^www\./, '');
-                if (hostname.length > 3) {
-                  citationSourcesSet.add(hostname);
-                }
-              } catch (_) {}
-            });
-          }
-        });
-
-        const entSoV = ent.isTarget
-          ? realShareOfVoice
-          : (totalQueriesAudited > 0 ? Math.round((entCitedQueries / totalQueriesAudited) * 100) : 0);
-
-        const topSources = Array.from(citationSourcesSet).slice(0, 4);
+        const excerpt = row?.excerpt
+          || (ev?.error
+            ? `Retrieval error: ${ev.error}`
+            : `${businessName} was not named in this answer. Brands named instead: ${aheadOf.join(', ') || 'none identified'}.`);
 
         return {
-          name: ent.name,
-          domain: ent.domain,
-          shareOfVoice: entSoV,
-          topRecommendedCount: ent.isTarget ? brandLeaderMentions : entLeaderWins,
-          mainCitationSources: topSources.length > 0 ? topSources : [ent.domain, 'google.com/search']
+          ...q,
+          engines: {
+            Gemini: {
+              engine: 'Gemini',
+              status,
+              position: row?.rank ?? null,
+              excerpt,
+              citations: ev?.citations.map((c) => c.url) || [],
+              keyOmissionReason:
+                status === 'omitted' && aheadOf.length > 0
+                  ? `Answer surface was taken by: ${aheadOf.join(', ')}`
+                  : undefined,
+            },
+          },
+          evidence: ev
+            ? {
+                answerText: ev.answerText,
+                citations: ev.citations,
+                searchQueries: ev.searchQueries,
+                capturedAt: ev.capturedAt,
+                engine: ev.engine,
+                error: ev.error,
+              }
+            : undefined,
+          competitorsAhead: aheadOf,
+          prominence: row?.prominence ?? 0,
         };
       });
 
-      reportData.competitorBenchmarks = realCompetitorBenchmarks;
+      const inaccuracies = (narrative?.inaccuracies || []).map((item: any, i: number) => ({
+        id: `inacc-${i + 1}`,
+        engine: 'Gemini',
+        queryId: queryList.find((q: any) => q.queryText === item.queryText)?.id || queryList[0]?.id || `q-${i}`,
+        queryText: item.queryText,
+        claimedFact: item.claimedFact,
+        actualFact: item.actualFact,
+        impactSeverity: ['high', 'medium', 'low'].includes(item.impactSeverity) ? item.impactSeverity : 'medium',
+        sourceOriginUrl: item.sourceOriginUrl,
+      }));
 
-      const finalReport = {
-        id: `audit-custom-${Date.now()}`,
+      const mentionCount = clientScore.timesMentioned;
+      const accuracyRate = mentionCount > 0
+        ? Math.max(0, Math.round(((mentionCount - inaccuracies.length) / mentionCount) * 100))
+        : 0;
+
+      const report = {
+        id: `audit-${Date.now()}`,
         createdAt: new Date().toISOString(),
         businessName,
         domain: domain || 'company.com',
-        industry: industry || 'Tech',
-        coreOfferings: coreOfferings || 'Solutions',
-        targetAudience: targetAudience || 'Buyers',
-        competitors: Array.isArray(competitors) ? competitors : [competitors || 'Competitors'],
-        ...reportData
+        industry: industry || 'Technology',
+        coreOfferings: coreOfferings || 'Products and services',
+        targetAudience: targetAudience || 'Buyers and decision makers',
+        competitors: competitorList,
+
+        // Metrics computed in code from captured evidence.
+        geoVisibilityScore: clientScore.visibility,
+        shareOfVoice: clientScore.shareOfVoice,
+        leaderShare: clientScore.leaderShare,
+        accuracyRate,
+        avgProminence: clientScore.avgProminence,
+
+        executiveSummary:
+          narrative?.executiveSummary ||
+          `${businessName} was cited in ${clientScore.timesMentioned} of ${totalQueries} audited answer-engine queries (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against ${competitorList.length} tracked competitors.`,
+
+        queriesTested,
+        inaccuracies,
+        omissions: (narrative?.omissions || []).map((o: any, i: number) => ({
+          id: `om-${i + 1}`,
+          category: o.category,
+          description: o.description,
+          affectedQueriesCount: o.affectedQueriesCount ?? totalQueries - clientScore.timesMentioned,
+          rootCause: o.rootCause,
+          recommendation: o.recommendation,
+        })),
+        remediationPlan: (narrative?.remediationPlan || []).map((t: any, i: number) => ({
+          id: `rem-${i + 1}`,
+          title: t.title,
+          category: t.category,
+          priority: t.priority,
+          effort: t.effort,
+          expectedGain: t.expectedGain || 'Improved answer-engine citation rate',
+          description: t.description,
+          stepByStepInstructions: t.stepByStepInstructions || [],
+          codeSnippet: t.codeSnippet,
+          targetUrls: t.targetUrls || [],
+          completed: false,
+        })),
+
+        competitorBenchmarks: scorecards.map((s) => ({
+          name: s.brand === businessName ? `${s.brand} (Your Business)` : s.brand,
+          domain: s.domain || '',
+          shareOfVoice: s.shareOfVoice,
+          topRecommendedCount: s.timesFirst,
+          mainCitationSources: citationSources
+            .filter((src) => !src.isOwned)
+            .slice(0, 4)
+            .map((src) => src.domain),
+        })),
+
+        // New evidence-first artefacts.
+        citationSources,
+        measuredEngines: ['Gemini (Google Search grounded)'],
+        queriesAttempted: queryList.length,
+        queriesWithEvidence: usable.length,
       };
 
-      res.json({ report: finalReport });
+      res.json({ report });
     } catch (err: any) {
-      const syntheticReport = generateSynthesizedAudit(
+      console.log(`Audit run failed: ${err?.message || err}`);
+      const fallback = generateSynthesizedAudit(
         req.body?.businessName || 'Business',
         req.body?.domain,
         req.body?.industry,
@@ -1108,7 +1087,8 @@ Return a valid JSON object strictly matching the schema.`;
         req.body?.competitors,
         req.body?.queries
       );
-      res.json({ report: syntheticReport });
+      fallback.executiveSummary = `Audit failed to complete (${err?.message || 'unknown error'}). No findings were generated; these are placeholder values, not measurements.`;
+      res.json({ report: fallback, degraded: true });
     }
   });
 
