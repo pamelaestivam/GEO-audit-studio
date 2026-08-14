@@ -19,6 +19,7 @@ import { AuditReport } from '../types';
 import { mergeDetectedDetails } from '../detection';
 import { runAuditJob } from '../auditClient';
 import { apiFetch } from '../apiClient';
+import { useQuotaStatus } from '../useQuotaStatus';
 
 interface CleanStartDashboardProps {
   onAuditComplete: (newReport: AuditReport) => void;
@@ -39,6 +40,8 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
   const [loadingStep, setLoadingStep] = useState<number>(0);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const quota = useQuotaStatus();
 
   const sampleBrands = [
     {
@@ -370,6 +373,17 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
             </p>
           </div>
 
+          {/* Known-exhausted quota: warn before the user fills out the whole form. */}
+          {quota && !quota.available && (
+            <div className="flex items-start gap-2.5 bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
+              <AlertCircle className="h-4 w-4 text-orange-400 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-orange-200">Answer engine temporarily unavailable</p>
+                <p className="text-xs text-orange-200/85 leading-relaxed mt-0.5">{quota.reason}</p>
+              </div>
+            </div>
+          )}
+
           {/* Detection could not fill the blanks - say so instead of guessing. */}
           {detectionNotice && (
             <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
@@ -393,7 +407,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              disabled={isLoading || !businessName.trim()}
+              disabled={isLoading || !businessName.trim() || (quota ? !quota.available : false)}
               className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/25 flex items-center justify-center gap-2.5 transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (
@@ -404,7 +418,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
               ) : (
                 <>
                   <Sparkles className="h-4 w-4 text-indigo-200" />
-                  <span>Run Live GEO Search Audit</span>
+                  <span>{quota && !quota.available ? 'Answer engine unavailable' : 'Run Live GEO Search Audit'}</span>
                   <ArrowRight className="h-4 w-4 text-indigo-200" />
                 </>
               )}

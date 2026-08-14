@@ -86,6 +86,41 @@ Gemini calls are also serialised process-wide to protect the free-tier quota,
 which means two concurrent users queue behind each other. Fine for now; it
 needs a per-key limiter if the product gets real traffic.
 
+### 2.3a Repeated "quota exhausted" was self-inflicted amplification (fixed)
+
+Real audits (Stripe, Poke House, Hyundai, City Sports) kept hitting Gemini's
+free-tier quota and the failure kept recurring. The root cause was in this
+codebase, not just the quota itself: every Gemini call site (query
+generation, one grounded search per query, vendor discovery, narrative - 6+
+per audit) retried independently on a 429, up to 3 times with 30-60s waits.
+One exhausted quota could be rediscovered 15-20 times by a single failed
+audit, taking minutes and consuming whatever quota might have been about to
+recover.
+
+Fixed with a process-wide circuit breaker (`src/quotaBreaker.ts`): the first
+quota error trips it for a computed cooldown (the provider's suggested
+`retryDelay` for a per-minute cap, or time-to-next-UTC-midnight for a daily
+one - `computeQuotaCooldownMs` in `src/errors.ts`), and every subsequent
+Gemini call - this audit, any other request, for the rest of the cooldown -
+fails instantly with no network call. A `GET /api/audit/status` endpoint
+exposes the breaker state so the frontend warns before a user fills out the
+whole form and submits into a wall already known to be there, rather than
+discovering it only after clicking submit.
+
+Verified end-to-end (`test/quotaBreakerE2E.test.ts`) against the real built
+server pointed at a fake Gemini endpoint that always 429s: one audit now
+makes a small, bounded number of requests rather than 15+, a second audit
+while still tripped makes zero further requests, and two audits fired
+concurrently (a race the entry check alone does not close) still stay
+bounded because the queued call is re-checked immediately before it executes.
+
+**Not yet covered:** the breaker is Gemini-specific. ChatGPT/Perplexity/Claude
+already fail on a single attempt with no retry loop (so they don't have the
+amplification bug), but they also have no breaker, so a quota-exhausted
+non-Gemini engine still makes one wasted call per query rather than
+short-circuiting. Worth generalising to a per-engine breaker if those keys get
+enabled and hit the same problem.
+
 ### 2.4 Render free tier sleeps (medium - partially mitigated)
 
 First request after ~15 minutes idle takes 50 s or more, and the very first
