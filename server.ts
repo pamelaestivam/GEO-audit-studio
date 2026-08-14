@@ -14,7 +14,13 @@ import {
   normaliseDomain,
   type QueryEvidence,
 } from './src/analysis';
-import { describeProviderError, parseRetryDelaySeconds, summariseFailures } from './src/errors';
+import {
+  computeQuotaCooldownMs,
+  describeProviderError,
+  formatDuration,
+  summariseFailures,
+} from './src/errors';
+import { QuotaBreaker } from './src/quotaBreaker';
 import {
   askEngine,
   configuredEngines,
@@ -23,6 +29,14 @@ import {
 } from './src/providers';
 
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+
+/**
+ * One breaker per process, shared by every request. A quota error discovered
+ * by one user's audit protects every other request on the server for the
+ * rest of the cooldown - nobody else has to independently rediscover the
+ * same exhausted quota.
+ */
+const geminiBreaker = new QuotaBreaker();
 
 /** Single source of truth for the audit model, so it can be swapped in one place. */
 const AUDIT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
@@ -48,7 +62,13 @@ async function startServer() {
       httpOptions: {
         headers: {
           'User-Agent': 'aistudio-build'
-        }
+        },
+        // Test-only escape hatch: lets the contract tests point Gemini calls
+        // at a local fake server that always returns 429, to prove the
+        // circuit breaker actually stops repeated calls against a real audit
+        // run rather than just in isolated unit tests. Unset in every real
+        // deployment, so this is a no-op there.
+        ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
       }
     });
   };
@@ -86,30 +106,65 @@ async function startServer() {
    * we honour it; per-minute limits need tens of seconds, not the two we used
    * to wait, which meant every retry failed too.
    */
+  /** Thrown when the circuit breaker refuses a call - carries the reason directly. */
+  class QuotaExhaustedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'QuotaExhaustedError';
+    }
+  }
+
   async function generateContentWithRetry(
     aiInstance: GoogleGenAI,
     params: any,
-    maxRetries = Number(process.env.GEMINI_MAX_RETRIES || 3)
+    maxRetries = Number(process.env.GEMINI_MAX_RETRIES || 2)
   ): Promise<any> {
+    // Fail instantly against a wall we already know is there. No network
+    // call, no wait - this is what stops one exhausted quota from being
+    // rediscovered 15-20 times across a single audit.
+    if (geminiBreaker.isTripped()) {
+      const status = geminiBreaker.status();
+      throw new QuotaExhaustedError(
+        `${status.reason} (${formatDuration(status.msRemaining)} remaining)`
+      );
+    }
+
     let attempt = 0;
 
     while (true) {
       try {
-        return await scheduleGeminiCall(() => aiInstance.models.generateContent(params));
+        return await scheduleGeminiCall(() => {
+          // Re-check right before the call actually executes, not just on
+          // entry to this function: scheduleGeminiCall fully serialises
+          // calls, but a second concurrent audit can pass the entry check
+          // before the first one's failure has been recorded. Every call
+          // this queue ever executes gets one final look at the breaker
+          // immediately beforehand, closing that race.
+          if (geminiBreaker.isTripped()) {
+            const status = geminiBreaker.status();
+            throw new QuotaExhaustedError(`${status.reason} (${formatDuration(status.msRemaining)} remaining)`);
+          }
+          return aiInstance.models.generateContent(params);
+        });
       } catch (err: any) {
         attempt++;
         const readable = describeProviderError(err, 'Gemini');
-        const retryable = readable.kind === 'quota' || readable.kind === 'timeout' || readable.kind === 'network';
 
+        if (readable.kind === 'quota') {
+          // Trip immediately - do not retry a quota error at this call site,
+          // and stop every other call site (this audit and every other
+          // request) from independently rediscovering the same wall.
+          const cooldownMs = computeQuotaCooldownMs(String(err?.message || err));
+          geminiBreaker.trip(cooldownMs, readable.message);
+          console.log(`[Gemini] quota exhausted; breaker tripped for ${formatDuration(cooldownMs)}`);
+          throw err;
+        }
+
+        const retryable = readable.kind === 'timeout' || readable.kind === 'network';
         if (!retryable || attempt > maxRetries) throw err;
 
-        // A daily cap will not clear by waiting a few seconds; fail fast so the
-        // user gets the actionable message instead of a long hang.
-        if (/per day|daily/i.test(String(err?.message || err))) throw err;
-
-        const suggested = parseRetryDelaySeconds(String(err?.message || err));
-        const waitMs = suggested ? suggested * 1000 : Math.min(60000, 15000 * attempt);
-        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}; waiting ${Math.round(waitMs / 1000)}s`);
+        const waitMs = Math.min(20000, 5000 * attempt);
+        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}; retrying in ${Math.round(waitMs / 1000)}s`);
         await delay(waitMs);
       }
     }
@@ -119,6 +174,25 @@ async function startServer() {
   // Health check API
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', environment: process.env.NODE_ENV || 'development' });
+  });
+
+  /**
+   * Lets the frontend check quota state before a user fills out the whole
+   * form and submits into a wall we already know is there - the exact loop
+   * that kept repeating: submit, wait, get an exhausted-quota error, submit
+   * again immediately.
+   */
+  app.get('/api/audit/status', (req, res) => {
+    const status = geminiBreaker.status();
+    res.json({
+      engines: configuredEngines(),
+      quota: {
+        available: !status.tripped,
+        reason: status.reason,
+        resetAt: status.resetAt ? new Date(status.resetAt).toISOString() : null,
+        msRemaining: status.msRemaining,
+      },
+    });
   });
 
   // In-memory user store for backend session verification
@@ -904,6 +978,13 @@ Return valid JSON matching the schema.`;
       // ---------- Layer 1: collect evidence across every configured engine ----------
       const evidenceByQuery: QueryEvidence[][] = [];
       for (let i = 0; i < queryList.length; i++) {
+        // Once quota is known to be exhausted mid-audit, stop immediately
+        // rather than pacing through the remaining queries only to have each
+        // one fail the same way a moment later.
+        if (engines.includes('Gemini') && geminiBreaker.isTripped()) {
+          console.log(`Stopping after ${i}/${queryList.length} queries: Gemini quota breaker is tripped.`);
+          break;
+        }
         if (i > 0) await delay(1200);
         evidenceByQuery.push(await collectQueryEvidence(ai, queryList[i], engines));
       }
@@ -912,8 +993,17 @@ Return valid JSON matching the schema.`;
       const usableEvidence = allEvidence.filter((e) => !e.error && e.answerText.trim().length > 0);
 
       if (usableEvidence.length === 0) {
+        // The breaker can trip during query generation, before any per-query
+        // evidence collection even starts - the loop then breaks on its
+        // first check and `allEvidence` stays empty. Evidence errors would
+        // be empty too in that case, and summariseFailures([]) falls back to
+        // a generic "returned no answers" that loses the actual reason. The
+        // breaker's own status is the source of truth whenever it is tripped.
+        const breakerStatus = geminiBreaker.status();
         const failures = allEvidence.map((e) => e.error).filter(Boolean);
-        const readable = summariseFailures(failures, 'The answer engine');
+        const readable = breakerStatus.tripped
+          ? { message: breakerStatus.reason || 'The answer engine quota is exhausted.' }
+          : summariseFailures(failures, 'The answer engine');
         const degraded = generateSynthesizedAudit(
           businessName, cleanDomain, industry, coreOfferings, competitorList, queryList
         );
