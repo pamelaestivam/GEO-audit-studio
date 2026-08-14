@@ -1,5 +1,57 @@
 # GEO Audit Studio — working notes
 
+## Working dynamic with the owner (read this first in a new session)
+
+This project is built through repeated rounds of: ship something, the owner
+finds it in a real browser, reports exactly what broke, and expects the next
+round to fix the *root cause*, not the symptom they happened to see. Patterns
+that have held across every round so far:
+
+- **A polished failure message is not success.** Several rounds looked done
+  because the error was readable and honest — and were then rejected because
+  the *underlying* problem (an amplifying retry storm, calls that never
+  needed to exist) was still there. Readable failure is the floor, not the
+  goal. Ask "why did this fail at all" before "how do I fail nicely."
+- **Prove it, don't assert it.** "Should work now" was never accepted, and
+  correctly so. Every fix in this repo that mattered was verified by spawning
+  the actual built server (`dist/server.cjs`) and hitting it with real HTTP
+  requests — a fake upstream endpoint counting real hits, not a mock of your
+  own code checking itself. `test/quotaBreakerE2E.test.ts` and
+  `test/quotaEfficiencyE2E.test.ts` are the template for this: they proved a
+  bug existed, then proved the fix, by counting actual network calls against
+  the real binary. When a fix is check-worthy the same way, verify it the
+  same way before reporting back.
+- **Adversarial self-review is mandatory before every merge, unprompted.**
+  Multiple real bugs in this codebase were caught only because the code was
+  reviewed a second time, adversarially, by the same session that wrote it,
+  before merging — not because a test happened to catch them. Recurring
+  finds from that review: dead/contradictory branches (retry logic that
+  excluded then silently re-included the same case), values that look
+  computed but are actually still hardcoded placeholders, and edges no one
+  asked about yet (empty input, unicode, punctuation in names, concurrent
+  requests). Do this even when nothing prompted it.
+- **Question why a call/step exists at all, not just whether it degrades
+  well.** The most recent round ("I searched a single query, it should not
+  get that many calls") was not solved by better retry/backoff — it was
+  solved by removing calls that were never necessary (an LLM call whose
+  output was being re-verified against source text anyway; an LLM call
+  standing in front of a template that already existed as the fallback; a
+  network call firing automatically when an explicit opt-in control already
+  existed for it). When something is slow, expensive, or fragile, the first
+  question is "does this need to happen at all," before "how do I make the
+  failure softer."
+- **Small, focused PRs, each merged after its own review.** One branch per
+  fix, a specific commit message explaining the actual root cause (not just
+  what changed), squash-merged after `npm test` is green and the diff has
+  been read adversarially. `TECH_DEBT.md` gets a matching entry for anything
+  left imperfect, written so a cold read explains why it's still open.
+- **User input is sacred; never invent what a lookup can't supply.** This
+  surfaced repeatedly in different forms — detected data overwriting typed
+  data, placeholder text presented as if it were real, invented search
+  volumes, a fabricated competitor. The standing rule below ("user input is
+  never overwritten... no field filled with a guess") is not decorative; it
+  has been the direct cause of a shipped bug more than once.
+
 ## Merge discipline (standing instruction)
 
 **Always run an extensive, adversarial review of a change before merging it to
@@ -74,12 +126,72 @@ multi-engine audits).
 Record anything knowingly left imperfect there rather than leaving it for the
 next session to rediscover.
 
+## Answer-engine quota — what's known, what isn't, how it's protected
+
+**Nobody in this session (human or Claude) has visibility into the actual
+account-level quota numbers.** Neither the owner's questions nor the code in
+this repo can see remaining requests, the account's tier, or the exact reset
+time from outside the provider's own dashboard. What we know instead comes
+entirely from *behaviour*: the 429 responses Gemini has returned, decoded by
+`describeProviderError` in `src/errors.ts`.
+
+**To actually check quota, the owner needs to look at:**
+- `https://aistudio.google.com/apikey` — shows the key, its project, and
+  whether billing is enabled.
+- `https://ai.google.dev/gemini-api/docs/rate-limits` — Google's published
+  free-tier limits per model (these change over time and by model version,
+  so don't hardcode a specific number here — check live).
+- The Google Cloud Console, APIs & Services → Generative Language API →
+  Quotas, for the account's actual current usage against its limits — this
+  is the only place with real numbers, and only the account owner can open it.
+
+**What the app itself now does about this**, so the next session doesn't
+have to re-derive it:
+- `GET /api/audit/status` reports whether the quota is currently known to be
+  exhausted (from the circuit breaker's own memory of the last failure), a
+  human-readable reason, and a reset time. This is *inferred from failures
+  already seen*, not fetched from Google — it is empty/healthy after every
+  server restart even if the underlying account quota is still exhausted.
+- The circuit breaker (`src/quotaBreaker.ts`) trips for a computed cooldown
+  on the first quota error and then refuses every further Gemini call
+  instantly until that cooldown elapses — see `TECH_DEBT.md` § 2.3a for the
+  full history of why.
+- Per-audit call volume is now minimal by construction (§ 2.6a in
+  `TECH_DEBT.md`): a single supplied query costs exactly 2 Gemini calls, not
+  6-7. This doesn't raise the quota ceiling, it just means far more real
+  audits fit under whatever ceiling exists.
+- The one lever actually available to raise the ceiling is enabling billing
+  on the Gemini API key, or adding a second engine (Perplexity recommended —
+  see `TECH_DEBT.md` § 1.1) so quota exhaustion on one engine doesn't stop
+  every audit.
+
+If a future session is asked "what's my quota" again, the honest answer is
+still "check the dashboard" — this section exists so that answer doesn't
+have to be rediscovered from scratch, not so it can be skipped.
+
 ## Commands
 
 - `npm run dev` — Vite + Express, port 3000 (`PORT` respected)
 - `npm run build` — client bundle + `dist/server.cjs`
 - `npm start` — run the built server
 - `npm run lint` — `tsc --noEmit`
-- `npm test` — build, analysis checks, then server contract checks
-- `npx tsx test/analysis.test.ts` — deterministic analysis checks only
-- `npx tsx test/contract.test.ts` — contract checks (needs a current `dist/`)
+- `npm test` — build, then every check below, in order
+- `npx tsx test/analysis.test.ts` — deterministic analysis + vendor-extraction
+  unit checks, no server involved
+- `npx tsx test/apiClient.test.ts` — frontend network-retry wrapper, against a
+  faked `fetch`
+- `npx tsx test/quotaBreaker.test.ts` — circuit breaker + cooldown math, pure
+  unit checks
+- `npx tsx test/quotaBreakerE2E.test.ts` — spawns the real built server against
+  a fake Gemini endpoint that always 429s; counts real HTTP hits to prove the
+  breaker actually stops repeated calls (needs a current `dist/`)
+- `npx tsx test/quotaEfficiencyE2E.test.ts` — spawns the real built server
+  against a fake Gemini endpoint that always succeeds; counts real HTTP hits
+  to prove a single-query audit costs exactly 2 calls (needs a current
+  `dist/`)
+- `npx tsx test/contract.test.ts` — full server contract checks (needs a
+  current `dist/`)
+
+The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
+`server.ts`) to redirect the SDK at a local fake server — a no-op unless
+explicitly set, safe to leave alone in every real deployment.
