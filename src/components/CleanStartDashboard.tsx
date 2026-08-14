@@ -16,7 +16,6 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { AuditReport } from '../types';
-import { mergeDetectedDetails } from '../detection';
 import { runAuditJob } from '../auditClient';
 import { apiFetch } from '../apiClient';
 import { useQuotaStatus } from '../useQuotaStatus';
@@ -210,28 +209,21 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     e.preventDefault();
     if (!businessName.trim()) return;
 
-    let bName = businessName.trim();
-    let bDomain = domain.trim();
-    let bIndustry = industry.trim();
-    let comps = competitorsText
+    const bName = businessName.trim();
+    const bDomain = domain.trim();
+    const bIndustry = industry.trim();
+    const comps = competitorsText
       .split(',')
       .map((c) => c.trim())
       .filter(Boolean);
 
-    // Fill in only what the user left blank. Values they typed always win:
-    // an audit must describe their business, not a guessed one.
-    if (!bDomain || !bIndustry) {
-      const detected = await handleAutoDetectUrl(bName);
-      const merged = mergeDetectedDetails(
-        { businessName: bName, domain: bDomain, industry: bIndustry, coreOfferings: '', competitors: comps },
-        detected
-      );
-      bName = merged.businessName;
-      bDomain = merged.domain;
-      bIndustry = merged.industry;
-      comps = merged.competitors;
-    }
-
+    // Brand lookup is an explicit action (the "Auto-Detect from URL" button
+    // above), never triggered silently by submitting. It used to fire
+    // automatically whenever domain or industry were blank, which meant the
+    // simplest possible use of this product - type a name, hit run - always
+    // cost an extra Gemini call the user never asked for and had no way to
+    // decline. Blank fields are sent as blank; the server already handles
+    // that (industry/domain default to "not specified" rather than guessed).
     executeAudit(bName, bDomain, bIndustry, comps);
   };
 

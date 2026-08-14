@@ -10,6 +10,7 @@ import {
   buildScorecards,
   buildCitationSourceMap,
   dedupeMatchers,
+  extractCandidateVendors,
   extractDomain,
   type QueryEvidence,
 } from '../src/analysis';
@@ -197,6 +198,53 @@ check('an empty brand yields no tokens', buildBrandMatcher('').tokens.length, 0)
 check('a blank domain normalises to empty', buildBrandMatcher('Acme', '   ').domain, '');
 check('a domain with a path is reduced to the host', buildBrandMatcher('Acme', 'acme.com/menu?x=1').domain, 'acme.com');
 check('an uppercase URL normalises', buildBrandMatcher('Acme', 'HTTPS://WWW.ACME.COM/').domain, 'acme.com');
+
+// ---------------------------------------------------------------- vendor extraction (no LLM)
+// This replaced an LLM call that asked Gemini to list vendors and then
+// re-verified every name against the source text anyway - meaning the model
+// step never added information the text extraction below doesn't already
+// derive directly, at zero Gemini quota cost.
+check(
+  'plain capitalised names are found',
+  extractCandidateVendors('The leading option is Adyen. PayPal is also popular, and Stripe is developer-focused.', []),
+  ['Adyen', 'PayPal', 'Stripe']
+);
+check(
+  '"and" does not bridge two distinct entities into one wrong candidate',
+  extractCandidateVendors('Bank of America and Wells Fargo both offer this.', []),
+  ['Bank of America', 'Wells Fargo']
+);
+check(
+  '"&" within a single name is preserved',
+  extractCandidateVendors('Johnson & Johnson is a major player.', []),
+  ['Johnson & Johnson']
+);
+check(
+  'a sentence-starter word is not swept into the candidate',
+  extractCandidateVendors('However, Notion stands out from the rest.', []),
+  ['Notion']
+);
+check(
+  'an imperative verb leading into a name is excluded, not merged into it',
+  extractCandidateVendors('Try Stripe for fast integration.', []).includes('Try Stripe'),
+  false
+);
+check(
+  'the client\'s own name is excluded from its own discovery',
+  extractCandidateVendors('Stripe leads the market. Stripe is great.', [buildBrandMatcher('Stripe', 'stripe.com')]),
+  []
+);
+check(
+  'names repeated more often are ranked first',
+  extractCandidateVendors('Adyen is good. Adyen is fast. PayPal is ok.', []),
+  ['Adyen', 'PayPal']
+);
+check('empty text yields no candidates', extractCandidateVendors('', []), []);
+check(
+  'a very long answer does not throw and stays capped',
+  extractCandidateVendors(Array.from({ length: 40 }, (_, i) => `Vendor${i} Inc is an option.`).join(' '), []).length <= 15,
+  true
+);
 
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

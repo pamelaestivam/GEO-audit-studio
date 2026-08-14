@@ -332,3 +332,77 @@ export function buildScorecards(
     };
   });
 }
+
+/**
+ * Words that legitimately open a capitalised sentence or clause and are
+ * therefore worthless as vendor-name candidates on their own. Not brand
+ * names, not stopwords for matching brands - specifically the false
+ * positives a "capitalised phrase" heuristic produces at sentence starts.
+ */
+const SENTENCE_STARTER_WORDS = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'it', 'its', 'they',
+  'their', 'there', 'here', 'when', 'where', 'while', 'if', 'unless',
+  'however', 'overall', 'additionally', 'furthermore', 'in', 'on', 'for',
+  'with', 'according', 'based', 'many', 'most', 'some', 'several', 'other',
+  'others', 'each', 'every', 'both', 'either', 'neither', 'best', 'top',
+  'popular', 'well', 'unlike', 'compared', 'among', 'given', 'considering',
+  'you', 'your', 'we', 'our', 'i',
+  // Imperative verbs that commonly lead into a proper noun ("Try Stripe",
+  // "Consider Adyen") - without these the verb gets swept into the
+  // candidate string as if it were part of the name.
+  'try', 'consider', 'see', 'check', 'visit', 'use', 'choose', 'shop',
+  'look', 'explore', 'read', 'compare', 'contact', 'search', 'browse',
+]);
+
+/**
+ * Vendor-name candidates found in answer text by capitalisation pattern
+ * alone - no model call. Every candidate returned here still has to survive
+ * the same verification every discovered name already goes through
+ * (buildBrandMatcher + findFirstMention against the source text), so this
+ * trades recall (it will miss a vendor named only in lowercase, or spelled
+ * unusually) for using zero LLM budget on a step that was already being
+ * fully re-verified against the literal text regardless of where the
+ * candidate came from.
+ */
+export function extractCandidateVendors(text: string, excludeMatchers: BrandMatcher[]): string[] {
+  if (!text) return [];
+
+  // 1-3 consecutive capitalised words: "Adyen", "Archer Aviation", "Bank of
+  // America", "Johnson & Johnson". "of" and "&" are the only mid-phrase
+  // connectors allowed - "&" is conventionally used within a single company
+  // name, but "and" lists separate names ("Bank of America and Wells
+  // Fargo"), so allowing it would bridge two distinct entities into one
+  // wrong candidate spanning both.
+  const pattern = /\b[A-Z][a-zA-Z0-9']*(?:\s+(?:of|&)\s+[A-Z][a-zA-Z0-9']*|\s+[A-Z][a-zA-Z0-9']*){0,2}\b/g;
+  const seen = new Map<string, number>();
+
+  for (const raw of text.match(pattern) || []) {
+    const candidate = raw.trim().replace(/\s+/g, ' ');
+    const firstWord = candidate.split(' ')[0].toLowerCase();
+    if (candidate.length < 3 || candidate.length > 50) continue;
+    if (SENTENCE_STARTER_WORDS.has(firstWord)) continue;
+    // Don't rediscover the client's own name or an already-tracked
+    // competitor as if it were a new find.
+    if (excludeMatchers.some((m) => findFirstMention(candidate, m) >= 0)) continue;
+
+    const key = candidate.toLowerCase();
+    seen.set(key, (seen.get(key) || 0) + 1);
+  }
+
+  // Names mentioned more than once are far more likely to be genuine
+  // vendors than one-off capitalisation noise; prefer them, then cap the
+  // list so a noisy answer cannot flood the scorecard with junk. The
+  // original casing is lost by lowercasing for dedupe, so re-derive a
+  // presentable form from the first match of each key.
+  const originalCasing = new Map<string, string>();
+  for (const raw of text.match(pattern) || []) {
+    const candidate = raw.trim().replace(/\s+/g, ' ');
+    const key = candidate.toLowerCase();
+    if (seen.has(key) && !originalCasing.has(key)) originalCasing.set(key, candidate);
+  }
+
+  return Array.from(seen.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([key]) => originalCasing.get(key) || key);
+}

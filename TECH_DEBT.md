@@ -32,10 +32,10 @@ every configured engine, so three engines triples spend per audit. Set
 
 ### 1.2 Gemini is currently mandatory
 
-Even with other keys set, `GEMINI_API_KEY` is required: vendor discovery and the
-narrative both run on Gemini. Removing that dependency is real work (see 3.4).
-The error messages now name this explicitly rather than claiming nothing is
-configured.
+Even with other keys set, `GEMINI_API_KEY` is required: narrative synthesis
+runs on Gemini (vendor discovery no longer does - see 2.6). Removing this
+last dependency is real work (see 3.4). The error messages now name this
+explicitly rather than claiming nothing is configured.
 
 ### 1.3 Custom domain
 
@@ -156,6 +156,40 @@ The cost is recall: a brand referred to only in shorthand ("Archer" for "Archer
 Aviation") is missed unless the shorthand matches the domain root. Understating
 visibility is the safer failure, but an alias list supplied per audit would
 recover it.
+
+### 2.6a Vendor discovery is now free, not an LLM call
+
+"I searched a single query, it should not get that many calls" - correct,
+and the fix went past error handling into removing calls that were never
+earning their cost. Vendor discovery used to ask Gemini to list vendors
+mentioned in the answers, then verify every returned name literally occurs in
+the source text before accepting it - the model's answer was already being
+fully re-derived from the text regardless, so `extractCandidateVendors` in
+`src/analysis.ts` now does the same job with a capitalised-phrase heuristic
+and zero network calls. Same recall-over-precision tradeoff as 2.6: it can
+miss a vendor named only in lowercase or unusual casing, or one preceded by
+an imperative verb the stopword list doesn't cover, but it cannot invent a
+name that isn't in the text, and it never merges two distinct entities
+joined by "and" into one wrong candidate (a real bug caught while building
+it - `"&"` is kept as a connector since it is conventionally part of a single
+name, `"and"` is not, since it lists separate ones).
+
+Query generation is template-based by default too now (`getFallbackQueries`,
+already existed, was previously only the fallback for when Gemini failed).
+The LLM-authored version (`generateAuditQueries`) still exists, but only
+behind the explicit "Generate Query Matrix" step in the Run Audit modal - a
+cost the user opts into, not one every default audit pays silently. Brand
+lookup (`/api/audit/parse-url`) was also firing automatically on submit
+whenever domain or industry were blank; it is now only ever triggered by the
+explicit "Auto-Detect from URL" button.
+
+Net effect, verified end-to-end against a real (fake, but protocol-accurate)
+Gemini endpoint in `test/quotaEfficiencyE2E.test.ts`: a single supplied query
+now costs exactly 2 Gemini calls (one grounded search, one narrative
+synthesis) - down from 6-7. The default three-template-query path costs
+exactly `N + 1` for `N` queries, not `N + 3` (query generation, vendor
+discovery, and narrative all used to be separate calls on top of the
+per-query searches).
 
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
