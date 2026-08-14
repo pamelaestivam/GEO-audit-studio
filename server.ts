@@ -10,6 +10,7 @@ import {
   buildCitationSourceMap,
   buildScorecards,
   dedupeMatchers,
+  extractCandidateVendors,
   findFirstMention,
   normaliseDomain,
   type QueryEvidence,
@@ -568,11 +569,8 @@ Return a JSON array of exactly 3 query objects.`;
       }
 
       const clientMatcher = buildBrandMatcher(businessName, domain);
-      const discovered = (await discoverVendors(ai, evidence)).filter(
-        (v) =>
-          v.toLowerCase() !== clientMatcher.label.toLowerCase() &&
-          !competitorList.some((c: string) => c.toLowerCase() === v.toLowerCase())
-      );
+      const competitorMatchers = competitorList.map((c: string) => buildBrandMatcher(c));
+      const discovered = discoverVendors(evidence, [clientMatcher, ...competitorMatchers]);
 
       const allMatchers = dedupeMatchers([
         clientMatcher,
@@ -735,51 +733,32 @@ Return a JSON array of exactly 3 query objects.`;
    * literally appear in the source text. The model is used to perceive names,
    * never to judge - anything it invents is dropped before it can affect a metric.
    */
-  async function discoverVendors(
-    aiInstance: any,
-    evidenceForQuery: QueryEvidence[]
-  ): Promise<string[]> {
+  /**
+   * Find vendor-name candidates in captured evidence with zero LLM calls.
+   *
+   * This used to ask Gemini to list vendors, then verify every returned name
+   * literally occurs in the source text before accepting it - meaning the
+   * model's answer was already being fully re-derived from the text either
+   * way. That verification step alone (extractCandidateVendors -> the same
+   * findFirstMention check every discovered name already had to survive) is
+   * sufficient, and removes one Gemini call from every single audit -
+   * previously the single largest reason a one-query search cost far more
+   * than one query's worth of quota.
+   */
+  function discoverVendors(evidenceForQuery: QueryEvidence[], excludeMatchers: any[]): string[] {
     const usable = evidenceForQuery.filter((e) => !e.error && e.answerText.trim().length > 0);
     if (usable.length === 0) return [];
 
-    const combined = usable
-      .map((e) => `--- ${e.engine} answer ---\n${e.answerText.slice(0, 4000)}`)
-      .join('\n\n');
-
-    try {
-      const response = await generateContentWithRetry(aiInstance, {
-        model: AUDIT_MODEL,
-        contents: `List every company, product, vendor or service provider named as an option in the answers below. Return only proper names exactly as written. Exclude generic category words, publications, and review sites.\n\n${combined}`,
-        config: {
-          systemInstruction: 'You extract named entities verbatim. Never add names that are not present.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: { vendors: { type: Type.ARRAY, items: { type: Type.STRING } } },
-            required: ['vendors'],
-          },
-        },
-      });
-
-      const parsed = parseJsonText(response.text);
-      const candidates: string[] = Array.isArray(parsed?.vendors) ? parsed.vendors : [];
-
-      // Verification gate: keep only names that genuinely occur in the text.
-      const verified: string[] = [];
-      for (const name of candidates) {
-        const clean = String(name || '').trim();
-        if (clean.length < 2 || clean.length > 60) continue;
-        const matcher = buildBrandMatcher(clean);
-        const appears = usable.some((e) => findFirstMention(e.answerText, matcher) >= 0);
-        if (appears && !verified.some((v) => v.toLowerCase() === clean.toLowerCase())) {
-          verified.push(clean);
-        }
+    // Merge candidates across every answer, keeping the first-seen casing
+    // for each distinct name rather than collapsing to a lowercase key.
+    const byKey = new Map<string, string>();
+    for (const ev of usable) {
+      for (const candidate of extractCandidateVendors(ev.answerText, excludeMatchers)) {
+        const key = candidate.toLowerCase();
+        if (!byKey.has(key)) byKey.set(key, candidate);
       }
-      return verified;
-    } catch (err: any) {
-      console.log(`Vendor discovery failed: ${err?.message || err}`);
-      return [];
     }
+    return Array.from(byKey.values());
   }
 
   /**
@@ -945,16 +924,17 @@ Return valid JSON matching the schema.`;
         .map((c: string) => c.trim());
 
       const suppliedQueries = Array.isArray(queries) ? queries.filter((q: any) => q?.queryText) : [];
-      let generatedQueries: any[] = [];
 
-      // Generating the query matrix used to be a separate request the browser
-      // held open. It now happens inside the job, so nothing slow sits in the
-      // request path where a phone can abort it.
-      if (suppliedQueries.length === 0) {
-        generatedQueries = ai
-          ? await generateAuditQueries(ai, { businessName, domain: cleanDomain, industry, coreOfferings, competitors: competitorList })
-          : getFallbackQueries(businessName, cleanDomain, industry, coreOfferings, competitorList);
-      }
+      // Template-generated, not a Gemini call: a one-query audit should cost
+      // one query's worth of quota, not one call to invent the query on top
+      // of it. The LLM-authored version of this (generateAuditQueries) is
+      // still available, but only behind the explicit "Generate Query
+      // Matrix" step in the Run Audit modal - a deliberate spend the user
+      // opted into, not something every default audit pays silently.
+      const generatedQueries =
+        suppliedQueries.length === 0
+          ? getFallbackQueries(businessName, cleanDomain, industry, coreOfferings, competitorList)
+          : [];
 
       const queryList = [...generatedQueries, ...suppliedQueries].slice(0, MAX_AUDIT_QUERIES);
 
@@ -1024,16 +1004,10 @@ Return valid JSON matching the schema.`;
       const clientLabel = clientMatcher.label;
 
       // Discover the vendors each answer actually named, so ranking is against
-      // the real field rather than only the competitors the user typed.
-      // One discovery call for the whole audit rather than one per query: each
-      // extra Gemini call is quota the audit may not have.
-      const discovered = (await discoverVendors(ai, usableEvidence)).filter((v) => {
-        const isClient = v.toLowerCase() === clientLabel.toLowerCase();
-        const alreadyTracked = competitorList.some((c: string) => c.toLowerCase() === v.toLowerCase());
-        return !isClient && !alreadyTracked;
-      });
-
+      // the real field rather than only the competitors the user typed. Pure
+      // text extraction, not a model call - see discoverVendors.
       const trackedMatchers = competitorList.map((c: string) => buildBrandMatcher(c));
+      const discovered = discoverVendors(usableEvidence, [clientMatcher, ...trackedMatchers]);
       const discoveredMatchers = discovered.map((d) => buildBrandMatcher(d));
       // Collapse name variants ("Stripe" vs "Stripe, Inc.") so one company
       // cannot occupy two ranks or double-count in share of voice.
