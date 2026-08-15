@@ -18,6 +18,7 @@ import {
 import { AuditReport } from '../types';
 import { runAuditJob } from '../auditClient';
 import { apiFetch } from '../apiClient';
+import { newIdempotencyKey } from '../idempotency';
 import { useQuotaStatus } from '../useQuotaStatus';
 
 interface CleanStartDashboardProps {
@@ -87,7 +88,10 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     try {
       const res = await apiFetch('/api/audit/parse-url', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // One key per click, reused by apiFetch's retries, so a lookup that
+        // had to be retried past a sleeping instance still costs one Gemini
+        // call rather than one per attempt.
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
         body: JSON.stringify({ input: inputStr }),
         retries: 2,
         timeoutMs: 15000,

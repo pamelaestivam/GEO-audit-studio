@@ -14,6 +14,7 @@
  */
 
 import { apiFetch } from './apiClient';
+import { newIdempotencyKey } from './idempotency';
 
 export interface AuditRequest {
   businessName: string;
@@ -37,9 +38,19 @@ export async function runAuditJob(
   timeoutMs = 8 * 60 * 1000
 ): Promise<StartAuditResult> {
   // Full retry budget: this is the request that hits a sleeping instance.
+  //
+  // Those retries used to start a *new* audit each time. The submit that
+  // wakes a sleeping instance can stall past our timeout while the server
+  // accepts it anyway, and aborting the client's request does not abort the
+  // audit the server already began - so one click became up to four
+  // concurrent audits, all spending Gemini quota. The key is generated once
+  // per click and reused across every attempt, so the server can recognise
+  // the retries as the same submit and hand back the job it already started.
+  const idempotencyKey = newIdempotencyKey();
+
   const startRes = await apiFetch('/api/audit/run', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(payload),
     timeoutMs: 30000,
   });

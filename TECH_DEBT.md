@@ -121,6 +121,81 @@ non-Gemini engine still makes one wasted call per query rather than
 short-circuiting. Worth generalising to a per-engine breaker if those keys get
 enabled and hit the same problem.
 
+### 2.3b One click was buying four audits on a cold instance (fixed)
+
+"This was the first use of the day. It should not have hit the wall so
+quick." It was the first use of the day that caused it.
+
+`src/apiClient.ts` retries any request whose connection fails or hangs, which
+is right for a Render free instance waking from sleep (2.4). But it was
+retrying `POST /api/audit/run`, and **aborting the client's request does not
+abort work the server already started**. The submit that wakes the instance
+stalls past the 30s timeout while the server accepts it anyway, so each retry
+started another audit. Measured against the real built server before the fix:
+four attempts, four concurrent audits, **16 real Gemini calls for one click**,
+against a free tier documented at 10 requests per minute. The first use of the
+day is exactly when the instance is asleep, so it was the run most likely to
+be multiplied - the opposite of the intuition that a fresh day should be safe.
+
+Fixed with `src/idempotency.ts`: the client mints one `Idempotency-Key` per
+click and reuses it across its own retries; the server replays the job (or the
+in-flight promise) already started under that key instead of starting another.
+Applied to all four quota-spending endpoints - `/api/audit/run`,
+`/api/audit/parse-url`, `/api/audit/generate-queries`,
+`/api/audit/evaluate-query`. Proved end to end in
+`test/retrySpendE2E.test.ts` by counting real HTTP hits: four retried submits
+now cost one audit's quota.
+
+**Not covered:** a browser tab still holding an old bundle sends no key and
+gets the old behaviour (every call runs) - deliberate, since silently
+collapsing un-keyed requests would turn a real second request into a no-op.
+The stores are in-memory, so a restart or a second Render instance loses the
+dedup; that is the same gap as 2.1/2.3 and is fixed by the same datastore.
+Keys are unauthenticated, so a caller who guessed another user's key would be
+handed their job id - no worse than 2.2, where nothing is authenticated at
+all, but it becomes real work the moment 2.2 is fixed.
+
+### 2.3c A per-minute rate limit was being treated as an exhausted day (fixed)
+
+The same report had a second cause. `describeProviderError` classified every
+429 as `kind: 'quota'`, so `generateContentWithRetry` responded to a
+*transient* per-minute limit the same way it responds to a genuinely exhausted
+daily quota: trip the breaker, abandon the audit, return zeros. Measured: a
+single 429 whose own payload said `retryDelay: 5s` ended the audit after
+**one** Gemini call, having waited none of the five seconds it was asked to.
+
+Per-minute refusals are now `kind: 'rate_limit'` and are ridden out - one
+wait, of the length the provider actually stated, then the same audit
+continues. `kind: 'quota'` is now reserved for a wall lasting until the daily
+reset. The wait is capped (`GEMINI_RATE_LIMIT_MAX_WAIT_MS`, default 20s);
+past that, or if the retry also fails, the breaker still trips, because a
+retry loop at every call site is the amplification 2.3a exists to prevent.
+Call sites that deliberately fail fast (brand lookup passes `maxRetries=0`
+because a back-off there is what produced "Brand lookup could not be reached")
+never wait at all.
+
+Three related things were wrong in the same code path and are also fixed:
+
+- **The banner promised a retry that never happened.** "It will retry
+  automatically in 1m 0s" - nothing retried, the audit was already dead, and
+  the "1m" was this module's own fallback constant being shown as if the
+  provider had said it. Messages now state a duration only when the provider
+  stated one, and say so plainly when it did not.
+- **Daily quotas reset at midnight Pacific, not UTC**
+  (https://ai.google.dev/gemini-api/docs/rate-limits). `msUntilNextUtcMidnight`
+  could hold the breaker shut for up to eight hours *after* the quota had
+  already reset. Now `msUntilNextQuotaReset`, DST-aware via `Intl`.
+- **`includes('429')` matched any string containing those digits** anywhere -
+  a request id, a token count - and relabelled unrelated failures as quota
+  problems. Now requires 429 to stand alone.
+
+**Still imperfect:** the in-flight pacing gap went from 4s to 6.5s, because 4s
+permits 15 requests/minute - above every documented free-tier Flash limit, so
+the pacer's own ceiling was higher than the limit it existed to respect. This
+makes a normal audit roughly 8 seconds slower. It is a fixed guess at the
+limit, not a measured one; a real fix reads the provider's own rate-limit
+headers, or the account enables billing (1.1) and the question stops mattering.
+
 ### 2.4 Render free tier sleeps (medium - partially mitigated)
 
 First request after ~15 minutes idle takes 50 s or more, and the very first
