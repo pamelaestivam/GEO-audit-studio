@@ -54,9 +54,21 @@ that have held across every round so far:
 
 ## Merge discipline (standing instruction)
 
+**Review, then merge. Finishing a fix means it is on `main`.** The owner tests
+every change on the live site, and the live site is built from `main` — so a
+fix left sitting on a feature branch is a fix the owner cannot see, try, or
+sign off. Do not stop at "pushed the branch" and hand the merge back as a
+decision for them; that has happened and it blocked a round of testing for no
+reason. The sequence is: build it, run `npm test`, review the diff
+adversarially, fix what the review finds, **squash-merge to `main` and push**,
+then report. Only hold the merge if the owner has explicitly said to, or if
+the review found something you could not fix — and say so plainly in that case
+rather than going quiet.
+
 **Always run an extensive, adversarial review of a change before merging it to
 `main`.** `main` auto-deploys to Render and is what clients see, so a merge is a
-release.
+release — which is the reason the review is mandatory, not a reason to skip the
+merge.
 
 **`npm test` must pass before any merge.** It builds, runs the deterministic
 analysis checks, then boots the real server and asserts the product's contract
