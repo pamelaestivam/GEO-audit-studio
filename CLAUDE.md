@@ -54,9 +54,21 @@ that have held across every round so far:
 
 ## Merge discipline (standing instruction)
 
+**Review, then merge. Finishing a fix means it is on `main`.** The owner tests
+every change on the live site, and the live site is built from `main` — so a
+fix left sitting on a feature branch is a fix the owner cannot see, try, or
+sign off. Do not stop at "pushed the branch" and hand the merge back as a
+decision for them; that has happened and it blocked a round of testing for no
+reason. The sequence is: build it, run `npm test`, review the diff
+adversarially, fix what the review finds, **squash-merge to `main` and push**,
+then report. Only hold the merge if the owner has explicitly said to, or if
+the review found something you could not fix — and say so plainly in that case
+rather than going quiet.
+
 **Always run an extensive, adversarial review of a change before merging it to
 `main`.** `main` auto-deploys to Render and is what clients see, so a merge is a
-release.
+release — which is the reason the review is mandatory, not a reason to skip the
+merge.
 
 **`npm test` must pass before any merge.** It builds, runs the deterministic
 analysis checks, then boots the real server and asserts the product's contract
@@ -145,6 +157,15 @@ entirely from *behaviour*: the 429 responses Gemini has returned, decoded by
   Quotas, for the account's actual current usage against its limits — this
   is the only place with real numbers, and only the account owner can open it.
 
+**Before blaming the account's quota, check what the app is spending.** Twice
+now, "we hit the wall too fast" turned out to be this codebase spending more
+than one request's worth of quota per user action, not the ceiling being low
+(`TECH_DEBT.md` § 2.6a, then § 2.3b). The most recent one was invisible from
+the code alone and only showed up by counting real HTTP hits against the built
+server: the browser's cold-start retry was re-submitting an audit the server
+had already accepted, so one click cost 16 Gemini calls. Count the calls
+before theorising about the quota.
+
 **What the app itself now does about this**, so the next session doesn't
 have to re-derive it:
 - `GET /api/audit/status` reports whether the quota is currently known to be
@@ -153,9 +174,17 @@ have to re-derive it:
   already seen*, not fetched from Google — it is empty/healthy after every
   server restart even if the underlying account quota is still exhausted.
 - The circuit breaker (`src/quotaBreaker.ts`) trips for a computed cooldown
-  on the first quota error and then refuses every further Gemini call
+  on a *daily* quota error and then refuses every further Gemini call
   instantly until that cooldown elapses — see `TECH_DEBT.md` § 2.3a for the
-  full history of why.
+  full history of why. A *per-minute* rate limit is no longer treated the
+  same way: it is a pacing signal, so the audit waits the delay the provider
+  itself stated and carries on (§ 2.3c). Daily cooldowns run to midnight
+  **Pacific**, which is when Google resets them — not UTC.
+- Every quota-spending POST is idempotent on a client-supplied
+  `Idempotency-Key` (`src/idempotency.ts`), because the cold-start retry in
+  `src/apiClient.ts` was otherwise starting a fresh audit per attempt
+  (§ 2.3b). Any new endpoint that calls an answer engine needs the same
+  treatment — the retry wrapper applies to every request in the app.
 - Per-audit call volume is now minimal by construction (§ 2.6a in
   `TECH_DEBT.md`): a single supplied query costs exactly 2 Gemini calls, not
   6-7. This doesn't raise the quota ceiling, it just means far more real
@@ -189,6 +218,11 @@ have to be rediscovered from scratch, not so it can be skipped.
   against a fake Gemini endpoint that always succeeds; counts real HTTP hits
   to prove a single-query audit costs exactly 2 calls (needs a current
   `dist/`)
+- `npx tsx test/idempotency.test.ts` — retry-safety store, pure unit checks
+- `npx tsx test/retrySpendE2E.test.ts` — spawns the real built server against
+  a fake Gemini endpoint; proves a retried submit costs one audit's quota
+  rather than four, and that a transient per-minute 429 is waited out instead
+  of destroying the audit (needs a current `dist/`)
 - `npx tsx test/contract.test.ts` — full server contract checks (needs a
   current `dist/`)
 

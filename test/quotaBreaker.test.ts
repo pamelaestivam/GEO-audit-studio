@@ -20,7 +20,7 @@ import {
   describeProviderError,
   formatDuration,
   isDailyQuotaError,
-  msUntilNextUtcMidnight,
+  msUntilNextQuotaReset,
 } from '../src/errors';
 
 let failures = 0;
@@ -105,15 +105,47 @@ check(
 );
 check('a per-minute id is not mistaken for a daily one', isDailyQuotaError('GenerateRequestsPerMinutePerProjectPerModel-FreeTier'), false);
 
+// Daily quotas reset at midnight *Pacific*, not UTC
+// (https://ai.google.dev/gemini-api/docs/rate-limits). Computing to UTC
+// midnight held the breaker shut for up to 8 hours after the quota had
+// already reset, so the product refused to run audits against quota that was
+// available again.
 {
-  const now = Date.UTC(2026, 0, 15, 22, 30, 0); // 2026-01-15 22:30:00 UTC
-  const expected = Date.UTC(2026, 0, 16, 0, 0, 0) - now; // 1h30m to next midnight
-  check('daily cooldown runs to the next UTC midnight, not a fixed 24h', msUntilNextUtcMidnight(now), expected);
+  // 2026-01-15 22:30 UTC is 2026-01-15 14:30 PST (UTC-8, winter). Next
+  // Pacific midnight is 2026-01-16 08:00 UTC - 9h30m away, not 1h30m.
+  const winter = Date.UTC(2026, 0, 15, 22, 30, 0);
   check(
-    'a daily-quota error cooldown matches time-to-midnight, not the provider retryDelay',
-    computeQuotaCooldownMs('quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier, retryDelay: "5s"', now),
-    expected
+    'daily cooldown runs to the next Pacific midnight in winter (PST, UTC-8)',
+    msUntilNextQuotaReset(winter),
+    Date.UTC(2026, 0, 16, 8, 0, 0) - winter
   );
+  check(
+    'a daily-quota error cooldown matches time-to-reset, not the provider retryDelay',
+    computeQuotaCooldownMs('quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier, retryDelay: "5s"', winter),
+    Date.UTC(2026, 0, 16, 8, 0, 0) - winter
+  );
+
+  // Same clock reading in July is PDT (UTC-7), so the reset instant differs
+  // by an hour. A hardcoded offset would get exactly one of these two right.
+  const summer = Date.UTC(2026, 6, 15, 22, 30, 0);
+  check(
+    'daily cooldown follows the daylight-saving offset in summer (PDT, UTC-7)',
+    msUntilNextQuotaReset(summer),
+    Date.UTC(2026, 6, 16, 7, 0, 0) - summer
+  );
+
+  // Just after a Pacific midnight the wait must be nearly a full day, not
+  // nearly zero - the case where an off-by-a-timezone error is invisible
+  // in the middle of the day but catastrophic at the boundary.
+  const justAfterReset = Date.UTC(2026, 0, 16, 8, 1, 0); // 00:01 PST
+  check(
+    'one minute after the reset the next one is a full day away',
+    msUntilNextQuotaReset(justAfterReset),
+    24 * 3600_000 - 60_000
+  );
+
+  const justBeforeReset = Date.UTC(2026, 0, 16, 7, 59, 0); // 23:59 PST
+  check('one minute before the reset the wait is one minute', msUntilNextQuotaReset(justBeforeReset), 60_000);
 }
 
 // ---------------------------------------------------------------- duration formatting
@@ -124,16 +156,64 @@ check('formatDuration floors negative/zero to 0s rather than throwing', formatDu
 
 // ---------------------------------------------------------------- message classification end to end
 {
+  // A per-minute limit and a daily one are different events with different
+  // correct responses (wait seconds and carry on / stop until the reset).
+  // They used to share the 'quota' kind, so server.ts treated a five-second
+  // pacing hiccup as an exhausted day and abandoned the audit.
   const perMinute = describeProviderError(
     '{"error":{"code":429,"message":"You exceeded your current quota","status":"RESOURCE_EXHAUSTED","details":[{"retryDelay":"36s"}]}}',
     'Gemini'
   );
-  check('a per-minute quota error classifies as quota, not daily', perMinute.isDailyQuota, false);
-  assert('a per-minute message names a concrete wait, not "24 hours"', /36s|retry automatically/.test(perMinute.message), perMinute.message);
+  check('a per-minute limit classifies as rate_limit, not exhausted quota', perMinute.kind, 'rate_limit');
+  check('a per-minute limit is not flagged daily', perMinute.isDailyQuota, false);
+  check('the provider-stated wait is carried through for the caller to honour', perMinute.retryAfterSeconds, 36);
+  assert('a per-minute message names the wait the provider actually stated', /36s/.test(perMinute.message), perMinute.message);
+
+  // Regression, straight from a screenshot: the banner read "It will retry
+  // automatically in 1m 0s" on an audit that had already been abandoned.
+  // Nothing retried, and "1m" was this module's own fallback constant being
+  // presented as something the provider had said.
+  assert(
+    'a rate-limit message never promises an automatic retry that does not happen',
+    !/retry automatically/i.test(perMinute.message),
+    perMinute.message
+  );
+
+  const noStatedDelay = describeProviderError(
+    '{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}',
+    'Gemini'
+  );
+  check('a 429 with no stated delay still classifies as rate_limit', noStatedDelay.kind, 'rate_limit');
+  check('no delay is invented when the provider did not state one', noStatedDelay.retryAfterSeconds, undefined);
+  assert(
+    'a 429 with no stated delay says so rather than quoting a made-up duration',
+    /did not say for how long/i.test(noStatedDelay.message) && !/\d+m \d+s/.test(noStatedDelay.message),
+    noStatedDelay.message
+  );
+  assert(
+    'it points at where the real quota numbers actually live',
+    /aistudio\.google\.com\/apikey/.test(noStatedDelay.message),
+    noStatedDelay.message
+  );
 
   const daily = describeProviderError('RESOURCE_EXHAUSTED: quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'Gemini');
+  check('a daily quota error is still the hard-wall kind', daily.kind, 'quota');
   check('a daily quota error is classified as daily', daily.isDailyQuota, true);
-  assert('a daily message says midnight UTC, not a generic "24 hours"', /midnight utc/i.test(daily.message), daily.message);
+  assert('a daily message names the real reset boundary', /midnight pacific/i.test(daily.message), daily.message);
+
+  // A three-digit substring is not a status code. This used to relabel any
+  // error text containing "429" anywhere - a request id, a token count - as a
+  // quota problem, which sent the caller down the breaker path for something
+  // that had nothing to do with quota.
+  const notAQuotaError = describeProviderError(
+    '{"error":{"code":500,"message":"Internal error","requestId":"req-84291-x"}}',
+    'Gemini'
+  );
+  assert(
+    'a bare 429 inside a longer number is not mistaken for a rate limit',
+    notAQuotaError.kind !== 'rate_limit' && notAQuotaError.kind !== 'quota',
+    `${notAQuotaError.kind}: ${notAQuotaError.message}`
+  );
 }
 
 // A QuotaExhaustedError-shaped object (name === 'QuotaExhaustedError', as
@@ -147,7 +227,13 @@ check('formatDuration floors negative/zero to 0s rather than throwing', formatDu
       this.name = 'QuotaExhaustedError';
     }
   }
-  const breakerMessage = "Gemini's daily free-tier quota is exhausted. It resets at midnight UTC (in 4h 12m).";
+  // The message the breaker actually stores today. Built from the same
+  // shared marker the detection matches on, so this test cannot drift into
+  // asserting against prose the product no longer produces.
+  const breakerMessage = describeProviderError(
+    'RESOURCE_EXHAUSTED: quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+    'Gemini'
+  ).message;
   const described = describeProviderError(new FakeQuotaExhaustedError(breakerMessage), 'Gemini');
   check('a breaker refusal is returned verbatim, not re-mangled', described.message, breakerMessage);
   check('a breaker refusal classifies as quota', described.kind, 'quota');

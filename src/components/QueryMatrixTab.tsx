@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Search, Filter, ExternalLink, AlertTriangle, CheckCircle2, XCircle, ChevronRight, HelpCircle, User, Sparkles, Layers, Plus, RefreshCw, Send } from 'lucide-react';
 import { AuditQuery, QueryIntent, AiEngine, RecommendationStatus, EngineResult, AuditReport } from '../types';
 import { apiFetch } from '../apiClient';
+import { newIdempotencyKey } from '../idempotency';
 
 interface QueryMatrixTabProps {
   queries: AuditQuery[];
@@ -122,7 +123,8 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
       // side, so there is nothing to fill in beyond what the audit already has.
       const res = await apiFetch('/api/audit/evaluate-query', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // One key per click, reused across apiFetch's retries - see auditClient.
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
         body: JSON.stringify({
           businessName,
           domain: audit?.domain,

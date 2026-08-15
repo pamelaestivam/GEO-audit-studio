@@ -96,11 +96,23 @@ function assert(name: string, condition: boolean, detail = '') {
     '{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"retryDelay":"36s"}]}}';
   const readable = describeProviderError(quota429, 'Gemini');
 
-  check('a 429 is classified as a quota problem', readable.kind, 'quota');
-  assert('the quota message contains no raw JSON', !readable.message.includes('{'), readable.message);
-  assert('the quota message contains no status codes', !readable.message.includes('RESOURCE_EXHAUSTED'), readable.message);
-  assert('the quota message tells the user what to do', /billing|wait/i.test(readable.message), readable.message);
+  // A per-minute refusal is 'rate_limit', not 'quota'. The two used to share
+  // one kind, so the server treated a few seconds of pacing as an exhausted
+  // day: it abandoned the audit after a single call and showed a report of
+  // zeros. 'quota' is now reserved for a wall that genuinely lasts until the
+  // provider's daily reset.
+  check('a per-minute 429 is classified as a rate limit, not an exhausted quota', readable.kind, 'rate_limit');
+  assert('the rate-limit message contains no raw JSON', !readable.message.includes('{'), readable.message);
+  assert('the rate-limit message contains no status codes', !readable.message.includes('RESOURCE_EXHAUSTED'), readable.message);
+  assert('the rate-limit message tells the user what to do', /billing|wait/i.test(readable.message), readable.message);
   check('the provider retry delay is honoured', parseRetryDelaySeconds(quota429), 36);
+
+  const dailyQuota = describeProviderError(
+    '{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}',
+    'Gemini'
+  );
+  check('a per-day 429 is the exhausted-quota kind', dailyQuota.kind, 'quota');
+  assert('the daily message contains no raw JSON', !dailyQuota.message.includes('{'), dailyQuota.message);
 
   const auth = describeProviderError('{"error":{"code":400,"message":"API key not valid. Please pass a valid API key."}}', 'Gemini');
   check('an invalid key is classified as auth', auth.kind, 'auth');

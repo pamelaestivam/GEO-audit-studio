@@ -22,6 +22,7 @@ import {
   summariseFailures,
 } from './src/errors';
 import { QuotaBreaker } from './src/quotaBreaker';
+import { IdempotencyStore, readIdempotencyKey } from './src/idempotency';
 import {
   askEngine,
   configuredEngines,
@@ -80,13 +81,18 @@ async function startServer() {
   /**
    * Serialise Gemini traffic.
    *
-   * The free tier limits requests per minute, and one audit issues many calls
-   * (brand lookup, query generation, one grounded search per query, vendor
-   * discovery, narrative). Firing them back to back exhausts the quota and the
-   * whole audit fails. Every Gemini call therefore queues behind the previous
-   * one with a minimum gap.
+   * The free tier limits requests per minute, and one audit issues several
+   * calls (one grounded search per query, then narrative). Firing them back to
+   * back exhausts the quota and the whole audit fails. Every Gemini call
+   * therefore queues behind the previous one with a minimum gap.
+   *
+   * The gap is 6.5s rather than the 4s it used to be because 4s permits 15
+   * requests/minute, which is above every documented free-tier limit for a
+   * Flash model (10 RPM - https://ai.google.dev/gemini-api/docs/rate-limits).
+   * A pacer whose own ceiling is higher than the limit it exists to respect
+   * is not pacing anything. 6.5s holds us to ~9 RPM, just under the line.
    */
-  const MIN_GEMINI_INTERVAL_MS = Number(process.env.GEMINI_MIN_INTERVAL_MS || 4000);
+  const MIN_GEMINI_INTERVAL_MS = Number(process.env.GEMINI_MIN_INTERVAL_MS || 6500);
   let geminiChain: Promise<unknown> = Promise.resolve();
   let lastGeminiCallAt = 0;
 
@@ -115,6 +121,16 @@ async function startServer() {
     }
   }
 
+  /**
+   * How long an in-flight audit may pause to ride out a per-minute rate
+   * limit. Past this, failing honestly beats holding the user's browser: the
+   * breaker trips and the report says so. One wait, not a retry loop - the
+   * breaker exists because retry loops at every call site are what turned one
+   * exhausted quota into 15-20 rediscoveries of it.
+   */
+  const RATE_LIMIT_MAX_WAIT_MS = Number(process.env.GEMINI_RATE_LIMIT_MAX_WAIT_MS || 20000);
+  const RATE_LIMIT_RETRIES = Number(process.env.GEMINI_RATE_LIMIT_RETRIES || 1);
+
   async function generateContentWithRetry(
     aiInstance: GoogleGenAI,
     params: any,
@@ -131,6 +147,7 @@ async function startServer() {
     }
 
     let attempt = 0;
+    let rateLimitWaits = 0;
 
     while (true) {
       try {
@@ -152,12 +169,54 @@ async function startServer() {
         const readable = describeProviderError(err, 'Gemini');
 
         if (readable.kind === 'quota') {
-          // Trip immediately - do not retry a quota error at this call site,
-          // and stop every other call site (this audit and every other
-          // request) from independently rediscovering the same wall.
+          // A *daily* cap is a genuine wall: nothing this process does before
+          // the reset will succeed. Trip immediately - do not retry, and stop
+          // every other call site (this audit and every other request) from
+          // independently rediscovering the same wall.
           const cooldownMs = computeQuotaCooldownMs(String(err?.message || err));
           geminiBreaker.trip(cooldownMs, readable.message);
-          console.log(`[Gemini] quota exhausted; breaker tripped for ${formatDuration(cooldownMs)}`);
+          console.log(`[Gemini] daily quota exhausted; breaker tripped for ${formatDuration(cooldownMs)}`);
+          throw err;
+        }
+
+        if (readable.kind === 'rate_limit') {
+          // A *per-minute* limit is a pacing signal, not a wall. Treating it
+          // as one was throwing away whole audits: a single 429 on the first
+          // grounded search tripped the breaker and returned a report of
+          // zeros, having made exactly one call, while the provider's own
+          // response said the wait was five seconds. Wait the time it asked
+          // for and carry on with the same audit.
+          const suggestedMs = (readable.retryAfterSeconds ?? 0) * 1000;
+          // `maxRetries === 0` is how a call site says "fail fast, a user is
+          // watching a form" - brand lookup passes it precisely because a
+          // back-off there is what produced "Brand lookup could not be
+          // reached". Pausing that call for 20s to save it would trade one
+          // documented behaviour for the bug it was written to prevent.
+          const mayWait = maxRetries > 0;
+          const worthWaiting = mayWait && suggestedMs > 0 && suggestedMs <= RATE_LIMIT_MAX_WAIT_MS;
+
+          if (worthWaiting && rateLimitWaits < RATE_LIMIT_RETRIES) {
+            rateLimitWaits++;
+            // A small margin on top: the provider's delay is when the window
+            // opens, and landing exactly on it just earns another 429.
+            const waitMs = suggestedMs + 1000;
+            console.log(
+              `[Gemini] rate limited; waiting ${formatDuration(waitMs)} as the provider asked, then resuming this audit`
+            );
+            await delay(waitMs);
+            continue;
+          }
+
+          // Either the provider wants us gone for longer than an in-flight
+          // audit can reasonably hold a user, or waiting already failed once.
+          // Now it earns the breaker.
+          const cooldownMs = computeQuotaCooldownMs(String(err?.message || err));
+          geminiBreaker.trip(cooldownMs, readable.message);
+          console.log(
+            `[Gemini] rate limited beyond what an in-flight audit can wait out (asked for ${
+              suggestedMs ? formatDuration(suggestedMs) : 'no stated delay'
+            }); breaker tripped for ${formatDuration(cooldownMs)}`
+          );
           throw err;
         }
 
@@ -171,6 +230,29 @@ async function startServer() {
     }
   }
 
+
+  /**
+   * Retry-safety for the endpoints that spend Gemini quota.
+   *
+   * Two stores because the two shapes of work differ: an audit is a job id
+   * that outlives the request, while brand lookup and query generation are
+   * a promise the request awaits. Both are keyed on the client's
+   * `Idempotency-Key`, which is stable across `apiFetch`'s own retries.
+   *
+   * The in-flight store's TTL only needs to cover one client's retry budget
+   * (~10s of backoff); the job store matches the audit job TTL so a replayed
+   * submit finds the job still pollable.
+   */
+  const inFlightRequests = new IdempotencyStore<Promise<any>>(60 * 1000);
+
+  /**
+   * Namespace a client key by the route it was sent to. One store serves
+   * several endpoints whose results have different shapes, so a key reused
+   * across two of them would otherwise hand the second caller the first
+   * one's payload. Client keys are per-click UUIDs and should never collide,
+   * but "should never" is not a reason to leave it possible.
+   */
+  const scopedKey = (route: string, key: string | undefined) => (key ? `${route}:${key}` : undefined);
 
   // Health check API
   app.get('/api/health', (req, res) => {
@@ -283,44 +365,65 @@ async function startServer() {
 
   // POST: Live URL & Brand Name parser using Gemini Grounded Web Search
   app.post('/api/audit/parse-url', async (req, res) => {
+    const idempotencyKey = scopedKey('parse-url', readIdempotencyKey(req.headers as any));
     try {
       const { input } = req.body;
       if (!input || typeof input !== 'string') {
         return res.status(400).json({ error: 'Input query string or URL is required' });
       }
 
-      const cleanedInput = input.trim();
-      let parsedDomain = '';
-      let parsedBusinessName = '';
-
-      // Try parsing domain out of raw URL or domain input
+      // One click on "Auto-Detect" costs one Gemini call however many times
+      // the client had to retry the connection to deliver it.
+      const { value } = inFlightRequests.run(idempotencyKey, () => parseUrlWork(String(input)));
       try {
-        if (cleanedInput.startsWith('http://') || cleanedInput.startsWith('https://')) {
-          const urlObj = new URL(cleanedInput);
-          parsedDomain = urlObj.hostname.replace(/^www\./, '');
-        } else if (/\.[a-z]{2,}(\/.*)?$/i.test(cleanedInput)) {
-          const urlObj = new URL(`https://${cleanedInput}`);
-          parsedDomain = urlObj.hostname.replace(/^www\./, '');
-        }
-      } catch {
-        // Not a direct URL, handle as brand name string
+        return res.json(await value);
+      } catch (workErr) {
+        // A failed lookup must not be replayed as a cached failure - the
+        // user's next click deserves a real attempt.
+        inFlightRequests.forget(idempotencyKey);
+        throw workErr;
       }
+    } catch (err: any) {
+      const readable = describeProviderError(err, 'Brand lookup');
+      console.log(`parse-url failed: ${readable.message}`);
+      res.status(500).json({ error: readable.message });
+    }
+  });
 
-      if (parsedDomain) {
-        const domainNamePart = parsedDomain.split('.')[0];
-        parsedBusinessName = domainNamePart.charAt(0).toUpperCase() + domainNamePart.slice(1);
-      } else {
-        parsedBusinessName = cleanedInput;
-        parsedDomain = `${cleanedInput.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
+  /** The actual brand lookup, separated so it can be shared by retried requests. */
+  async function parseUrlWork(input: string): Promise<any> {
+    const cleanedInput = input.trim();
+    let parsedDomain = '';
+    let parsedBusinessName = '';
+
+    // Try parsing domain out of raw URL or domain input
+    try {
+      if (cleanedInput.startsWith('http://') || cleanedInput.startsWith('https://')) {
+        const urlObj = new URL(cleanedInput);
+        parsedDomain = urlObj.hostname.replace(/^www\./, '');
+      } else if (/\.[a-z]{2,}(\/.*)?$/i.test(cleanedInput)) {
+        const urlObj = new URL(`https://${cleanedInput}`);
+        parsedDomain = urlObj.hostname.replace(/^www\./, '');
       }
+    } catch {
+      // Not a direct URL, handle as brand name string
+    }
 
-      const ai = getGeminiClient();
-      let details = null;
-      let detectionError: unknown = null;
+    if (parsedDomain) {
+      const domainNamePart = parsedDomain.split('.')[0];
+      parsedBusinessName = domainNamePart.charAt(0).toUpperCase() + domainNamePart.slice(1);
+    } else {
+      parsedBusinessName = cleanedInput;
+      parsedDomain = `${cleanedInput.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
+    }
 
-      if (ai) {
-        try {
-          const prompt = `Analyze the brand/business "${parsedBusinessName}" (Domain: ${parsedDomain}).
+    const ai = getGeminiClient();
+    let details = null;
+    let detectionError: unknown = null;
+
+    if (ai) {
+      try {
+        const prompt = `Analyze the brand/business "${parsedBusinessName}" (Domain: ${parsedDomain}).
 Use live web search to identify real current details:
 1. Exact official business name
 2. Official primary domain
@@ -331,62 +434,57 @@ Use live web search to identify real current details:
 
 Return a valid JSON object matching the requested schema.`;
 
-          // No retries: this runs while the user waits on the form, and a
-          // quota back-off here is what surfaced as "Brand lookup could not be
-          // reached". Failing fast keeps their typed values and moves on.
-          const response = await generateContentWithRetry(ai, {
-            model: AUDIT_MODEL,
-            contents: prompt,
-            config: {
-              systemInstruction: 'You are a strict data auditing tool. Do not generate fictional or inferred metrics. If live data or search citations are unavailable for a query, explicitly return null/empty arrays instead of generating placeholders.',
-              tools: [{ googleSearch: {} }],
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  businessName: { type: Type.STRING },
-                  domain: { type: Type.STRING },
-                  industry: { type: Type.STRING },
-                  coreOfferings: { type: Type.STRING },
-                  targetAudience: { type: Type.STRING },
-                  competitors: { type: Type.ARRAY, items: { type: Type.STRING } }
-                },
-                required: ['businessName', 'domain', 'industry', 'coreOfferings', 'targetAudience', 'competitors']
-              }
+        // No retries: this runs while the user waits on the form, and a
+        // quota back-off here is what surfaced as "Brand lookup could not be
+        // reached". Failing fast keeps their typed values and moves on.
+        const response = await generateContentWithRetry(ai, {
+          model: AUDIT_MODEL,
+          contents: prompt,
+          config: {
+            systemInstruction: 'You are a strict data auditing tool. Do not generate fictional or inferred metrics. If live data or search citations are unavailable for a query, explicitly return null/empty arrays instead of generating placeholders.',
+            tools: [{ googleSearch: {} }],
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                businessName: { type: Type.STRING },
+                domain: { type: Type.STRING },
+                industry: { type: Type.STRING },
+                coreOfferings: { type: Type.STRING },
+                targetAudience: { type: Type.STRING },
+                competitors: { type: Type.ARRAY, items: { type: Type.STRING } }
+              },
+              required: ['businessName', 'domain', 'industry', 'coreOfferings', 'targetAudience', 'competitors']
             }
-          }, 0);
+          }
+        }, 0);
 
-          details = parseJsonText(response.text);
-        } catch (genErr) {
-          detectionError = genErr;
-          console.log(`Brand lookup failed: ${describeProviderError(genErr, 'Brand lookup').message}`);
-        }
+        details = parseJsonText(response.text);
+      } catch (genErr) {
+        detectionError = genErr;
+        console.log(`Brand lookup failed: ${describeProviderError(genErr, 'Brand lookup').message}`);
       }
-
-      // Detection either worked or it did not. Inventing an industry, a set of
-      // offerings or a competitor list would put made-up facts about a real
-      // business in front of the user, and the client would then overwrite what
-      // they typed with them. Return only what we actually derived.
-      if (!details || !details.businessName) {
-        return res.json({
-          details: {
-            businessName: parsedBusinessName,
-            domain: parsedDomain,
-          },
-          detected: false,
-          reason: detectionError
-            ? describeProviderError(detectionError, 'Brand lookup').message
-            : 'Brand lookup returned nothing for this input.',
-        });
-      }
-
-      res.json({ details, detected: true });
-    } catch (err: any) {
-      const readable = describeProviderError(err, 'Brand lookup');
-      console.log(`parse-url failed: ${readable.message}`);
-      res.status(500).json({ error: readable.message });
     }
-  });
+
+    // Detection either worked or it did not. Inventing an industry, a set of
+    // offerings or a competitor list would put made-up facts about a real
+    // business in front of the user, and the client would then overwrite what
+    // they typed with them. Return only what we actually derived.
+    if (!details || !details.businessName) {
+      return {
+        details: {
+          businessName: parsedBusinessName,
+          domain: parsedDomain,
+        },
+        detected: false,
+        reason: detectionError
+          ? describeProviderError(detectionError, 'Brand lookup').message
+          : 'Brand lookup returned nothing for this input.',
+      };
+    }
+
+    return { details, detected: true };
+  }
 
   // Helper to safely parse JSON from model output
   const parseJsonText = (text?: string) => {
@@ -486,6 +584,7 @@ Return a JSON array of exactly 3 query objects.`;
   }
 
   app.post('/api/audit/generate-queries', async (req, res) => {
+    const idempotencyKey = scopedKey('generate-queries', readIdempotencyKey(req.headers as any));
     try {
       const { businessName, domain, industry, coreOfferings, competitors } = req.body;
       if (!businessName) {
@@ -495,7 +594,18 @@ Return a JSON array of exactly 3 query objects.`;
       if (!ai) {
         return res.json({ queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors) });
       }
-      const queries = await generateAuditQueries(ai, { businessName, domain, industry, coreOfferings, competitors });
+      // One click on "Generate Query Matrix" costs one Gemini call, however
+      // many connection attempts it took to deliver the request.
+      const { value } = inFlightRequests.run(idempotencyKey, () =>
+        generateAuditQueries(ai, { businessName, domain, industry, coreOfferings, competitors })
+      );
+      let queries: any[];
+      try {
+        queries = await value;
+      } catch (workErr) {
+        inFlightRequests.forget(idempotencyKey);
+        throw workErr;
+      }
       res.json({ queries });
     } catch (err: any) {
       res.json({
@@ -557,7 +667,19 @@ Return a JSON array of exactly 3 query objects.`;
         .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
         .map((c: string) => c.trim());
 
-      const evidence = await collectQueryEvidence(ai, query, engines);
+      // One click on "Add & Audit Query" costs one round of engine calls,
+      // however many connection attempts it took to deliver the request.
+      const idempotencyKey = scopedKey('evaluate-query', readIdempotencyKey(req.headers as any));
+      const { value: evidencePromise } = inFlightRequests.run(idempotencyKey, () =>
+        collectQueryEvidence(ai, query, engines)
+      );
+      let evidence: QueryEvidence[];
+      try {
+        evidence = await evidencePromise;
+      } catch (workErr) {
+        inFlightRequests.forget(idempotencyKey);
+        throw workErr;
+      }
       const usable = evidence.filter((e) => !e.error && e.answerText.trim().length > 0);
 
       if (usable.length === 0) {
@@ -1237,6 +1359,14 @@ Return valid JSON matching the schema.`;
   const auditJobs = new Map<string, AuditJob>();
   const JOB_TTL_MS = 30 * 60 * 1000;
 
+  /**
+   * Maps a client's idempotency key to the job it already started, so a
+   * retried submit polls the original audit instead of launching a second
+   * one. Same TTL as the jobs themselves - a replayed key must always resolve
+   * to a job that is still pollable.
+   */
+  const auditJobsByKey = new IdempotencyStore<string>(JOB_TTL_MS);
+
   function pruneJobs() {
     const now = Date.now();
     for (const [id, job] of auditJobs) {
@@ -1283,21 +1413,47 @@ Return valid JSON matching the schema.`;
       }));
 
     pruneJobs();
-    const id = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const job: AuditJob = { id, status: 'running', startedAt: Date.now() };
-    auditJobs.set(id, job);
 
-    // Kick the work off and answer immediately; the client polls for the result.
-    performAudit({ body: req.body })
-      .then((payload) => {
-        job.status = 'done';
-        job.result = payload;
-      })
-      .catch((err: any) => {
-        job.status = 'error';
-        job.error = describeProviderError(err, 'The audit service').message;
-        console.log(`Audit job ${id} failed: ${err?.message || err}`);
-      });
+    // The single most expensive thing to get wrong. A cold Render instance
+    // stalls the submit long enough for the browser's own retry to fire,
+    // while the server has already accepted the first one and started
+    // spending quota - an aborted client request does not abort server work.
+    // Measured before this guard: four attempts, four concurrent audits,
+    // 16 real Gemini calls for one click, on a free tier documented at 10
+    // requests per minute. First use of the day is exactly when the instance
+    // is asleep, so it is the run most likely to be multiplied.
+    const idempotencyKey = readIdempotencyKey(req.headers as any);
+    const { value: id, replayed } = auditJobsByKey.run(idempotencyKey, () => {
+      const newId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const job: AuditJob = { id: newId, status: 'running', startedAt: Date.now() };
+      auditJobs.set(newId, job);
+
+      // Kick the work off and answer immediately; the client polls for the result.
+      performAudit({ body: req.body })
+        .then((payload) => {
+          job.status = 'done';
+          job.result = payload;
+        })
+        .catch((err: any) => {
+          job.status = 'error';
+          job.error = describeProviderError(err, 'The audit service').message;
+          console.log(`Audit job ${newId} failed: ${err?.message || err}`);
+        });
+
+      return newId;
+    });
+
+    if (replayed) {
+      // The key outlives the job's own TTL prune, so confirm the job is still
+      // there rather than handing back an id that polls straight to 404.
+      if (!auditJobs.has(id)) {
+        auditJobsByKey.forget(idempotencyKey);
+        return res.status(409).json({
+          error: 'That audit has already finished and expired. Please run it again.',
+        });
+      }
+      console.log(`Audit submit replayed under an existing key; returning job ${id} instead of starting another.`);
+    }
 
     res.status(202).json({ jobId: id, status: 'running' });
   });

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Sparkles, Globe, Building2, Users, Plus, Trash2, ArrowRight, RefreshCw, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { runAuditJob } from '../auditClient';
 import { apiFetch } from '../apiClient';
+import { newIdempotencyKey } from '../idempotency';
 import { useQuotaStatus } from '../useQuotaStatus';
 import { AuditReport, AuditQuery } from '../types';
 
@@ -65,7 +66,8 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
     try {
       const res = await apiFetch('/api/audit/generate-queries', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // One key per click, reused across apiFetch's retries - see auditClient.
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newIdempotencyKey() },
         body: JSON.stringify({
           businessName,
           domain,
