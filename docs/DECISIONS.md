@@ -42,6 +42,16 @@ tracked as the most urgent open item in `TECH_DEBT.md` §1.4a.
 Vercel CLI credentials. The owner should confirm `/api/health` on the
 live URL after merge.
 
+**Update:** re-checked ~15 min post-merge and again ~10 min after a
+follow-up fix (lazy `vite` import, addressing a plausible native-binary
+crash) - both times, identical `FUNCTION_INVOCATION_FAILED`, no
+observable change. That pattern (two different code fixes, zero
+observable difference, well past normal build time) points away from
+"the code is still broken" and toward "these merges may not be reaching
+a Vercel deploy at all" - see `TECH_DEBT.md` §1.4a's update for exactly
+what the owner needs to check in the Vercel dashboard, since this
+session cannot see deploy history or function logs without it.
+
 ---
 
 ## 2026-09-13 — Fix MonitoringTab's fabricated trend/growth data now; defer real persistence and settings-form honesty
