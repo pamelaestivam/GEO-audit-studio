@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import { SAMPLE_AUDITS } from './src/data/sampleAudits';
 import {
@@ -1482,8 +1481,12 @@ Return valid JSON matching the schema.`;
 
   // Vite dev middleware or production static files - neither applies on
   // Vercel, which serves the built frontend from its own CDN and only ever
-  // routes /api/* requests to this app (see api/[...path].ts).
+  // routes /api/* requests to this app (see api/[...path].ts). `vite` is
+  // imported dynamically, only on this dev-only branch: it pulls in
+  // esbuild/rollup (platform-native binaries), and a production Lambda has
+  // no business loading a dev toolchain it will never call.
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
