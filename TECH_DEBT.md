@@ -51,10 +51,10 @@ decision being made. As deployed, Vercel's zero-config detection built
 only the Vite frontend — `/api/health` and every other API route return
 Vercel's own `404 NOT_FOUND`, not this app's error handling, because
 nothing tells Vercel to run `server.ts` at all. The page loads; nothing
-on it works. Being fixed now as its own round (serverless entry point +
-`vercel.json`) — see the entry directly below once merged. What was
-`1.4`'s original content — the harder architectural question — still
-applies and is now urgent rather than hypothetical:
+on it works. Being fixed next as its own round (serverless entry point +
+`vercel.json`); that fix will add a dated sub-entry here once merged.
+What was `1.4`'s original content — the harder architectural question —
+still applies and is now urgent rather than hypothetical:
 
 - A Vercel account/project linked to this repo (or its GitHub remote).
 - A decision on **what runs where**: Vercel's own serverless functions are
