@@ -177,6 +177,38 @@ state to a shared store (Vercel KV/Postgres, Upstash Redis) rather than
 process memory. Flagging here so it isn't rediscovered as a surprise the
 first time two audits actually overlap in production.
 
+### 1.4b The [...path].ts catch-all only matched single-segment /api/* paths in production (fixed)
+
+Discovered immediately after 1.4a's fix went live and `/api/health`
+started working: curled a matrix of real paths against the live deploy
+and found `/api/health` (single segment) returned real data, but
+`/api/audit/status`, `/api/audit/samples`, `/api/a/b` (anything with 2+
+segments after `/api/`) all hit **Vercel's own platform 404** - not
+Express's, meaning the request never reached the function at all. An
+unmatched *single*-segment path like `/api/foo` correctly returned
+Express's own "Cannot GET /api/foo", proving the function itself handles
+nested routes fine; the failure was entirely at Vercel's own routing
+layer, specific to how it was resolving the `[...path].ts` catch-all
+filename convention in this project's setup. This session could not
+fully diagnose why the catch-all filename behaved this way without
+deeper platform access than a curl matrix provides.
+
+Fixed by removing that ambiguity rather than continuing to debug it:
+renamed `api/[...path].ts` to `api/index.ts` and added an explicit
+`vercel.json` rewrite - `{ "source": "/api/:path*", "destination": "/api" }`
+- so routing no longer depends on Vercel's own inference about what a
+bracket-catch-all filename should match. This is the same
+"single-Express-function-behind-an-explicit-rewrite" pattern used by
+Vercel's own official Express examples, chosen originally and then
+set aside in favor of the catch-all filename for a smaller diff - worth
+remembering that the more explicit form was the more robust one.
+
+`test/vercelServerless.test.ts` now also asserts `vercel.json` actually
+contains this rewrite, specifically because calling the handler function
+directly (which every other test in this file does) cannot detect this
+failure mode at all - it bypasses Vercel's own routing layer entirely,
+which is exactly where this bug lived.
+
 ### 1.5 Set up auth with Google (Google Cloud Console) (tracked, not started)
 
 Raised in the same session, alongside 2.2 (auth is currently not real

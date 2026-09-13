@@ -1,6 +1,6 @@
 /**
  * Regression test for the actual production bug this proves it would have
- * caught: Vercel's Node.js runtime transpiles api/[...path].ts and its
+ * caught: Vercel's Node.js runtime transpiles api/index.ts and its
  * imports individually rather than bundling them into one file (the way
  * esbuild does for dist/server.cjs), so at runtime it's real Node ESM
  * resolution - which, unlike a bundler or `tsx` (what runs this very test
@@ -8,10 +8,10 @@
  * live Vercel function logs:
  *
  *   Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/var/task/server'
- *   imported from /var/task/api/[...path].js
+ *   imported from /var/task/api/index.js
  *
  * `npm test` was green the whole time this was broken in production,
- * because every other test imports server.ts/api/[...path].ts through
+ * because every other test imports server.ts/api/index.ts through
  * `tsx`, which resolves extensionless specifiers just fine. This test
  * instead statically walks the same module graph Vercel's runtime walks
  * and asserts every relative import carries an explicit extension - the
@@ -87,7 +87,7 @@ function main() {
   const visited = new Set<string>();
   const entryPoints = [
     path.join(ROOT, 'server.ts'),
-    path.join(ROOT, 'api', '[...path].ts'),
+    path.join(ROOT, 'api', 'index.ts'),
   ];
 
   for (const entry of entryPoints) {

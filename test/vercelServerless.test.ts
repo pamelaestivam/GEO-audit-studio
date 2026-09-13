@@ -1,5 +1,5 @@
 /**
- * Proof that the Vercel serverless entry point (api/[...path].ts) actually
+ * Proof that the Vercel serverless entry point (api/index.ts) actually
  * answers requests, and that the ordinary Render/local path is unchanged.
  *
  * The live deploy at the time this was written served only the static
@@ -16,6 +16,8 @@
  */
 
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 
 let failures = 0;
 function assert(name: string, condition: boolean, detail = '') {
@@ -38,7 +40,30 @@ function listenOnEphemeralPort(requestListener: (req: any, res: any) => void): P
   });
 }
 
+function checkVercelRewriteConfig() {
+  // This is the actual fix surface for TECH_DEBT.md 1.4b: a
+  // `[...path].ts` catch-all filename was confirmed in production to
+  // match only single-segment /api/* paths (curled a matrix of real
+  // URLs against the live deploy - /api/health worked, /api/audit/status
+  // hit Vercel's own 404 before ever reaching the function). Calling the
+  // handler directly (as the tests above do) can't detect that failure
+  // mode at all, since it bypasses Vercel's own routing layer entirely -
+  // so this checks the one thing that actually fixed it: an explicit
+  // rewrite covering every segment depth under /api/.
+  const raw = fs.readFileSync(path.join(process.cwd(), 'vercel.json'), 'utf8');
+  const config = JSON.parse(raw);
+  const rewrites: any[] = config.rewrites || [];
+  const apiRewrite = rewrites.find((r) => typeof r.source === 'string' && r.source.startsWith('/api/'));
+  assert(
+    'vercel.json has an explicit rewrite for every /api/* path (not just single-segment)',
+    !!apiRewrite && apiRewrite.source.includes(':path*'),
+    JSON.stringify(rewrites)
+  );
+}
+
 async function main() {
+  checkVercelRewriteConfig();
+
   // Both Render and Vercel run with NODE_ENV=production in real deploys -
   // set it here too, or this test would exercise the Vite dev-middleware
   // branch instead of the two branches actually in production.
@@ -50,7 +75,7 @@ async function main() {
   // as a side effect - exactly what a real Vercel function must never do.
   process.env.VERCEL = '1';
 
-  const { default: handler } = await import('../api/[...path]');
+  const { default: handler } = await import('../api/index');
   const { default: buildApp } = await import('../server');
 
   // ---- simulated Vercel invocation: the real handler, on a real socket
