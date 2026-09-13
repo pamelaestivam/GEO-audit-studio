@@ -241,6 +241,11 @@ have to be rediscovered from scratch, not so it can be skipped.
   a fake Gemini endpoint; proves a retried submit costs one audit's quota
   rather than four, and that a transient per-minute 429 is waited out instead
   of destroying the audit (needs a current `dist/`)
+- `npx tsx test/vercelServerless.test.ts` — proves `api/[...path].ts` (the
+  Vercel entry point) actually answers `/api/*` on a real socket, and that
+  it does not fall back to serving the frontend for a non-API path; also
+  proves the Render/local long-running path is unchanged (needs a current
+  `dist/`)
 - `npx tsx test/contract.test.ts` — full server contract checks (needs a
   current `dist/`)
 

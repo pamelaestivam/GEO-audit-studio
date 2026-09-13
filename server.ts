@@ -46,9 +46,15 @@ const AUDIT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 /** Bounds audit cost and runtime; each query fans out across every engine. */
 const MAX_AUDIT_QUERIES = Number(process.env.MAX_AUDIT_QUERIES || 8);
 
-async function startServer() {
+/**
+ * Builds the Express app with every route registered, but never binds a
+ * port. Shared by two callers: `startServer` below (a long-running process
+ * on Render or `npm run dev`), and `api/[...path].ts` (a Vercel serverless
+ * function, which owns the request/response lifecycle itself and must
+ * never call `app.listen`).
+ */
+async function buildApp() {
   const app = express();
-  const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
   app.use(express.json());
 
@@ -1474,14 +1480,16 @@ Return valid JSON matching the schema.`;
     return res.json({ status: 'done', ...job.result });
   });
 
-  // Vite development middleware or production static files
+  // Vite dev middleware or production static files - neither applies on
+  // Vercel, which serves the built frontend from its own CDN and only ever
+  // routes /api/* requests to this app (see api/[...path].ts).
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -1489,6 +1497,12 @@ Return valid JSON matching the schema.`;
     });
   }
 
+  return app;
+}
+
+async function startServer() {
+  const app = await buildApp();
+  const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
@@ -1620,4 +1634,11 @@ function generateSynthesizedAudit(
   };
 }
 
-startServer();
+// Vercel provides its own request/response lifecycle via api/[...path].ts,
+// which imports buildApp directly - a long-running listener would never
+// receive traffic there and would just hold the function open.
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default buildApp;

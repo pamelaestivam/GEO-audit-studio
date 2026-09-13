@@ -1,0 +1,4 @@
+{
+  "buildCommand": "npm run build && rm -f dist/server.cjs dist/server.cjs.map",
+  "outputDirectory": "dist"
+}

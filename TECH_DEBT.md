@@ -42,39 +42,90 @@ explicitly rather than claiming nothing is configured.
 Deferred until the product is worth showing. Pointing a domain at the Render
 service needs no code change.
 
-### 1.4 Vercel hosting (deployed 2026-09-13, currently non-functional — see fix below)
+### 1.4 Vercel hosting (deployed 2026-09-13; API connectivity fixed same day - see 1.4a)
 
 Raised in the 2026-09-13 product strategy session (`docs/DECISIONS.md`)
 as a future decision; the owner deployed to Vercel
 (`https://geo-audit-studio-five.vercel.app/`) the same day, ahead of that
-decision being made. As deployed, Vercel's zero-config detection built
-only the Vite frontend — `/api/health` and every other API route return
-Vercel's own `404 NOT_FOUND`, not this app's error handling, because
-nothing tells Vercel to run `server.ts` at all. The page loads; nothing
-on it works. Being fixed next as its own round (serverless entry point +
-`vercel.json`); that fix will add a dated sub-entry here once merged.
-What was `1.4`'s original content — the harder architectural question —
-still applies and is now urgent rather than hypothetical:
+decision being made. What `1.4` originally flagged as a future risk is
+now live, not hypothetical:
 
-- A Vercel account/project linked to this repo (or its GitHub remote).
-- A decision on **what runs where**: Vercel's own serverless functions are
-  stateless and short-lived per invocation, which breaks three things this
-  codebase currently assumes can live in a single long-running process -
-  the in-memory job table (2.3), the process-wide quota circuit breaker
-  (2.3a), and the idempotency store (2.3b). None of these survive being
-  torn down between invocations the way they do on a single Render
-  instance. This has to be resolved as part of the move, not discovered
-  after it, or the exact "16 calls for one click" failure this repo already
-  fixed once (2.3b) comes back in a new shape.
-- Environment variables (`GEMINI_API_KEY` and friends) re-entered in
-  Vercel's project settings - they do not carry over from Render
-  automatically.
+- **Confirm environment variables are actually set in Vercel.** `GEMINI_API_KEY`
+  and friends do not carry over from Render automatically - if they aren't
+  re-entered in the Vercel project's Environment Variables settings, every
+  audit will silently run in the degraded/synthesized path. Not verified
+  from this session; the owner should check the Vercel dashboard directly.
+- **The in-memory job table (2.3), quota circuit breaker (2.3a), and
+  idempotency store (2.3b) are now genuinely at risk, not just
+  architecturally suspect.** See 1.4a below - the API is reachable as of
+  this fix, which means real traffic can now actually hit this problem.
 
-**Do not start building file-based persistence (3.1) against the current
-Render filesystem while this move is undecided** - it would need to be
-rebuilt for a datastore anyway once Vercel is live, per the CTO seat's
-veto in the strategy session. Persistence and the hosting decision should
-be made together, not sequentially.
+**Do not start building file-based persistence (3.1) against a local
+filesystem** - Vercel functions don't have one to persist to between
+invocations, and it would need to be rebuilt for a real datastore anyway.
+Persistence needs a hosted datastore decision (Vercel Postgres, Vercel KV,
+Neon, Upstash, etc.), not a workaround.
+
+### 1.4a Vercel served only the static frontend - every API route 404'd (fixed)
+
+Confirmed by curling the live deploy: `/` returned Vercel's zero-config
+Vite build (200, real `index.html`), but `/api/health` and
+`/api/audit/status` both returned Vercel's own `404 NOT_FOUND` page -
+not this app's error handling. Root cause: Vercel's framework detection
+built the frontend (`vite build`) and had no idea `server.ts` (or the
+Express app it defines) was supposed to run anywhere. The live product
+was, at the time, a page that loads and does nothing.
+
+Fixed by giving Vercel an actual serverless entry point:
+
+- `server.ts` now splits `buildApp()` (constructs the Express app and
+  registers every route, never binds a port) from `startServer()` (calls
+  `buildApp()` then `app.listen()` - unchanged behavior for Render and
+  `npm run dev`/`npm start`). `buildApp` skips the production
+  static-file-serving branch when `process.env.VERCEL` is set, since
+  Vercel's own CDN serves `dist/` directly.
+- `api/[...path].ts` is a Vercel catch-all function: every request under
+  `/api/*` lands here via Vercel's file-system routing (no rewrite rules
+  needed), calls `buildApp()` once per warm instance, and forwards the
+  real `req`/`res` straight to the Express app - the same request
+  object Express already knows how to route internally.
+- `vercel.json` pins `outputDirectory` to `dist` and appends
+  `rm -f dist/server.cjs dist/server.cjs.map` to the build command.
+  Without this, the compiled backend bundle - full route logic, prompt
+  templates, internal error-handling strings, though no secrets, since
+  those are only ever read from `process.env` at runtime - was sitting
+  in the public static output and was confirmed reachable at
+  `/server.cjs` (curled: `200`). Not sensitive data, but not something
+  that should be servable to anyone who asks either.
+
+Verified two ways: `test/vercelServerless.test.ts` (new; wired into
+`npm test`) calls the real `api/[...path].ts` handler on a real
+`http.Server` and confirms it answers `/api/health` and
+`/api/audit/status`, and separately confirms `buildApp()` without
+`VERCEL` set still serves the static frontend exactly as before - so
+this change doesn't regress the Render path it didn't touch. The
+non-Vercel path was also smoke-tested by hand: built `dist/`, ran
+`node dist/server.cjs` for real, curled `/api/health` and `/`.
+**Not verified**: an actual `vercel deploy`/`vercel dev` run, since this
+session has no Vercel CLI credentials. The owner should confirm the live
+URL's `/api/health` returns `{"status":"ok",...}` after this merges, not
+assume it from the test suite alone.
+
+**Real risk this fix makes live, not just theoretical:** `geminiBreaker`,
+`auditJobs`, and the idempotency store are process-global `Map`s/objects
+created once per Lambda cold start. Vercel can and does run multiple
+warm instances concurrently under real traffic, each with its own copy
+of all three. Before this fix, that risk was moot - the API was
+unreachable, so nothing could trigger it. Now it's live: two requests
+that land on two different warm instances (a poll racing a cold start,
+or genuine concurrent audits) do not share breaker/job/idempotency
+state, which is exactly the amplification failure mode 2.3a and 2.3b
+were built to prevent, reopened one layer up. Low risk at Pamela's own
+solo testing volume; a real blocker before onboarding any second real
+user. Fix is the same one already tracked in 3.1/1.4: externalize this
+state to a shared store (Vercel KV/Postgres, Upstash Redis) rather than
+process memory. Flagging here so it isn't rediscovered as a surprise the
+first time two audits actually overlap in production.
 
 ### 1.5 Set up auth with Google (Google Cloud Console) (tracked, not started)
 
