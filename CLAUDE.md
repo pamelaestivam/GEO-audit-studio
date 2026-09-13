@@ -59,16 +59,21 @@ every change on the live site, and the live site is built from `main` — so a
 fix left sitting on a feature branch is a fix the owner cannot see, try, or
 sign off. Do not stop at "pushed the branch" and hand the merge back as a
 decision for them; that has happened and it blocked a round of testing for no
-reason. The sequence is: build it, run `npm test`, review the diff
-adversarially, fix what the review finds, **squash-merge to `main` and push**,
-then report. Only hold the merge if the owner has explicitly said to, or if
-the review found something you could not fix — and say so plainly in that case
-rather than going quiet.
+reason. **No standing branches between rounds** — every change ships as a PR
+from a short-lived branch and merges the same round it was opened, per
+`docs/ENGINEERING_STANDARDS.md` §3/§7. Only hold the merge if the owner has
+explicitly said to, or if review found something that could not be fixed in
+the round — and say so plainly in that case rather than going quiet.
+
+**Every PR needs an EVAL PM score before it merges**, not just a read-through.
+`docs/EVAL_PM.md` defines the rubric (Groundedness / Completeness / Relevance
+→ SHIP / REVISE / REJECT); only SHIP merges. This is what makes "adversarial
+review happened" a checkable claim instead of an assertion.
 
 **Always run an extensive, adversarial review of a change before merging it to
-`main`.** `main` auto-deploys to Render and is what clients see, so a merge is a
-release — which is the reason the review is mandatory, not a reason to skip the
-merge.
+`main`.** `main` auto-deploys to Vercel (see `TECH_DEBT.md` §1.4) and is what
+clients see, so a merge is a release — which is the reason the review is
+mandatory, not a reason to skip the merge.
 
 **`npm test` must pass before any merge.** It builds, runs the deterministic
 analysis checks, then boots the real server and asserts the product's contract
@@ -99,8 +104,9 @@ A green build is not a review. Before merging, explicitly check:
 
 ## Product team & process
 
-Product direction decisions (not routine bug fixes) run through three
-standing personas — PM Twin, CTO, UX Lead — defined in
+Product direction decisions (not routine bug fixes) run through four
+standing seats — PM Twin, CTO, UX Lead, and EVAL PM (`docs/EVAL_PM.md`,
+the merge gate that scores rather than builds) — defined in
 `docs/TEAM_CHARTER.md`, using the solo → position → debate → decision
 protocol described there. Decisions land in `docs/DECISIONS.md`.
 Engineering process (design notes, review bar, testing pyramid, release

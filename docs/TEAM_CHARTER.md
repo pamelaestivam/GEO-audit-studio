@@ -39,6 +39,17 @@ assumption the team hasn't actually decided (e.g., building file-based
 persistence the week before moving to serverless hosting, where the
 filesystem doesn't survive between requests).
 
+### EVAL PM — the merge gate (does not build)
+Owns: scoring, not building. Runs after any of the three builder seats
+produces an output and before it merges, on three axes -
+**Groundedness** (is it true and traceable, or does it invent facts?),
+**Completeness** (does it cover the whole ask?), **Relevance** (is it
+aimed at the real goal?) - producing one composite score and a
+SHIP / REVISE / REJECT verdict. Full rubric in `docs/EVAL_PM.md`. Applies
+the identical bar to every seat's output, including Pamela's own PM Twin
+- a score means the same thing regardless of who produced the work.
+Vetoes: nothing merges with a REVISE or REJECT verdict outstanding.
+
 ### UX Lead — research and experience, one seat
 Owns two things that are usually split but shouldn't be argued
 separately here: what real users/clients actually do and feel (research)
@@ -59,6 +70,7 @@ but isn't backed by measured data or working functionality.
 | How it's built / sequencing | CTO | PM Twin | UX Lead |
 | How it looks/behaves, what it must never fabricate | UX Lead | PM Twin | CTO |
 | Whether to take on new infra/cost | CTO + PM Twin jointly | UX Lead | — |
+| Whether an output merges | EVAL PM | — | PM Twin, CTO, UX Lead |
 
 No seat unilaterally overrides another's veto (above). A stuck
 disagreement is escalated to Pamela directly, named as a stuck
@@ -89,7 +101,12 @@ free-flowing conversation that happens to have three voices in it:
    `docs/DECISIONS.md` (date, decision, dissent if any, alternative
    rejected and why), then implemented under the process in
    `docs/ENGINEERING_STANDARDS.md` — design note if warranted, small
-   focused change, `npm test` green, adversarial self-review, merge.
+   focused change on its own branch, `npm test` green, then **EVAL PM**
+   scores the PR (`docs/EVAL_PM.md`). SHIP merges the same round;
+   REVISE/REJECT sends it back to the builder seat for a fix and a
+   re-score in that same round. No branch outlives the round it was
+   opened in — merged or explicitly abandoned, never left stale.
 
 The point of step 1 is independence; the point of step 4 is that a
-debate with no artifact at the end was theater.
+debate with no artifact at the end was theater, and a PR with no EVAL PM
+score is a review that didn't happen.

@@ -46,16 +46,23 @@ A change is done when, and only when:
    assert it."
 3. It has been read **adversarially by the same session that wrote it**,
    against the checklist in §5, before anyone else looks at it.
-4. Any known imperfection is written into `TECH_DEBT.md`, not left
+4. It has a PR open against `main`, and **EVAL PM** (`docs/EVAL_PM.md`)
+   has scored it SHIP - not "should pass," an actual scored pass.
+5. Any known imperfection is written into `TECH_DEBT.md`, not left
    implicit.
-5. It is on `main` (or, when this session's harness pins work to a
-   specific branch, pushed there and flagged ready — see the note at the
-   end of `CLAUDE.md`'s merge-discipline section). A fix on a branch no
-   one deploys is not a finished fix.
+6. **It is merged to `main` in the same round it was built.** Standing
+   rule, no exceptions without the owner saying so explicitly: every
+   change ships as a PR from a short-lived branch, gets its EVAL PM
+   score, and merges immediately on SHIP. A REVISE/REJECT verdict is
+   fixed and re-scored in that same round, not left for later. A branch
+   that outlives the round it was opened in is a defect in the process,
+   not a normal state - "pushed the branch" is not a finished fix, and
+   neither is "opened the PR."
 
 Mirrors GitHub/Stripe's "green CI is necessary, not sufficient" —
 tests catch regressions in what we thought to test; adversarial review
-catches the thing we didn't think to test.
+catches the thing we didn't think to test; EVAL PM's score is what makes
+"adversarial review happened" checkable instead of asserted.
 
 ## 4. Code review bar
 
@@ -120,11 +127,14 @@ merge, not "we'll add a test later."
 
 ## 7. Release process
 
-- `main` auto-deploys (Render today; Vercel once §"Open actions:
-  Vercel" in `TECH_DEBT.md` is resolved) — a merge to `main` is a
-  release to real users, not a checkpoint.
+- `main` auto-deploys (Vercel — see `TECH_DEBT.md` §1.4) — a merge to
+  `main` is a release to real users, not a checkpoint.
 - No merge to `main` without: green `npm test`, adversarial review done,
-  and a `TECH_DEBT.md` entry for anything left imperfect.
+  an EVAL PM SHIP verdict on the PR, and a `TECH_DEBT.md` entry for
+  anything left imperfect.
+- Every change goes through a PR — never a direct push to `main` — and
+  that PR merges the same round it was opened. No standing branches
+  between rounds.
 - No skipping hooks, no `--no-verify`, no force-push over shared history.
 - A red build on `main` is a stop-the-line event: the next action is
   fixing or reverting it, not building on top of it.

@@ -42,10 +42,19 @@ explicitly rather than claiming nothing is configured.
 Deferred until the product is worth showing. Pointing a domain at the Render
 service needs no code change.
 
-### 1.4 Move hosting to Vercel (tracked, not started)
+### 1.4 Vercel hosting (deployed 2026-09-13, currently non-functional — see fix below)
 
-Raised in the 2026-09-13 product strategy session
-(`docs/DECISIONS.md`). Needs from the owner before any code changes:
+Raised in the 2026-09-13 product strategy session (`docs/DECISIONS.md`)
+as a future decision; the owner deployed to Vercel
+(`https://geo-audit-studio-five.vercel.app/`) the same day, ahead of that
+decision being made. As deployed, Vercel's zero-config detection built
+only the Vite frontend — `/api/health` and every other API route return
+Vercel's own `404 NOT_FOUND`, not this app's error handling, because
+nothing tells Vercel to run `server.ts` at all. The page loads; nothing
+on it works. Being fixed now as its own round (serverless entry point +
+`vercel.json`) — see the entry directly below once merged. What was
+`1.4`'s original content — the harder architectural question — still
+applies and is now urgent rather than hypothetical:
 
 - A Vercel account/project linked to this repo (or its GitHub remote).
 - A decision on **what runs where**: Vercel's own serverless functions are
