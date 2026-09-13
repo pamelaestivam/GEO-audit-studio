@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
-import { SAMPLE_AUDITS } from './src/data/sampleAudits';
+import { SAMPLE_AUDITS } from './src/data/sampleAudits.js';
 import {
   analyseAnswer,
   buildBrandMatcher,
@@ -13,21 +13,21 @@ import {
   findFirstMention,
   normaliseDomain,
   type QueryEvidence,
-} from './src/analysis';
+} from './src/analysis.js';
 import {
   computeQuotaCooldownMs,
   describeProviderError,
   formatDuration,
   summariseFailures,
-} from './src/errors';
-import { QuotaBreaker } from './src/quotaBreaker';
-import { IdempotencyStore, readIdempotencyKey } from './src/idempotency';
+} from './src/errors.js';
+import { QuotaBreaker } from './src/quotaBreaker.js';
+import { IdempotencyStore, readIdempotencyKey } from './src/idempotency.js';
 import {
   askEngine,
   configuredEngines,
   dedupeCitations,
   type EngineName,
-} from './src/providers';
+} from './src/providers.js';
 
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
 

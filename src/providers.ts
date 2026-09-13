@@ -8,7 +8,7 @@
  * model.
  */
 
-import { extractDomain } from './analysis';
+import { extractDomain } from './analysis.js';
 
 export type EngineName = 'Gemini' | 'ChatGPT' | 'Perplexity' | 'Claude';
 

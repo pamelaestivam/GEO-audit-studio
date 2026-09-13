@@ -66,7 +66,7 @@ invocations, and it would need to be rebuilt for a real datastore anyway.
 Persistence needs a hosted datastore decision (Vercel Postgres, Vercel KV,
 Neon, Upstash, etc.), not a workaround.
 
-### 1.4a Vercel served only the static frontend - every API route 404'd (code fix merged; deploy still not confirmed live - see update below)
+### 1.4a Vercel served only the static frontend - every API route 404'd, then crashed (fixed, confirmed via real function logs)
 
 Confirmed by curling the live deploy: `/` returned Vercel's zero-config
 Vite build (200, real `index.html`), but `/api/health` and
@@ -98,41 +98,68 @@ Fixed by giving Vercel an actual serverless entry point:
   `/server.cjs` (curled: `200`). Not sensitive data, but not something
   that should be servable to anyone who asks either.
 
-Verified two ways: `test/vercelServerless.test.ts` (new; wired into
-`npm test`) calls the real `api/[...path].ts` handler on a real
-`http.Server` and confirms it answers `/api/health` and
-`/api/audit/status`, and separately confirms `buildApp()` without
-`VERCEL` set still serves the static frontend exactly as before - so
-this change doesn't regress the Render path it didn't touch. The
-non-Vercel path was also smoke-tested by hand: built `dist/`, ran
-`node dist/server.cjs` for real, curled `/api/health` and `/`.
-**Not verified**: an actual `vercel deploy`/`vercel dev` run, since this
-session has no Vercel CLI credentials.
+Verified locally: `test/vercelServerless.test.ts` calls the real
+`api/[...path].ts` handler on a real `http.Server` and confirms it
+answers `/api/health` and `/api/audit/status`, and separately confirms
+`buildApp()` without `VERCEL` set still serves the static frontend
+exactly as before - so this change doesn't regress the Render path it
+didn't touch. The non-Vercel path was also smoke-tested by hand: built
+`dist/`, ran `node dist/server.cjs` for real, curled `/api/health` and
+`/`. This routing fix alone was not, by itself, enough to make the live
+API work - see the update below for the actual remaining cause and how
+it was confirmed.
 
-**Update, same day, ~15 minutes after merge:** re-curled the live URL.
-Still `FUNCTION_INVOCATION_FAILED` on `/api/health`, unchanged from
-before this fix. A follow-up fix (lazily importing `vite` instead of
-importing it eagerly - see below) also merged and, re-checked ~10
-minutes after *that* merge, still shows the identical error. Two
-different code fixes producing zero observable change, well past normal
-Vercel build time (usually well under 90s for a project this size), is
-itself a signal: the leading hypothesis is no longer "the code is still
-broken" but **"these merges may not be triggering a Vercel deploy at
-all."** Possible causes this session cannot check without dashboard
-access: the Vercel project isn't connected to this GitHub repo's `main`
-branch for auto-deploy (e.g. it was deployed once via `vercel --prod`
-from a local checkout and never linked to GitHub), it's connected to a
-different branch, or deploys are succeeding but silently failing at a
-build step this session can't see the log for.
+**Update:** the first fix (routing) and a follow-up guess (lazily
+importing `vite`, on the theory that its native esbuild/rollup binaries
+were the crash) both merged and deployed correctly - re-checking the
+live URL after each still showed the identical
+`FUNCTION_INVOCATION_FAILED`. Two different code fixes with zero
+observable change, well past normal build time, was itself a signal
+worth stopping on rather than guessing a third time - see
+`docs/DECISIONS.md` for that reasoning at the time.
 
-**What the owner needs to check** (none of this is doable without
-Vercel dashboard/CLI access): open the Vercel project → Deployments tab
-→ confirm a new deployment exists with a timestamp after each of the
-merges above, and confirm its Source is a Git commit on `main` (not a
-stale local CLI deploy). If deployments ARE showing up, open the failing
-one's Function Logs for the real stack trace - that's the one piece of
-information that would turn the next fix from a hypothesis into a
-confirmed one.
+**Real root cause, confirmed from the owner's Vercel dashboard (Logs →
+expanded function error), not guessed:**
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/var/task/server'
+imported from /var/task/api/[...path].js
+```
+
+Vercel's Node.js runtime transpiles `api/[...path].ts` and everything it
+imports **individually**, unlike `esbuild --bundle` (used for
+`dist/server.cjs` on Render), which inlines the whole dependency graph
+into one file. At runtime it's real Node ESM resolution loading those
+separate files - and unlike a bundler, or `tsx` (what every local test
+in this repo runs under), native Node ESM refuses to infer a missing
+file extension. Every relative import in the server-side dependency
+graph (`api/[...path].ts` → `server.ts` → `src/analysis.ts`,
+`src/errors.ts`, `src/quotaBreaker.ts`, `src/idempotency.ts`,
+`src/providers.ts`, `src/data/sampleAudits.ts`, `src/types.ts`) was
+written without an extension (e.g. `from '../server'`), which is exactly
+what `moduleResolution: bundler` in `tsconfig.json` is meant to make
+safe for a bundler - just not for Vercel's per-file Node ESM runtime.
+Fixed by adding explicit `.js` extensions to all nine of them (the
+standard TypeScript "NodeNext" convention: reference the file's eventual
+compiled extension, even though the source is `.ts`).
+
+**Why `npm test` never caught this:** every existing test imports
+`server.ts`/`api/[...path].ts` through `tsx`, which resolves
+extensionless specifiers fine - it never exercised the one property
+that's actually Vercel-specific. `test/vercelEsmImports.test.ts` (new)
+closes that gap: it statically walks the same module graph Vercel's
+runtime walks and fails if any relative import in it lacks an explicit
+extension. Verified this would have caught the real bug by temporarily
+reverting one import and re-running it (failed as expected), then
+restoring the fix.
+
+**Still owner-verified, not just re-asserted:** the owner pulled the
+real stack trace from the Vercel dashboard themselves (Logs tab,
+expanded a `500 /api/health` entry) - this fix is confirmed against that
+trace, not merely deployed and hoped for. The lazy-`vite`-import change
+from the earlier guess is left in place; it's a real, independently
+justified hardening (a production Lambda has no reason to load a
+dev-only toolchain), just not what was actually causing this crash.
 
 **Real risk this fix makes live, not just theoretical:** `geminiBreaker`,
 `auditJobs`, and the idempotency store are process-global `Map`s/objects

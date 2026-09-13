@@ -1,4 +1,4 @@
-import { AuditReport, MonitoringConfig } from '../types';
+import { AuditReport, MonitoringConfig } from '../types.js';
 
 export const SAMPLE_AUDITS: AuditReport[] = [
   {

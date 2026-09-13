@@ -1,4 +1,9 @@
-import buildApp from '../server';
+// Node's native ESM loader (not a bundler) resolves this at runtime on
+// Vercel - it requires the real output extension, even though the source
+// file is server.ts. Omitting it is exactly what produced
+// "Cannot find module '/var/task/server'" (ERR_MODULE_NOT_FOUND) in
+// production. See TECH_DEBT.md 1.4a.
+import buildApp from '../server.js';
 
 /**
  * Vercel serverless entry point. Every request under /api/* lands here
