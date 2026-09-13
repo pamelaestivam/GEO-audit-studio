@@ -101,9 +101,14 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <Bell className="h-5 w-5 text-amber-400" />
               Automated AI Search Audit & Alert Settings
+              <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 text-[10px] font-bold uppercase tracking-wide border border-amber-500/20">
+                Preview - not yet active
+              </span>
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Schedule recurring sweeps across Perplexity, ChatGPT, Gemini, and Claude to detect query drift or competitive drop-offs.
+              Set your preferred sweep schedule and alert thresholds now. Nothing
+              runs automatically yet - saving stores these as your preferences
+              for when scheduled sweeps launch.
             </p>
           </div>
 
@@ -131,7 +136,8 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
               <option value="biweekly">Bi-weekly Sweeps</option>
             </select>
             <p className="text-[11px] text-slate-500">
-              Next scheduled audit run: <strong className="text-slate-300">{config.nextRunDate}</strong>
+              Scheduling is not active yet - no audit is queued for this
+              business.
             </p>
           </div>
 
@@ -169,7 +175,7 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
               />
             </div>
             <p className="text-[11px] text-slate-500">
-              Receive automated executive digests whenever new inaccuracies or recommendation rank drops occur.
+              Saved for later - once scheduling is live, this is where automated executive digests would be sent.
             </p>
           </div>
         </div>
@@ -178,7 +184,7 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
           {savedSuccess ? (
             <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
               <CheckCircle2 className="h-4 w-4" />
-              Monitoring preferences saved!
+              Preferences saved - scheduling isn't live yet.
             </span>
           ) : (
             <span />
@@ -188,7 +194,7 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
             type="submit"
             className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition shadow-md shadow-indigo-600/20"
           >
-            Save Monitoring Settings
+            Save Preferences
           </button>
         </div>
       </form>
