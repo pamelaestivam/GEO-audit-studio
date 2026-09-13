@@ -5,6 +5,44 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-09-13 — Add explicit .js extensions to every relative import Vercel's function graph reaches
+
+**Decision:** the actual root cause of the Vercel API crash (see the
+entry below for the two prior attempts) was confirmed from real
+production logs the owner pulled from the Vercel dashboard:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/var/task/server'
+imported from /var/task/api/[...path].js
+```
+
+Vercel's Node.js runtime transpiles files individually rather than
+bundling them, so at runtime it's native Node ESM resolution - which,
+unlike a bundler or `tsx` (what every local test runs under), requires
+an explicit file extension on every relative import. Fixed by adding
+`.js` to all nine extensionless relative imports reachable from
+`api/[...path].ts`'s and `server.ts`'s module graphs.
+
+**Why this one is different from the two before it:** it's confirmed
+against a real stack trace the owner retrieved, not a plausible-sounding
+guess. Also added `test/vercelEsmImports.test.ts`, a static check that
+walks the same module graph and fails on any future extensionless
+import in it - verified to actually catch the bug by reverting one
+import and re-running the test before restoring the fix.
+
+**Process note, logged because it's worth repeating:** two prior fixes
+(routing, then a lazy `vite` import) were shipped on reasonable-sounding
+hypotheses without a way to verify them, and both were wrong about the
+*specific* cause even though the first was a real, necessary fix in its
+own right and the second a real, independently-justified hardening.
+Neither this session nor `docs/EVAL_PM.md`'s rubric treated those as
+failures - they were disclosed as unconfirmed at the time, which is what
+let the team correctly stop guessing after the second one and ask for
+the one input (real logs) that actually closed it, rather than trying a
+third hypothesis blind.
+
+---
+
 ## 2026-09-13 — Wire the Express app into a Vercel serverless function, don't re-architect for it
 
 **Decision:** Fix the live Vercel deployment's fully-broken API surface
