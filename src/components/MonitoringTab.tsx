@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bell, Calendar, Mail, ShieldCheck, Activity, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Bell, Calendar, Mail, ShieldCheck, Activity, CheckCircle2, RefreshCw, History } from 'lucide-react';
 import { MonitoringConfig, AuditReport } from '../types';
 
 interface MonitoringTabProps {
@@ -33,11 +33,10 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
     setTimeout(() => setSavedSuccess(false), 3000);
   };
 
-  const history = audit.historicalScores || [
-    { date: 'June 2026', score: 65, sov: 70 },
-    { date: 'July 2026', score: 71, sov: 76 },
-    { date: 'August 2026', score: audit.geoVisibilityScore, sov: audit.shareOfVoice },
-  ];
+  const history = audit.historicalScores || [];
+  const hasHistory = history.length >= 1;
+  const indexGrowth =
+    history.length >= 2 ? history[history.length - 1].score - history[0].score : null;
 
   return (
     <div className="space-y-6">
@@ -50,26 +49,49 @@ export const MonitoringTab: React.FC<MonitoringTabProps> = ({
               <h3 className="text-base font-bold text-white">GEO Visibility Score History</h3>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Historical GEO Index tracking over time across automated weekly AI search sweeps.
+              Historical GEO Index tracking across completed audits of this business.
             </p>
           </div>
-          <span className="px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20">
-            +16% Index Growth
-          </span>
+          {indexGrowth !== null && (
+            <span
+              className={`px-2.5 py-1 rounded text-xs font-semibold border ${
+                indexGrowth >= 0
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                  : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+              }`}
+            >
+              {indexGrowth >= 0 ? '+' : ''}
+              {indexGrowth} pt Index {indexGrowth >= 0 ? 'Growth' : 'Drop'}
+            </span>
+          )}
         </div>
 
-        <div className="grid grid-cols-3 gap-4 pt-4">
-          {history.map((h, i) => (
-            <div
-              key={i}
-              className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 text-center space-y-2"
-            >
-              <span className="text-xs font-semibold text-slate-400 block">{h.date}</span>
-              <div className="text-3xl font-black text-indigo-400">{h.score}</div>
-              <p className="text-[11px] text-slate-500">SOV: {h.sov}%</p>
-            </div>
-          ))}
-        </div>
+        {hasHistory ? (
+          <div
+            className="grid gap-4 pt-4"
+            style={{ gridTemplateColumns: `repeat(${Math.min(history.length, 3)}, minmax(0, 1fr))` }}
+          >
+            {history.map((h, i) => (
+              <div
+                key={i}
+                className="bg-slate-950/80 border border-slate-800 rounded-xl p-4 text-center space-y-2"
+              >
+                <span className="text-xs font-semibold text-slate-400 block">{h.date}</span>
+                <div className="text-3xl font-black text-indigo-400">{h.score}</div>
+                <p className="text-[11px] text-slate-500">SOV: {h.sov}%</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-2 text-center bg-slate-950/80 border border-dashed border-slate-800 rounded-xl p-8">
+            <History className="h-6 w-6 text-slate-600" />
+            <p className="text-sm font-semibold text-slate-300">Not enough history yet</p>
+            <p className="text-xs text-slate-500 max-w-sm">
+              This becomes a real trend line once this business has been audited more than
+              once. Nothing is plotted here until it is measured.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Monitoring Settings Form */}

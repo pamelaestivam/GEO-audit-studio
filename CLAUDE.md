@@ -97,6 +97,18 @@ A green build is not a review. Before merging, explicitly check:
 - **Anything that looks tappable is tappable**, and on a phone the result of
   tapping it is brought into view rather than left below the fold.
 
+## Product team & process
+
+Product direction decisions (not routine bug fixes) run through three
+standing personas — PM Twin, CTO, UX Lead — defined in
+`docs/TEAM_CHARTER.md`, using the solo → position → debate → decision
+protocol described there. Decisions land in `docs/DECISIONS.md`.
+Engineering process (design notes, review bar, testing pyramid, release
+gates) is in `docs/ENGINEERING_STANDARDS.md` — it makes this file's
+"working dynamic" section repeatable as a checklist rather than tribal
+knowledge. Read both before a session that touches roadmap or
+architecture, not just code.
+
 ## Architecture
 
 The audit pipeline is deliberately layered so metrics stay reproducible:

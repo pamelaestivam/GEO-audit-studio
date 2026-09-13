@@ -42,6 +42,54 @@ explicitly rather than claiming nothing is configured.
 Deferred until the product is worth showing. Pointing a domain at the Render
 service needs no code change.
 
+### 1.4 Move hosting to Vercel (tracked, not started)
+
+Raised in the 2026-09-13 product strategy session
+(`docs/DECISIONS.md`). Needs from the owner before any code changes:
+
+- A Vercel account/project linked to this repo (or its GitHub remote).
+- A decision on **what runs where**: Vercel's own serverless functions are
+  stateless and short-lived per invocation, which breaks three things this
+  codebase currently assumes can live in a single long-running process -
+  the in-memory job table (2.3), the process-wide quota circuit breaker
+  (2.3a), and the idempotency store (2.3b). None of these survive being
+  torn down between invocations the way they do on a single Render
+  instance. This has to be resolved as part of the move, not discovered
+  after it, or the exact "16 calls for one click" failure this repo already
+  fixed once (2.3b) comes back in a new shape.
+- Environment variables (`GEMINI_API_KEY` and friends) re-entered in
+  Vercel's project settings - they do not carry over from Render
+  automatically.
+
+**Do not start building file-based persistence (3.1) against the current
+Render filesystem while this move is undecided** - it would need to be
+rebuilt for a datastore anyway once Vercel is live, per the CTO seat's
+veto in the strategy session. Persistence and the hosting decision should
+be made together, not sequentially.
+
+### 1.5 Set up auth with Google (Google Cloud Console) (tracked, not started)
+
+Raised in the same session, alongside 2.2 (auth is currently not real
+auth - anyone who submits a login is auto-registered, no session
+validation exists anywhere). Needs from the owner before any code
+changes:
+
+- A Google Cloud project with an OAuth 2.0 Client ID (OAuth consent
+  screen configured, authorized redirect URIs added) from
+  `https://console.cloud.google.com/apis/credentials`.
+- A decision on scope: is Google Sign-In replacing the current
+  email/password stub outright, or sitting alongside it? Replacing it
+  outright is the recommendation, since the stub has no real security
+  properties to preserve.
+- Where sessions are then stored - this depends on 1.4/2.1's datastore
+  decision, since "who is logged in" needs to survive across serverless
+  invocations, which an in-memory `Map` cannot do.
+
+**Sequencing note:** doing this before 1.4/2.1 means building session
+storage twice. Recommend deciding hosting and datastore first, then
+wiring Google auth against the real store once, not against the
+in-memory stub.
+
 ---
 
 ## 2. Known tech debt
@@ -52,15 +100,48 @@ Ordered by how likely it is to hurt.
 
 Audits live in React state only. Refreshing the page loses everything, so:
 
-- **History and trend charts are decorative.** `MonitoringTab` falls back to a
-  hardcoded array when `historicalScores` is absent, and real reports never set
-  it. The chart therefore shows invented movement.
-- **Continuous Sweeps is a settings form that schedules nothing.**
+- **There is still no real history to show.** See 2.1a - the fabricated chart
+  is fixed, but the underlying gap (no audit is ever saved) is not.
+- **Continuous Sweeps is a settings form that schedules nothing.** See 2.1a's
+  fast-follow note - it also implies persistence the product doesn't have.
 - A client cannot be shown "your score moved from X to Y after our fixes",
   which is the main reason anyone renews a subscription.
 
-Needs a datastore (Render offers managed Postgres). This is the single largest
-gap between the current build and something sellable.
+Needs a datastore (Render offers managed Postgres, or a Vercel-native option
+if 1.4 lands first). This is the single largest gap between the current
+build and something sellable.
+
+### 2.1a MonitoringTab showed a fabricated trend and a fabricated growth badge (fixed)
+
+`MonitoringTab` fell back to a hardcoded three-point array (`June 2026: 65`,
+`July 2026: 71`, current score) whenever `audit.historicalScores` was absent -
+which was every real audit, since nothing has ever written to that field
+(confirmed by `test/contract.test.ts`'s `historicalScores` assertion, which
+only checks the *server* never invents it; nothing on the client enforced
+the same rule). Worse, the "+16% Index Growth" badge above the chart was a
+literal string constant, shown identically whether the business's real score
+had gone up, down, or didn't exist yet. This is exactly the failure mode
+`CLAUDE.md` names directly: a polished, readable dashboard that is not
+telling the truth.
+
+Raised independently by all three seats in the 2026-09-13 strategy session
+(`docs/DECISIONS.md`) as the highest-leverage, lowest-risk fix available -
+zero new infrastructure, purely a correctness fix to something already
+shipping to real client demos. Fixed in `src/components/MonitoringTab.tsx`:
+the chart now renders only real `historicalScores` entries (as few as one),
+computes the growth badge from the real first/last score when at least two
+points exist, and shows an explicit "Not enough history yet" empty state
+otherwise - never a placeholder that could be mistaken for a measurement.
+
+**Fast-follow, not yet done:** the Monitoring Settings form below the chart
+still copies for "Automated AI Search Audit & Alert Settings" and shows a
+"Next scheduled audit run" date, but `onUpdateConfig` only ever updates
+local React state - saving does not schedule anything server-side. The UX
+lead seat flagged this as the same honesty problem, one layer down; it was
+deliberately not fixed in the same change (it's a copy/scope decision, not
+a one-line correctness fix, and `CLAUDE.md` asks for small, focused PRs).
+Whoever picks this up next should either disable/label the form as
+"preview - not yet active" or wire it to something real once 3.1/3.2 exist.
 
 ### 2.2 Authentication is not authentication (high)
 
