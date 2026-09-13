@@ -108,7 +108,10 @@ Product direction decisions (not routine bug fixes) run through four
 standing seats — PM Twin, CTO, UX Lead, and EVAL PM (`docs/EVAL_PM.md`,
 the merge gate that scores rather than builds) — defined in
 `docs/TEAM_CHARTER.md`, using the solo → position → debate → decision
-protocol described there. Decisions land in `docs/DECISIONS.md`.
+protocol described there. Decisions land in `docs/DECISIONS.md`. Product
+requirements, including what's genuinely known versus still open (never
+fabricated to fill a gap), live in `docs/PRD.md` — read it before
+prioritizing the backlog in `TECH_DEBT.md` §3.
 Engineering process (design notes, review bar, testing pyramid, release
 gates) is in `docs/ENGINEERING_STANDARDS.md` — it makes this file's
 "working dynamic" section repeatable as a checklist rather than tribal
