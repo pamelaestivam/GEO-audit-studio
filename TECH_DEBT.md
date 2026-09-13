@@ -66,7 +66,7 @@ invocations, and it would need to be rebuilt for a real datastore anyway.
 Persistence needs a hosted datastore decision (Vercel Postgres, Vercel KV,
 Neon, Upstash, etc.), not a workaround.
 
-### 1.4a Vercel served only the static frontend - every API route 404'd (fixed)
+### 1.4a Vercel served only the static frontend - every API route 404'd (code fix merged; deploy still not confirmed live - see update below)
 
 Confirmed by curling the live deploy: `/` returned Vercel's zero-config
 Vite build (200, real `index.html`), but `/api/health` and
@@ -107,9 +107,32 @@ this change doesn't regress the Render path it didn't touch. The
 non-Vercel path was also smoke-tested by hand: built `dist/`, ran
 `node dist/server.cjs` for real, curled `/api/health` and `/`.
 **Not verified**: an actual `vercel deploy`/`vercel dev` run, since this
-session has no Vercel CLI credentials. The owner should confirm the live
-URL's `/api/health` returns `{"status":"ok",...}` after this merges, not
-assume it from the test suite alone.
+session has no Vercel CLI credentials.
+
+**Update, same day, ~15 minutes after merge:** re-curled the live URL.
+Still `FUNCTION_INVOCATION_FAILED` on `/api/health`, unchanged from
+before this fix. A follow-up fix (lazily importing `vite` instead of
+importing it eagerly - see below) also merged and, re-checked ~10
+minutes after *that* merge, still shows the identical error. Two
+different code fixes producing zero observable change, well past normal
+Vercel build time (usually well under 90s for a project this size), is
+itself a signal: the leading hypothesis is no longer "the code is still
+broken" but **"these merges may not be triggering a Vercel deploy at
+all."** Possible causes this session cannot check without dashboard
+access: the Vercel project isn't connected to this GitHub repo's `main`
+branch for auto-deploy (e.g. it was deployed once via `vercel --prod`
+from a local checkout and never linked to GitHub), it's connected to a
+different branch, or deploys are succeeding but silently failing at a
+build step this session can't see the log for.
+
+**What the owner needs to check** (none of this is doable without
+Vercel dashboard/CLI access): open the Vercel project → Deployments tab
+→ confirm a new deployment exists with a timestamp after each of the
+merges above, and confirm its Source is a Git commit on `main` (not a
+stale local CLI deploy). If deployments ARE showing up, open the failing
+one's Function Logs for the real stack trace - that's the one piece of
+information that would turn the next fix from a hypothesis into a
+confirmed one.
 
 **Real risk this fix makes live, not just theoretical:** `geminiBreaker`,
 `auditJobs`, and the idempotency store are process-global `Map`s/objects
