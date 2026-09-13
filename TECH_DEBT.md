@@ -193,15 +193,19 @@ computes the growth badge from the real first/last score when at least two
 points exist, and shows an explicit "Not enough history yet" empty state
 otherwise - never a placeholder that could be mistaken for a measurement.
 
-**Fast-follow, not yet done:** the Monitoring Settings form below the chart
-still copies for "Automated AI Search Audit & Alert Settings" and shows a
-"Next scheduled audit run" date, but `onUpdateConfig` only ever updates
-local React state - saving does not schedule anything server-side. The UX
-lead seat flagged this as the same honesty problem, one layer down; it was
-deliberately not fixed in the same change (it's a copy/scope decision, not
-a one-line correctness fix, and `CLAUDE.md` asks for small, focused PRs).
-Whoever picks this up next should either disable/label the form as
-"preview - not yet active" or wire it to something real once 3.1/3.2 exist.
+**Fast-follow (fixed):** the Monitoring Settings form below the chart
+still copied "Automated AI Search Audit & Alert Settings" and showed a
+"Next scheduled audit run" date pulled straight from
+`DEFAULT_MONITORING_CONFIG`'s hardcoded `2026-08-17` - the exact same
+fabrication pattern as the chart, one control down, and `onUpdateConfig`
+only ever updated local React state; saving never scheduled anything
+server-side. Labeled the section "Preview - not yet active", replaced
+the fake next-run date with an honest "scheduling is not active yet"
+line, and reworded the save confirmation and button to describe what
+actually happens (preferences saved for later) rather than implying
+live automation. Real scheduling still needs 3.1 (persistence) and 3.2
+(alerting) built first - this only stops the UI from claiming it already
+exists.
 
 ### 2.2 Authentication is not authentication (high)
 
