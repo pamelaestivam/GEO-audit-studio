@@ -5,6 +5,45 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-09-13 — Wire the Express app into a Vercel serverless function, don't re-architect for it
+
+**Decision:** Fix the live Vercel deployment's fully-broken API surface
+(`/api/*` all 404ing - see `TECH_DEBT.md` §1.4a) by adapting the
+*existing* Express app to run as one catch-all serverless function
+(`api/[...path].ts`), rather than splitting routes into individual
+Vercel functions or rewriting the backend for an edge/stateless model.
+
+**Who weighed in:** CTO (build), EVAL PM (scored the PR before merge).
+
+**Why:** Minimal, well-understood change - the app behaves on Vercel
+exactly as it already does on Render (one Express app handling
+everything), just with Vercel owning the socket instead of `app.listen`.
+Verified locally two ways: a new E2E test hits the real handler on a
+real `http.Server`, and the untouched Render/local path was re-tested
+by hand to confirm no regression. `dist/server.cjs`'s exposure as a
+public static file (a real, independently-discovered issue - curled and
+confirmed reachable) was fixed in the same round since it shared the
+same root cause and the same `vercel.json` fix surface.
+
+**Alternative considered and rejected:** Split each route into its own
+`api/*.ts` file, Vercel-idiomatic style. Rejected - much larger diff for
+no behavioral benefit at this traffic scale, and would fragment the
+single circuit breaker/job table this codebase already depends on being
+one process's worth of shared memory (already fragile enough across
+Lambda instances - see the flag below).
+
+**Known limitation, disclosed rather than hidden:** this fix makes the
+API *reachable*; it does not make the in-memory quota breaker, job
+table, or idempotency store safe across concurrent Vercel instances.
+That risk was previously moot (API unreachable) and is now live -
+tracked as the most urgent open item in `TECH_DEBT.md` §1.4a.
+
+**Also not verified:** an actual `vercel deploy` - this session has no
+Vercel CLI credentials. The owner should confirm `/api/health` on the
+live URL after merge.
+
+---
+
 ## 2026-09-13 — Fix MonitoringTab's fabricated trend/growth data now; defer real persistence and settings-form honesty
 
 **Decision:** Ship a client-only correctness fix removing the hardcoded
