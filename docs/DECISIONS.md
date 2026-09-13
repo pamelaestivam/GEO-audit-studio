@@ -5,6 +5,39 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-09-13 — Replace the [...path].ts catch-all with an explicit vercel.json rewrite
+
+**Decision:** immediately after confirming `/api/health` worked live
+(the ESM-extension fix above), a curl matrix against the live deploy
+found `/api/audit/status` and every other multi-segment `/api/*` path
+still hit Vercel's own 404, at the routing layer, before the function
+was ever invoked - while single-segment paths worked, including
+Express's own 404 for an unmatched one (`/api/foo`). Rather than keep
+diagnosing why `[...path].ts` was behaving like a single-segment
+dynamic route, replaced it with an explicit `vercel.json` rewrite
+(`/api/:path* -> /api`) and renamed the file to `api/index.ts` -
+removing Vercel's own catch-all inference from the equation entirely.
+
+**Why:** an explicit rewrite is the same pattern used in Vercel's own
+official Express examples, and was considered at the very start of this
+work before the catch-all filename was chosen for a smaller diff. That
+was the wrong tradeoff here - "smaller diff" isn't worth it when the
+alternative is unambiguous and the chosen one has undiagnosed platform
+behavior.
+
+**Also added:** a test asserting `vercel.json` actually contains the
+rewrite, because every existing test calls the handler function
+directly, which bypasses Vercel's routing layer completely and could
+not have caught this bug at all, before or after the fix.
+
+**Not fully explained:** why the catch-all filename matched one segment
+but not two - this session doesn't have the platform access to say for
+certain (Fluid Compute interaction, a Vercel routing-manifest quirk
+specific to non-Next.js catch-all functions, something else). Recorded
+as unexplained rather than inventing a confident-sounding cause.
+
+---
+
 ## 2026-09-13 — Add explicit .js extensions to every relative import Vercel's function graph reaches
 
 **Decision:** the actual root cause of the Vercel API crash (see the
