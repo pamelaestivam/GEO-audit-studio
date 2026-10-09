@@ -141,6 +141,10 @@ export interface AuditReport {
    * because nothing was assessed, NOT because nothing was found.
    */
   narrativeAvailable?: boolean;
+  /** True when this audit was stored durably on the server and will survive a refresh. */
+  saved?: boolean;
+  /** A list entry: headline numbers only. The full report is fetched when it is opened. */
+  summaryOnly?: boolean;
   /** Queries appended after the audit ran; shown in the matrix, not in the headline figures. */
   queriesAddedAfterAudit?: number;
   narrativeNote?: string;

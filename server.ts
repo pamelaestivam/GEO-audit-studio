@@ -21,7 +21,19 @@ import {
   type ReadableError,
 } from './src/errors.js';
 import { QuotaBreaker } from './src/quotaBreaker.js';
+import crypto from 'crypto';
 import { IdempotencyStore, readIdempotencyKey } from './src/idempotency.js';
+import {
+  bearerToken,
+  checkAccessCode,
+  describeAuthFailure,
+  issueToken,
+  loadAuthConfig,
+  normaliseEmail,
+  userFromEmail,
+  verifyToken,
+} from './src/auth.js';
+import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter } from './src/rateLimit.js';
 import {
   askEngine,
@@ -69,6 +81,87 @@ async function buildApp() {
   });
   app.use(express.json({ limit: '100kb' }));
 
+  // One structured line per API request, with an id the client also receives
+  // (X-Request-Id). Diagnosing the Vercel crash needed the owner to copy a
+  // stack trace out of a dashboard; a request id in the log and in the
+  // response lets a reported failure be found. Paths only - never bodies,
+  // queries or tokens.
+  app.use((req, res, next) => {
+    const supplied = req.headers['x-request-id'];
+    const id = typeof supplied === 'string' && /^[\w-]{8,64}$/.test(supplied) ? supplied : crypto.randomUUID();
+    res.setHeader('X-Request-Id', id);
+    const started = Date.now();
+    res.on('finish', () => {
+      if (!req.path.startsWith('/api/') || req.path === '/api/health') return;
+      console.log(
+        JSON.stringify({
+          t: new Date().toISOString(),
+          id,
+          method: req.method,
+          path: req.path,
+          status: res.statusCode,
+          ms: Date.now() - started,
+          user: res.locals.user?.id,
+        })
+      );
+    });
+    next();
+  });
+
+  // ---- Durable state and sign-in. Both are decided once, at start-up, and
+  // both say plainly what they are: nothing here silently degrades.
+  const auth = loadAuthConfig();
+  if (auth.mode === 'dev') {
+    console.warn(
+      '[auth] DEV MODE: SESSION_SECRET and ACCESS_CODES are not set, so any email with the code "dev-access" can sign in. This is never honoured when NODE_ENV=production.'
+    );
+  } else if (auth.mode === 'unconfigured') {
+    console.error(`[auth] ${auth.problem}`);
+  }
+
+  // `npm run dev` keeps data in ./data so audits survive restarts while
+  // developing; production only persists when DATA_DIR is set on purpose.
+  const dataDir =
+    process.env.DATA_DIR ||
+    (process.env.NODE_ENV !== 'production' && !process.env.VERCEL ? path.join(process.cwd(), 'data') : undefined);
+  const store = await openStore({ dataDir, serverless: !!process.env.VERCEL });
+  if (store.info().note) console.warn(`[store] ${store.info().note}`);
+  if (store.info().durable) {
+    // No audit started by a previous process can still be running, so any job
+    // still marked running is orphaned. Say so instead of leaving it to hang.
+    const orphaned = await store.failAllRunning(
+      'The server restarted while this audit was running, so it was stopped. Please run it again.'
+    );
+    if (orphaned > 0) console.warn(`[store] marked ${orphaned} orphaned audit job(s) as failed after a restart.`);
+  }
+
+  /**
+   * Every route that spends quota or reads saved work needs a valid session.
+   * Unconfigured production answers 503 with the fix, rather than falling open.
+   */
+  const requireAuth: express.RequestHandler = (req, res, next) => {
+    const result = verifyToken(bearerToken(req.headers as any), auth);
+    if (!result.ok) {
+      // (The project is not compiled with strictNullChecks, so the union does
+      // not narrow on `ok` by itself.)
+      const { reason } = result as Extract<typeof result, { ok: false }>;
+      const unconfigured = reason === 'unconfigured';
+      return res.status(unconfigured ? 503 : 401).json({
+        error: describeAuthFailure(reason, auth),
+        code: unconfigured ? 'auth_unconfigured' : 'auth_required',
+      });
+    }
+    res.locals.user = result.user;
+    next();
+  };
+
+  /** Express 4 does not catch a rejected promise; route it to the error handler. */
+  const handle =
+    (fn: (req: express.Request, res: express.Response) => Promise<unknown>): express.RequestHandler =>
+    (req, res, next) => {
+      fn(req, res).catch(next);
+    };
+
   /**
    * Every POST under /api/audit spends answer-engine quota and is currently
    * open to anyone with the URL (TECH_DEBT.md 2.2). A per-IP window stops one
@@ -86,6 +179,14 @@ async function buildApp() {
       error: `You are sending audit requests faster than this service allows. Please wait ${decision.retryAfterSeconds} seconds and try again.`,
     });
   });
+
+  // Spending routes need a session. The one public read is the status
+  // endpoint: monitors and the sign-in page use it, and it reveals only which
+  // engines are configured and whether the quota is known to be exhausted.
+  app.use('/api/audit', (req, res, next) =>
+    req.method === 'GET' && req.path === '/status' ? next() : requireAuth(req, res, next)
+  );
+  app.use('/api/audits', requireAuth);
 
   /** Bounds on user input, so one request cannot exhaust quota or memory. */
   const MAX_NAME_LENGTH = 120;
@@ -303,7 +404,7 @@ async function buildApp() {
    * one's payload. Client keys are per-click UUIDs and should never collide,
    * but "should never" is not a reason to leave it possible.
    */
-  const scopedKey = (route: string, key: string | undefined) => (key ? `${route}:${key}` : undefined);
+  const scopedKey = (route: string, key: string | undefined, owner = '') => (key ? `${route}:${owner}:${key}` : undefined);
 
   // Health check API
   app.get('/api/health', (req, res) => {
@@ -312,7 +413,7 @@ async function buildApp() {
       environment: process.env.NODE_ENV || 'development',
       // Be explicit about what this deployment cannot promise, so a monitor or
       // a person reading /api/health is not left to assume durability exists.
-      storage: 'in-memory',
+      storage: { kind: store.info().kind, durable: store.info().durable },
       uptimeSeconds: Math.round(process.uptime()),
       commit: process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || undefined,
     });
@@ -334,92 +435,51 @@ async function buildApp() {
         resetAt: status.resetAt ? new Date(status.resetAt).toISOString() : null,
         msRemaining: status.msRemaining,
       },
+      // What the sign-in page and the sidebar need to tell the truth about
+      // this deployment: can people sign in, and will their audits be kept.
+      storage: store.info(),
+      auth: { mode: auth.mode, problem: auth.problem },
     });
   });
 
-  // In-memory user store for backend session verification
-  const usersDb = new Map<string, any>([
-    [
-      'demo@enterprise.com',
-      {
-        id: 'usr-demo-101',
-        name: 'Sarah Jenkins',
-        email: 'demo@enterprise.com',
-        password: 'password123',
-        company: 'Acme Cloud Platform',
-        role: 'Head of Growth & GEO',
-        createdAt: new Date().toISOString(),
-      },
-    ],
-  ]);
+  // ---- Sign in. An email plus an access code the operator handed out; the
+  // answer is an expiring, signed session token (src/auth.ts). A tighter
+  // limit than the audit routes: this is the one place a code can be guessed.
+  const AUTH_RATE_LIMIT_PER_MIN = Number(process.env.AUTH_RATE_LIMIT_PER_MIN ?? 10);
+  const authLimiter = new FixedWindowLimiter(AUTH_RATE_LIMIT_PER_MIN, 60_000);
 
-  // Auth: Login Endpoint
   app.post('/api/auth/login', (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-    const existingUser = usersDb.get(normalizedEmail);
-
-    if (existingUser) {
-      if (existingUser.password === password) {
-        const { password: _, ...userWithoutPass } = existingUser;
-        return res.json({ user: userWithoutPass, token: `token-${Date.now()}` });
-      } else {
-        return res.status(401).json({ error: 'Invalid password. Please verify your credentials.' });
+    if (AUTH_RATE_LIMIT_PER_MIN > 0) {
+      const decision = authLimiter.check(req.ip || 'unknown');
+      if (!decision.allowed) {
+        res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+        return res.status(429).json({
+          error: `Too many sign-in attempts. Please wait ${decision.retryAfterSeconds} seconds and try again.`,
+        });
       }
     }
-
-    // Auto-register seamless user session for frictionless access
-    const newUser = {
-      id: `usr-${Date.now()}`,
-      name: email.split('@')[0].replace(/[._]/g, ' '),
-      email: normalizedEmail,
-      password: password,
-      company: 'Enterprise Org',
-      role: 'Lead GEO Auditor',
-      createdAt: new Date().toISOString(),
-    };
-    usersDb.set(normalizedEmail, newUser);
-
-    const { password: _, ...userWithoutPass } = newUser;
-    return res.json({ user: userWithoutPass, token: `token-${Date.now()}` });
+    if (auth.mode === 'unconfigured') {
+      return res.status(503).json({ error: auth.problem, code: 'auth_unconfigured' });
+    }
+    const email = normaliseEmail(req.body?.email);
+    if (!email) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const codeId = checkAccessCode(req.body?.accessCode, auth);
+    if (!codeId) {
+      return res.status(401).json({ error: 'That access code is not valid. Check it with the person who invited you.' });
+    }
+    const { token, expiresAt } = issueToken(email, codeId, auth);
+    res.json({ user: userFromEmail(email), token, expiresAt });
   });
 
-  // Auth: Signup Endpoint
-  app.post('/api/auth/signup', (req, res) => {
-    const { email, password, name, company } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required.' });
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-    if (usersDb.has(normalizedEmail)) {
-      const existingUser = usersDb.get(normalizedEmail);
-      const { password: _, ...userWithoutPass } = existingUser;
-      return res.json({ user: userWithoutPass, token: `token-${Date.now()}` });
-    }
-
-    const newUser = {
-      id: `usr-${Date.now()}`,
-      name: name || email.split('@')[0],
-      email: normalizedEmail,
-      password: password,
-      company: company || 'Enterprise Client',
-      role: 'GEO Auditor',
-      createdAt: new Date().toISOString(),
-    };
-    usersDb.set(normalizedEmail, newUser);
-
-    const { password: _, ...userWithoutPass } = newUser;
-    return res.json({ user: userWithoutPass, token: `token-${Date.now()}` });
+  // Lets the client confirm a stored session is still good (not expired, its
+  // code not revoked) instead of trusting whatever is in localStorage.
+  app.get('/api/auth/me', requireAuth, (_req, res) => {
+    res.json({ user: res.locals.user, storage: store.info() });
   });
 
   // POST: Live URL & Brand Name parser using Gemini Grounded Web Search
   app.post('/api/audit/parse-url', async (req, res) => {
-    const idempotencyKey = scopedKey('parse-url', readIdempotencyKey(req.headers as any));
+    const idempotencyKey = scopedKey('parse-url', readIdempotencyKey(req.headers as any), res.locals.user?.email);
     try {
       const { input } = req.body ?? {};
       if (!input || typeof input !== 'string' || !input.trim()) {
@@ -641,7 +701,7 @@ Return a JSON array of exactly 3 query objects.`;
   }
 
   app.post('/api/audit/generate-queries', async (req, res) => {
-    const idempotencyKey = scopedKey('generate-queries', readIdempotencyKey(req.headers as any));
+    const idempotencyKey = scopedKey('generate-queries', readIdempotencyKey(req.headers as any), res.locals.user?.email);
     try {
       const businessName = cleanText(req.body?.businessName, MAX_NAME_LENGTH);
       if (!businessName) {
@@ -731,7 +791,7 @@ Return a JSON array of exactly 3 query objects.`;
 
       // One click on "Add & Audit Query" costs one round of engine calls,
       // however many connection attempts it took to deliver the request.
-      const idempotencyKey = scopedKey('evaluate-query', readIdempotencyKey(req.headers as any));
+      const idempotencyKey = scopedKey('evaluate-query', readIdempotencyKey(req.headers as any), res.locals.user?.email);
       const { value: evidencePromise } = inFlightRequests.run(idempotencyKey, () =>
         collectQueryEvidence(ai, query, engines)
       );
@@ -1358,7 +1418,7 @@ Return valid JSON matching the schema.`;
         .map((s) => s.brand);
 
       const report = {
-        id: `audit-${Date.now()}`,
+        id: `audit-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
         createdAt: new Date().toISOString(),
         businessName,
         domain: cleanDomain,
@@ -1462,169 +1522,260 @@ Return valid JSON matching the schema.`;
     }
   }
 
-  /** In-memory audit jobs. Lost on restart; see TECH_DEBT.md for persistence. */
-  interface AuditJob {
-    id: string;
-    status: 'running' | 'done' | 'error';
-    startedAt: number;
-    progress?: AuditProgress;
-    result?: any;
-    error?: string;
-  }
-  const auditJobs = new Map<string, AuditJob>();
-  const JOB_TTL_MS = 30 * 60 * 1000;
+  // ---- Audit jobs. State lives in the store (src/store.ts), not in process
+  // memory, so a poll never depends on which request - or which process - began
+  // the job, and a restart fails orphaned jobs honestly instead of losing them.
+
   /**
    * An audit still "running" after this long is stuck (a provider call that
    * never returned). Left alone it would hold a concurrency slot forever.
    */
   const JOB_MAX_RUN_MS = 15 * 60 * 1000;
+  /** Job rows are kept this long: they are also the record the daily budget counts. */
+  const JOB_RETENTION_MS = 7 * 24 * 3600 * 1000;
+  const DAY_MS = 24 * 3600 * 1000;
   /**
    * Audits share one answer-engine quota and one serialised Gemini queue
    * (scheduleGeminiCall), so running many at once does not make any of them
    * faster - it makes every one of them slower and spends the quota sooner.
    */
   const MAX_CONCURRENT_AUDITS = Number(process.env.MAX_CONCURRENT_AUDITS || 2);
+  /** Rolling 24-hour budgets. 0 disables a budget. */
+  const USER_AUDITS_PER_DAY = Number(process.env.USER_AUDITS_PER_DAY ?? 10);
+  const GLOBAL_AUDITS_PER_DAY = Number(process.env.GLOBAL_AUDITS_PER_DAY ?? 100);
 
-  class AuditBusyError extends Error {
-    constructor() {
-      super(
-        `This service is already running ${MAX_CONCURRENT_AUDITS} audits, which is as many as the shared answer-engine quota supports at once. Please try again in a minute or two.`
-      );
-      this.name = 'AuditBusyError';
+  /** A refusal to START an audit, with the status and wait the client should see. */
+  class AdmissionError extends Error {
+    constructor(
+      message: string,
+      readonly status: number,
+      readonly retryAfterSeconds?: number
+    ) {
+      super(message);
+      this.name = 'AdmissionError';
     }
   }
 
   /**
-   * Maps a client's idempotency key to the job it already started, so a
-   * retried submit polls the original audit instead of launching a second
-   * one. Same TTL as the jobs themselves - a replayed key must always resolve
-   * to a job that is still pollable.
+   * Check-then-create must be atomic: two submits arriving together would both
+   * pass the concurrency and budget checks. Admissions are serialised through
+   * one promise chain (sufficient for one process; a shared database would need
+   * a transaction instead - docs/MVP_AUDIT.md item 3).
    */
-  const auditJobsByKey = new IdempotencyStore<string>(JOB_TTL_MS);
+  let admissionChain: Promise<unknown> = Promise.resolve();
+  function serialised<T>(fn: () => Promise<T>): Promise<T> {
+    const next = admissionChain.then(fn, fn);
+    admissionChain = next.catch(() => undefined);
+    return next;
+  }
 
-  function pruneJobs() {
-    const now = Date.now();
-    for (const [id, job] of auditJobs) {
-      if (job.status === 'running' && now - job.startedAt > JOB_MAX_RUN_MS) {
-        job.status = 'error';
-        job.error = 'The audit took too long and was stopped. Please run it again.';
-      }
-      if (now - job.startedAt > JOB_TTL_MS) auditJobs.delete(id);
+  async function admit(owner: string): Promise<void> {
+    const running = await store.countRunning(JOB_MAX_RUN_MS);
+    if (running >= MAX_CONCURRENT_AUDITS) {
+      throw new AdmissionError(
+        `This service is already running ${MAX_CONCURRENT_AUDITS} audits, which is as many as the shared answer-engine quota supports at once. Please try again in a minute or two.`,
+        429,
+        60
+      );
+    }
+    const since = Date.now() - DAY_MS;
+    const wait = (oldest: number | null) => Math.max(60, Math.ceil(((oldest ?? Date.now()) + DAY_MS - Date.now()) / 1000));
+
+    if (USER_AUDITS_PER_DAY > 0 && (await store.countJobsSince(since, owner)) >= USER_AUDITS_PER_DAY) {
+      const retry = wait(await store.oldestJobSince(since, owner));
+      throw new AdmissionError(
+        `You have used your ${USER_AUDITS_PER_DAY} audits for the last 24 hours. The next one frees up in about ${formatDuration(retry * 1000)}. Failed audits that collected no evidence are not counted.`,
+        429,
+        retry
+      );
+    }
+    if (GLOBAL_AUDITS_PER_DAY > 0 && (await store.countJobsSince(since)) >= GLOBAL_AUDITS_PER_DAY) {
+      const retry = wait(await store.oldestJobSince(since));
+      throw new AdmissionError(
+        `This service has reached its limit of ${GLOBAL_AUDITS_PER_DAY} audits for the last 24 hours, to protect the shared answer-engine budget. Please try again in about ${formatDuration(retry * 1000)}.`,
+        429,
+        retry
+      );
     }
   }
 
-  app.post('/api/audit/run', async (req, res) => {
-    const rawName = typeof req.body?.businessName === 'string' ? req.body.businessName.trim() : '';
-    // (req.body can be undefined for an empty POST; every read below is optional-chained.)
-    if (!rawName) {
-      return res.status(400).json({ error: 'A business or brand name is required to run an audit.' });
-    }
-    if (rawName.length > MAX_NAME_LENGTH) {
-      return res.status(400).json({
-        error: `That business name is too long (${rawName.length} characters). Please shorten it to ${MAX_NAME_LENGTH} characters or fewer.`,
-      });
-    }
-
-    // Normalise the shape once so the pipeline never sees ragged input.
-    req.body.businessName = rawName;
-    req.body.domain = cleanText(req.body?.domain, 200);
-    req.body.industry = cleanText(req.body?.industry, 200);
-    req.body.coreOfferings = cleanText(req.body?.coreOfferings, 300);
-    req.body.targetAudience = cleanText(req.body?.targetAudience, 300);
-    req.body.competitors = cleanCompetitors(req.body?.competitors);
-
-    req.body.queries = (Array.isArray(req.body?.queries) ? req.body.queries : [])
-      .filter((q: any) => q && typeof q.queryText === 'string' && q.queryText.trim().length > 0)
-      .slice(0, MAX_AUDIT_QUERIES)
-      .map((q: any, i: number) => ({
-        id: typeof q.id === 'string' && q.id ? q.id.slice(0, 60) : `q-user-${i + 1}`,
-        intent: typeof q.intent === 'string' ? q.intent.slice(0, 40) : 'feature_specific',
-        queryText: q.queryText.trim().slice(0, MAX_QUERY_LENGTH),
-        targetPersona: typeof q.targetPersona === 'string' ? q.targetPersona.slice(0, 80) : 'Target Customer',
-      }));
-
-    pruneJobs();
-
-    // The single most expensive thing to get wrong. A cold Render instance
-    // stalls the submit long enough for the browser's own retry to fire,
-    // while the server has already accepted the first one and started
-    // spending quota - an aborted client request does not abort server work.
-    // Measured before this guard: four attempts, four concurrent audits,
-    // 16 real Gemini calls for one click, on a free tier documented at 10
-    // requests per minute. First use of the day is exactly when the instance
-    // is asleep, so it is the run most likely to be multiplied.
-    const idempotencyKey = readIdempotencyKey(req.headers as any);
-    let id: string;
-    let replayed: boolean;
+  /** Run one audit to completion and record how it ended. Never throws. */
+  async function runJob(jobId: string, owner: string, body: any) {
+    const log = (what: string) => (err: any) =>
+      console.error(`[job ${jobId}] ${what}: ${err?.message || err}`);
     try {
-      ({ value: id, replayed } = auditJobsByKey.run(idempotencyKey, () => {
-      // A replayed submit (the same click, retried) returns before reaching
-      // this factory, so the cap only ever refuses genuinely new audits.
-      const running = Array.from(auditJobs.values()).filter((j) => j.status === 'running').length;
-      if (running >= MAX_CONCURRENT_AUDITS) throw new AuditBusyError();
-
-      const newId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const job: AuditJob = { id: newId, status: 'running', startedAt: Date.now() };
-      auditJobs.set(newId, job);
-
-      // Kick the work off and answer immediately; the client polls for the result.
-      performAudit({ body: req.body }, (progress) => {
-        job.progress = progress;
-      })
-        .then((payload) => {
-          // The reaper may already have timed this job out; its answer is stale.
-          if (job.status !== 'running') return;
-          job.status = 'done';
-          job.result = payload;
-        })
-        .catch((err: any) => {
-          if (job.status !== 'running') return;
-          job.status = 'error';
-          job.error = describeProviderError(err, 'The audit service').message;
-          console.log(`Audit job ${newId} failed: ${err?.message || err}`);
-        });
-
-      return newId;
-      }));
-    } catch (err) {
-      if (err instanceof AuditBusyError) {
-        res.setHeader('Retry-After', '60');
-        return res.status(429).json({ error: err.message });
-      }
-      throw err;
-    }
-
-    if (replayed) {
-      // The key outlives the job's own TTL prune, so confirm the job is still
-      // there rather than handing back an id that polls straight to 404.
-      if (!auditJobs.has(id)) {
-        auditJobsByKey.forget(idempotencyKey);
-        return res.status(409).json({
-          error: 'That audit has already finished and expired. Please run it again.',
-        });
-      }
-      console.log(`Audit submit replayed under an existing key; returning job ${id} instead of starting another.`);
-    }
-
-    res.status(202).json({ jobId: id, status: 'running' });
-  });
-
-  app.get('/api/audit/job/:id', (req, res) => {
-    pruneJobs();
-    const job = auditJobs.get(req.params.id);
-    if (!job) {
-      return res.status(404).json({
-        error: 'That audit is no longer available. It may have expired or the server restarted; please run it again.',
+      const payload = await performAudit({ body }, (progress) => {
+        void store.updateJob(jobId, { progress }).catch(log('progress update failed'));
       });
+
+      // The stuck-job reaper may already have ended this job; its answer is stale.
+      const current = await store.getJob(jobId);
+      if (!current || current.status !== 'running') return;
+
+      const report = payload?.report;
+      let saved = false;
+      // A failed audit is shown to the person who ran it but not kept: it holds
+      // no measurements, and a history of failures is noise, not a record.
+      if (report && !report.degraded) {
+        try {
+          await store.saveAudit(owner, report);
+          saved = store.info().durable;
+        } catch (err) {
+          log('could not save the audit')(err);
+        }
+      }
+      await store.updateJob(jobId, {
+        status: 'done',
+        result: { ...payload, saved },
+        finishedAt: Date.now(),
+        // An audit that collected no evidence spent nothing; it must not use
+        // up the person's daily allowance.
+        billable: !!report && !report.degraded,
+      });
+    } catch (err: any) {
+      console.log(`Audit job ${jobId} failed: ${err?.message || err}`);
+      await store
+        .updateJob(jobId, {
+          status: 'error',
+          error: describeProviderError(err, 'The audit service').message,
+          finishedAt: Date.now(),
+          billable: false,
+        })
+        .catch(log('could not record the failure'));
     }
-    if (job.status === 'running') {
-      return res.json({ status: 'running', elapsedMs: Date.now() - job.startedAt, progress: job.progress ?? null });
-    }
-    if (job.status === 'error') {
-      return res.status(500).json({ status: 'error', error: job.error });
-    }
-    return res.json({ status: 'done', ...job.result });
-  });
+  }
+
+  app.post(
+    '/api/audit/run',
+    handle(async (req, res) => {
+      const rawName = typeof req.body?.businessName === 'string' ? req.body.businessName.trim() : '';
+      // (req.body can be undefined for an empty POST; every read below is optional-chained.)
+      if (!rawName) {
+        return res.status(400).json({ error: 'A business or brand name is required to run an audit.' });
+      }
+      if (rawName.length > MAX_NAME_LENGTH) {
+        return res.status(400).json({
+          error: `That business name is too long (${rawName.length} characters). Please shorten it to ${MAX_NAME_LENGTH} characters or fewer.`,
+        });
+      }
+
+      // Normalise the shape once so the pipeline never sees ragged input.
+      req.body.businessName = rawName;
+      req.body.domain = cleanText(req.body?.domain, 200);
+      req.body.industry = cleanText(req.body?.industry, 200);
+      req.body.coreOfferings = cleanText(req.body?.coreOfferings, 300);
+      req.body.targetAudience = cleanText(req.body?.targetAudience, 300);
+      req.body.competitors = cleanCompetitors(req.body?.competitors);
+
+      req.body.queries = (Array.isArray(req.body?.queries) ? req.body.queries : [])
+        .filter((q: any) => q && typeof q.queryText === 'string' && q.queryText.trim().length > 0)
+        .slice(0, MAX_AUDIT_QUERIES)
+        .map((q: any, i: number) => ({
+          id: typeof q.id === 'string' && q.id ? q.id.slice(0, 60) : `q-user-${i + 1}`,
+          intent: typeof q.intent === 'string' ? q.intent.slice(0, 40) : 'feature_specific',
+          queryText: q.queryText.trim().slice(0, MAX_QUERY_LENGTH),
+          targetPersona: typeof q.targetPersona === 'string' ? q.targetPersona.slice(0, 80) : 'Target Customer',
+        }));
+
+      const owner: string = res.locals.user.email;
+
+      // The single most expensive thing to get wrong. A cold instance stalls
+      // the submit long enough for the browser's own retry to fire, while the
+      // server has already accepted the first one and started spending quota -
+      // an aborted client request does not abort server work. Measured before
+      // this guard: four attempts, four concurrent audits, 16 real Gemini
+      // calls for one click. The key is per click and scoped to the owner, so
+      // one user can never be handed another's job.
+      const idemKey = readIdempotencyKey(req.headers as any);
+
+      let outcome: { id: string; replayed: boolean };
+      try {
+        outcome = await serialised(async () => {
+          await store.failStuck(JOB_MAX_RUN_MS, 'The audit took too long and was stopped. Please run it again.');
+          await store.pruneJobs(Date.now() - JOB_RETENTION_MS);
+
+          // A replayed submit (the same click, retried) is never refused by
+          // the caps below and never starts a second audit.
+          if (idemKey) {
+            const existing = await store.findJobByKey(owner, idemKey);
+            if (existing) return { id: existing.id, replayed: true };
+          }
+
+          await admit(owner);
+
+          const job: StoredJob = {
+            id: `job-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+            owner,
+            idemKey,
+            status: 'running',
+            startedAt: Date.now(),
+          };
+          await store.createJob(job);
+          // Kick the work off and answer immediately; the client polls for the result.
+          void runJob(job.id, owner, req.body);
+          return { id: job.id, replayed: false };
+        });
+      } catch (err) {
+        if (err instanceof AdmissionError) {
+          if (err.retryAfterSeconds) res.setHeader('Retry-After', String(err.retryAfterSeconds));
+          return res.status(err.status).json({ error: err.message });
+        }
+        throw err;
+      }
+
+      if (outcome.replayed) {
+        console.log(`Audit submit replayed under an existing key; returning job ${outcome.id} instead of starting another.`);
+      }
+      res.status(202).json({ jobId: outcome.id, status: 'running' });
+    })
+  );
+
+  app.get(
+    '/api/audit/job/:id',
+    handle(async (req, res) => {
+      await store.failStuck(JOB_MAX_RUN_MS, 'The audit took too long and was stopped. Please run it again.');
+      const job = await store.getJob(req.params.id);
+      // Someone else's job is reported exactly like a missing one.
+      if (!job || job.owner !== res.locals.user.email) {
+        return res.status(404).json({
+          error: 'That audit is no longer available. It may have expired or the server restarted; please run it again.',
+        });
+      }
+      if (job.status === 'running') {
+        return res.json({ status: 'running', elapsedMs: Date.now() - job.startedAt, progress: job.progress ?? null });
+      }
+      if (job.status === 'error') {
+        return res.status(500).json({ status: 'error', error: job.error });
+      }
+      return res.json({ status: 'done', ...job.result });
+    })
+  );
+
+  // ---- Saved audits: the history that survives a refresh (when storage is durable).
+  app.get(
+    '/api/audits',
+    handle(async (_req, res) => {
+      res.json({ audits: await store.listAudits(res.locals.user.email), storage: store.info() });
+    })
+  );
+
+  app.get(
+    '/api/audits/:id',
+    handle(async (req, res) => {
+      const audit = await store.getAudit(res.locals.user.email, req.params.id);
+      if (!audit) return res.status(404).json({ error: 'That saved audit was not found. It may have been deleted.' });
+      res.json({ audit });
+    })
+  );
+
+  app.delete(
+    '/api/audits/:id',
+    handle(async (req, res) => {
+      const deleted = await store.deleteAudit(res.locals.user.email, req.params.id);
+      if (!deleted) return res.status(404).json({ error: 'That saved audit was not found. It may already be deleted.' });
+      res.json({ deleted: true });
+    })
+  );
 
   // An unknown /api route is a JSON sentence, never an HTML error page - the
   // client parses every API response as JSON.

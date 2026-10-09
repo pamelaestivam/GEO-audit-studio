@@ -13,6 +13,8 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { mergeDetectedDetails, containsFabricatedPlaceholder } from '../src/detection';
 import { describeProviderError, parseRetryDelaySeconds, summariseFailures } from '../src/errors';
+import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+installAuthFetch();
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -180,6 +182,7 @@ async function main() {
         ...process.env,
         PORT: String(PORT),
         NODE_ENV: 'production',
+        ...TEST_AUTH_ENV,
         GEMINI_API_KEY: 'invalid-key-for-contract-test',
         GEMINI_MAX_RETRIES: '0',
         GEMINI_MIN_INTERVAL_MS: '0',

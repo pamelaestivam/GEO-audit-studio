@@ -15,6 +15,22 @@
  * genuinely exhausted, with a message that says what's actually going on.
  */
 
+// ---- Session. Every request carries the signed session token, and a 401 on a
+// request that carried one means the session ended (expired, or its access
+// code was withdrawn) - the app is told once, so it can return to sign-in with
+// a sentence rather than leaving each screen to show "request failed".
+let authToken: string | null = null;
+let unauthorizedHandler: ((message: string) => void) | null = null;
+
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
+/** Register what happens when the server rejects the current session. */
+export function onSessionRejected(handler: ((message: string) => void) | null) {
+  unauthorizedHandler = handler;
+}
+
 const DEFAULT_RETRIES = 3;
 const RETRY_DELAY_MS = [1500, 3000, 6000];
 
@@ -50,8 +66,16 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}): Pro
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(path, { ...init, signal: controller.signal });
+      const headers = new Headers(init.headers);
+      const sentToken = !!authToken && !headers.has('Authorization');
+      if (sentToken) headers.set('Authorization', `Bearer ${authToken}`);
+      const res = await fetch(path, { ...init, headers, signal: controller.signal });
       clearTimeout(timer);
+      if (res.status === 401 && sentToken && unauthorizedHandler) {
+        // Read a copy: the caller still owns the original body.
+        const body = await res.clone().json().catch(() => ({}));
+        unauthorizedHandler(body?.error || 'Your session has ended. Please sign in again.');
+      }
       return res;
     } catch (err) {
       clearTimeout(timer);

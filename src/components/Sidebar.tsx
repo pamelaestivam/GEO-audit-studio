@@ -240,7 +240,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* What is true today: audits live in this tab only. */}
         <div className="text-[11px] text-slate-500 px-1 leading-snug">
-          Early access. Audits are not saved - export or copy a report before you refresh or close this tab.
+          Early access. Each audit says whether it was saved to your account; export a copy of anything you need to keep.
         </div>
       </div>
     </aside>

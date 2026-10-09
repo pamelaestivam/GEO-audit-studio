@@ -17,9 +17,11 @@ interface ExecutiveSummaryCardProps {
   audit: AuditReport;
   /** Jump to the module a metric belongs to. */
   onNavigate?: (tab: TabType) => void;
+  /** Delete this audit from storage. Offered only for audits the server kept. */
+  onDelete?: (id: string) => void;
 }
 
-export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audit, onNavigate }) => {
+export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audit, onNavigate, onDelete }) => {
   // Every headline metric is backed by a module. The tiles used to be inert
   // divs, so tapping the number a user cared about did nothing at all.
   const tileClass =
@@ -78,6 +80,28 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
                 'Accuracy, omissions and the remediation plan were not assessed. Visibility figures below are still measured.'}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Whether a refresh will lose this audit - stated, not assumed. */}
+      {!audit.degraded && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          {audit.saved ? (
+            <span className="text-emerald-300/90">Saved to your account. It will be here when you come back.</span>
+          ) : (
+            <span className="text-amber-300/90">
+              Not saved. This audit is lost if you refresh or close the tab - use Export to keep a copy.
+            </span>
+          )}
+          {audit.saved && onDelete && (
+            <button
+              type="button"
+              onClick={() => onDelete(audit.id)}
+              className="text-slate-400 hover:text-rose-300 underline underline-offset-2"
+            >
+              Delete this audit
+            </button>
+          )}
         </div>
       )}
 
