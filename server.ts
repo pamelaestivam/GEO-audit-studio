@@ -11,6 +11,7 @@ import {
   extractCandidateVendors,
   findFirstMention,
   normaliseDomain,
+  queryNamesBrand,
   sourcesForBrand,
   type QueryEvidence,
 } from './src/analysis.js';
@@ -28,6 +29,7 @@ import {
   bearerToken,
   checkAccessCode,
   describeAuthFailure,
+  isLoopbackAddress,
   issueToken,
   loadAuthConfig,
   normaliseEmail,
@@ -44,7 +46,26 @@ import {
   type EngineName,
 } from './src/providers.js';
 
+import dotenv from 'dotenv';
+
 const currentDir = typeof __dirname !== 'undefined' ? __dirname : process.cwd();
+
+// The compiled bundle IS the production build. Run as plain `node dist/server.cjs`
+// (which is what `npm start` does) with NODE_ENV unset, it used to behave as a
+// development server: loading the Vite dev toolchain and, with the old auth,
+// accepting a publicly known sign-in code. A built server defaults to production;
+// set NODE_ENV explicitly to override.
+if (typeof __filename !== 'undefined' && /server\.cjs$/.test(__filename) && !process.env.NODE_ENV) {
+  process.env.NODE_ENV = 'production';
+}
+
+// Local development reads .env.local, then .env (values already in the
+// environment win). README has always told people to put their key in
+// .env.local, but nothing loaded it - so a developer's key was silently never
+// read. Never in production: a deployment's environment comes from its host.
+if (process.env.NODE_ENV !== 'production') {
+  for (const file of ['.env.local', '.env']) dotenv.config({ path: file, quiet: true });
+}
 
 /**
  * One breaker per process, shared by every request. A quota error discovered
@@ -71,10 +92,15 @@ async function buildApp() {
   const app = express();
 
   app.disable('x-powered-by');
-  // Render and Vercel both terminate TLS in front of the app; without this
-  // every request appears to come from the proxy's address and a per-IP limit
-  // would throttle all users as one.
-  app.set('trust proxy', 1);
+  // How many reverse proxies sit in front of this process (TRUST_PROXY=1 on
+  // Render, Fly, or behind nginx/Caddy). The default is NONE: with a proxy
+  // trusted that does not exist, a client can send its own X-Forwarded-For and
+  // pick any identity it likes, which made every per-IP limit - including the
+  // access-code brute-force limit - bypassable by rotating that header.
+  // Behind a real proxy and left at 0, all users share the proxy's address and
+  // are throttled together, which fails safe; /api/health says which is in effect.
+  const trustProxyHops = Math.max(0, Math.floor(Number(process.env.TRUST_PROXY ?? 0)) || 0);
+  app.set('trust proxy', trustProxyHops);
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -112,10 +138,12 @@ async function buildApp() {
 
   // ---- Durable state and sign-in. Both are decided once, at start-up, and
   // both say plainly what they are: nothing here silently degrades.
-  const auth = loadAuthConfig();
+  const auth = loadAuthConfig(process.env, {
+    allowDev: process.env.ALLOW_DEV_AUTH === '1' || process.argv.includes('--dev'),
+  });
   if (auth.mode === 'dev') {
     console.warn(
-      '[auth] DEV MODE: SESSION_SECRET and ACCESS_CODES are not set, so any email with the code "dev-access" can sign in. This is never honoured when NODE_ENV=production.'
+      '[auth] DEV MODE: no access codes are configured, so the code "dev-access" signs anyone in - from this machine only. Never honoured when NODE_ENV=production.'
     );
   } else if (auth.mode === 'unconfigured') {
     console.error(`[auth] ${auth.problem}`);
@@ -186,9 +214,29 @@ async function buildApp() {
   // endpoint: monitors and the sign-in page use it, and it reveals only which
   // engines are configured and whether the quota is known to be exhausted.
   app.use('/api/audit', (req, res, next) =>
-    req.method === 'GET' && req.path === '/status' ? next() : requireAuth(req, res, next)
+    (req.method === 'GET' || req.method === 'HEAD') && req.path === '/status' ? next() : requireAuth(req, res, next)
   );
   app.use('/api/audits', requireAuth);
+
+  // The quick lookups (brand detection, query suggestions, one added query) each
+  // spend real engine calls but are not audits, so the audit budgets never saw
+  // them: 40 parallel evaluate-query calls from one user made 40 Gemini calls.
+  // A per-person hourly limit (per process - resets on restart, unlike the audit
+  // budgets, which live in the store). 0 disables.
+  const USER_LOOKUPS_PER_HOUR = Number(process.env.USER_LOOKUPS_PER_HOUR ?? 30);
+  const lookupLimiter = new FixedWindowLimiter(USER_LOOKUPS_PER_HOUR, 3600_000);
+  app.use(
+    ['/api/audit/parse-url', '/api/audit/generate-queries', '/api/audit/evaluate-query'],
+    (req, res, next) => {
+      if (req.method !== 'POST' || USER_LOOKUPS_PER_HOUR <= 0) return next();
+      const decision = lookupLimiter.check(res.locals.user.owner);
+      if (decision.allowed) return next();
+      res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+      return res.status(429).json({
+        error: `You have used your ${USER_LOOKUPS_PER_HOUR} quick lookups for this hour (brand detection, query suggestions and added queries each count). Try again in about ${formatDuration(decision.retryAfterSeconds * 1000)}.`,
+      });
+    }
+  );
 
   /** Bounds on user input, so one request cannot exhaust quota or memory. */
   const MAX_NAME_LENGTH = 120;
@@ -416,6 +464,7 @@ async function buildApp() {
       // Be explicit about what this deployment cannot promise, so a monitor or
       // a person reading /api/health is not left to assume durability exists.
       storage: { kind: store.info().kind, durable: store.info().durable },
+      trustProxyHops,
       uptimeSeconds: Math.round(process.uptime()),
       commit: process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || undefined,
     });
@@ -456,6 +505,9 @@ async function buildApp() {
    */
   const READINESS_TTL_MS = 5 * 60 * 1000;
   let readinessCache: { at: number; body: any } | null = null;
+  // Concurrent cold requests share ONE check. The cache used to be filled only
+  // after the await, so 15 simultaneous requests made 11 real Gemini calls.
+  let readinessInFlight: Promise<any> | null = null;
   async function checkReadiness() {
     /** `verified`: this check made a real call or write. A key merely being set is not verified. */
     const checks: { name: string; ok: boolean; verified: boolean; detail: string }[] = [];
@@ -531,14 +583,25 @@ async function buildApp() {
   app.get(
     '/api/audit/readiness',
     handle(async (req, res) => {
-      const fresh = readinessCache && Date.now() - readinessCache.at < READINESS_TTL_MS;
-      if (!fresh || req.query.refresh === '1') {
-        // A forced refresh is still limited to once a minute: it spends quota.
-        if (!(readinessCache && req.query.refresh === '1' && Date.now() - readinessCache.at < 60_000)) {
-          readinessCache = { at: Date.now(), body: await checkReadiness() };
+      const age = readinessCache ? Date.now() - readinessCache.at : Infinity;
+      const fresh = age < READINESS_TTL_MS;
+      // A forced refresh is still limited to once a minute: it spends quota.
+      const wantsRefresh = req.query.refresh === '1' && age >= 60_000;
+      let served = fresh && !wantsRefresh;
+      if (!served) {
+        if (!readinessInFlight) {
+          readinessInFlight = checkReadiness()
+            .then((body) => {
+              readinessCache = { at: Date.now(), body };
+              return body;
+            })
+            .finally(() => {
+              readinessInFlight = null;
+            });
         }
+        await readinessInFlight;
       }
-      res.json({ ...readinessCache!.body, cached: fresh && req.query.refresh !== '1' });
+      res.json({ ...readinessCache!.body, cached: served });
     })
   );
 
@@ -561,14 +624,21 @@ async function buildApp() {
     if (auth.mode === 'unconfigured') {
       return res.status(503).json({ error: auth.problem, code: 'auth_unconfigured' });
     }
+    // Development sign-in is for the machine it runs on. Even if it is switched
+    // on by mistake on a reachable host, strangers are not let in by it.
+    if (auth.mode === 'dev' && !isLoopbackAddress(req.ip)) {
+      return res.status(403).json({
+        error: 'Development sign-in only works from the same machine as the server. Configure SESSION_SECRET and ACCESS_CODES to let other people in.',
+      });
+    }
     const email = normaliseEmail(req.body?.email);
     if (!email) return res.status(400).json({ error: 'Enter a valid email address.' });
-    const codeId = checkAccessCode(req.body?.accessCode, auth);
-    if (!codeId) {
+    const matched = checkAccessCode(req.body?.accessCode, auth);
+    if (!matched) {
       return res.status(401).json({ error: 'That access code is not valid. Check it with the person who invited you.' });
     }
-    const { token, expiresAt } = issueToken(email, codeId, auth);
-    res.json({ user: userFromEmail(email), token, expiresAt });
+    const { token, expiresAt } = issueToken(email, matched.codeId, auth);
+    res.json({ user: userFromEmail(email, matched.label), token, expiresAt });
   });
 
   // Lets the client confirm a stored session is still good (not expired, its
@@ -579,7 +649,7 @@ async function buildApp() {
 
   // POST: Live URL & Brand Name parser using Gemini Grounded Web Search
   app.post('/api/audit/parse-url', async (req, res) => {
-    const idempotencyKey = scopedKey('parse-url', readIdempotencyKey(req.headers as any), res.locals.user?.email);
+    const idempotencyKey = scopedKey('parse-url', readIdempotencyKey(req.headers as any), res.locals.user?.owner);
     try {
       const { input } = req.body ?? {};
       if (!input || typeof input !== 'string' || !input.trim()) {
@@ -784,7 +854,7 @@ Return a JSON array of exactly 3 query objects.`;
   }
 
   app.post('/api/audit/generate-queries', async (req, res) => {
-    const idempotencyKey = scopedKey('generate-queries', readIdempotencyKey(req.headers as any), res.locals.user?.email);
+    const idempotencyKey = scopedKey('generate-queries', readIdempotencyKey(req.headers as any), res.locals.user?.owner);
     try {
       const businessName = cleanText(req.body?.businessName, MAX_NAME_LENGTH);
       if (!businessName) {
@@ -877,7 +947,7 @@ Return a JSON array of exactly 3 query objects.`;
 
       // One click on "Add & Audit Query" costs one round of engine calls,
       // however many connection attempts it took to deliver the request.
-      const idempotencyKey = scopedKey('evaluate-query', readIdempotencyKey(req.headers as any), res.locals.user?.email);
+      const idempotencyKey = scopedKey('evaluate-query', readIdempotencyKey(req.headers as any), res.locals.user?.owner);
       const { value: evidencePromise } = inFlightRequests.run(idempotencyKey, () =>
         collectQueryEvidence(ai, query, engines)
       );
@@ -1413,6 +1483,11 @@ Return valid JSON matching the schema.`;
       const narrativeAvailable = narrativeFailure === null;
 
       // ---------- Layer 4: assemble an honest report ----------
+      // How many of the questions asked name the brand outright (see
+      // queryNamesBrand): the report says so, because for those the answer is
+      // about the brand whatever the engine thinks of it.
+      const queriesNamingBrand = queryList.filter((q: any) => queryNamesBrand(q.queryText || '', clientMatcher)).length;
+
       const queriesTested = queryList.map((q: any, idx: number) => {
         const group = evidenceByQuery[idx] || [];
         const engineResults: Record<string, any> = {};
@@ -1578,6 +1653,7 @@ Return valid JSON matching the schema.`;
         measuredEngines,
         untrackedRivals,
         queriesAttempted: queryList.length,
+        queriesNamingBrand,
         observationsAttempted: allEvidence.length,
         observationsWithEvidence: usableEvidence.length,
         // Numerator behind geoVisibilityScore, so the UI can show "1 of 3".
@@ -1692,9 +1768,11 @@ Return valid JSON matching the schema.`;
         void store.updateJob(jobId, { progress }).catch(log('progress update failed'));
       });
 
-      // The stuck-job reaper may already have ended this job; its answer is stale.
+      // The reaper may already have marked this job failed after 15 minutes.
+      // The evidence was still collected and paid for, so a late finish is
+      // recorded rather than thrown away (only a pruned job is dropped).
       const current = await store.getJob(jobId);
-      if (!current || current.status !== 'running') return;
+      if (!current) return;
 
       const report = payload?.report;
       let saved = false;
@@ -1718,6 +1796,8 @@ Return valid JSON matching the schema.`;
       });
     } catch (err: any) {
       console.log(`Audit job ${jobId} failed: ${err?.message || err}`);
+      const latest = await store.getJob(jobId).catch(() => null);
+      if (latest && latest.status !== 'running') return; // already ended (e.g. reaped); do not overwrite
       await store
         .updateJob(jobId, {
           status: 'error',
@@ -1761,7 +1841,7 @@ Return valid JSON matching the schema.`;
           targetPersona: typeof q.targetPersona === 'string' ? q.targetPersona.slice(0, 80) : 'Target Customer',
         }));
 
-      const owner: string = res.locals.user.email;
+      const owner: string = res.locals.user.owner;
 
       // The single most expensive thing to get wrong. A cold instance stalls
       // the submit long enough for the browser's own retry to fire, while the
@@ -1810,7 +1890,10 @@ Return valid JSON matching the schema.`;
       if (outcome.replayed) {
         console.log(`Audit submit replayed under an existing key; returning job ${outcome.id} instead of starting another.`);
       }
-      res.status(202).json({ jobId: outcome.id, status: 'running' });
+      // Report what the job is NOW: a replayed submit can name a job that has
+      // already finished or failed (the client's next poll would say so anyway).
+      const current = await store.getJob(outcome.id);
+      res.status(202).json({ jobId: outcome.id, status: current?.status ?? 'running' });
     })
   );
 
@@ -1820,7 +1903,7 @@ Return valid JSON matching the schema.`;
       await store.failStuck(JOB_MAX_RUN_MS, 'The audit took too long and was stopped. Please run it again.');
       const job = await store.getJob(req.params.id);
       // Someone else's job is reported exactly like a missing one.
-      if (!job || job.owner !== res.locals.user.email) {
+      if (!job || job.owner !== res.locals.user.owner) {
         return res.status(404).json({
           error: 'That audit is no longer available. It may have expired or the server restarted; please run it again.',
         });
@@ -1839,14 +1922,14 @@ Return valid JSON matching the schema.`;
   app.get(
     '/api/audits',
     handle(async (_req, res) => {
-      res.json({ audits: await store.listAudits(res.locals.user.email), storage: store.info() });
+      res.json({ audits: await store.listAudits(res.locals.user.owner), storage: store.info() });
     })
   );
 
   app.get(
     '/api/audits/:id',
     handle(async (req, res) => {
-      const audit = await store.getAudit(res.locals.user.email, req.params.id);
+      const audit = await store.getAudit(res.locals.user.owner, req.params.id);
       if (!audit) return res.status(404).json({ error: 'That saved audit was not found. It may have been deleted.' });
       res.json({ audit });
     })
@@ -1855,7 +1938,7 @@ Return valid JSON matching the schema.`;
   app.delete(
     '/api/audits/:id',
     handle(async (req, res) => {
-      const deleted = await store.deleteAudit(res.locals.user.email, req.params.id);
+      const deleted = await store.deleteAudit(res.locals.user.owner, req.params.id);
       if (!deleted) return res.status(404).json({ error: 'That saved audit was not found. It may already be deleted.' });
       res.json({ deleted: true });
     })

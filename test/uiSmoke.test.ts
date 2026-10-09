@@ -130,6 +130,7 @@ async function main() {
     const card = await page.locator('main').innerText();
     assert('visibility is shown with its arithmetic', /Named in 3 of 3 answers \(Gemini\)/.test(card), card.slice(0, 400));
     assert('a small sample carries a caution', /indicative, not a stable rate/.test(card));
+    assert('when every query names the brand, the card says the score mostly reflects reputation, not discovery', /All 3 questions name your brand/.test(card), card.slice(0, 500));
     assert('share of voice is 33%', /33%/.test(card));
     const rivals = await page.locator('text=Rivals the engines named that you did not list').locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]').innerText();
     assert('only the real rivals are listed', /Pokeworks/.test(rivals) && /Sweetfin/.test(rivals) && !/Pricing|Key|Monday|Yelp|Austin/.test(rivals), rivals);
@@ -272,7 +273,17 @@ async function main() {
     assert('before any audit there are no inert module tabs to tap', (await m.locator('aside nav').count()) === 0);
     const overflow = await m.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert('the dashboard does not scroll sideways on a phone', overflow <= 1, `overflow ${overflow}px`);
-    await runAudit(m);
+    // A returning user with a long brand name: the audit dropdown used to size
+    // itself to its longest option and push the page ~400px sideways.
+    await runAudit(m, 'Northwind Traders International Holdings', 'northwind-traders-international.example.com');
+    await m.reload();
+    assert('the returning phone user sees their saved audit', await appears(m, 'text=Saved to your account'));
+    for (const tab of ['Query Intent Matrix', 'Citation Source Map', 'Competitor Intelligence']) {
+      await m.locator('aside').getByText(tab, { exact: false }).first().tap();
+      await m.waitForTimeout(300);
+      const over = await m.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert(`the "${tab}" view does not scroll sideways on a phone (returning user, long name)`, over <= 1, `overflow ${over}px`);
+    }
     await m.evaluate(() => window.scrollTo(0, 0));
     await m.locator('aside').getByText('Citation Source Map', { exact: false }).first().tap();
     await m.waitForTimeout(900);

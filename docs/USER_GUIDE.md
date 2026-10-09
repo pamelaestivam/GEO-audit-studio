@@ -23,6 +23,11 @@ Enter the email you were invited with and the **access code** you were given.
 Sessions last seven days. If your code is withdrawn you are signed out with a
 message saying so.
 
+**Privacy:** your saved audits are private to you and your code. Anyone who
+holds *the same code* can sign in under any email and see audits saved under that
+code - so if your audits must stay private from a colleague, ask for your own
+code. The person running the service can read everything stored.
+
 ## 2. Run an audit
 
 On the first screen:
@@ -30,8 +35,11 @@ On the first screen:
 - **Business, brand name, or website** - required. Type the name people use.
 - **Website domain** - recommended. It lets the audit tell when *your own site*
   is cited as a source, and helps match shorthand references to your brand.
-- **Industry** - optional. Used to word the queries ("best *payments*
-  alternatives..."). Leave it blank rather than guess.
+- **Industry** - optional. With it, the first standard question becomes a
+  **brand-neutral discovery question** ("What are the best *poke restaurants*?")
+  - the question that actually tests whether buyers who don't know you are
+  pointed to you. Leave it blank rather than guess; without it (and without a
+  competitor) every standard question has to name your brand.
 - **Known competitors** - optional, comma-separated. Anyone you list is always
   scored. Rivals the engines name that you did not list are discovered
   separately and shown on their own.
@@ -64,6 +72,7 @@ spends a request of a shared quota):
 |---|---|
 | **GEO Visibility Index** `100 / 100` and *"Named in 3 of 3 answers (Gemini)"* | The share of captured answers that name your brand. The sentence under it is the arithmetic. |
 | *"Only 3 answers: indicative, not a stable rate"* | Under five answers, a percentage is a handful of data points. Add queries before quoting it. |
+| *"All 3 questions name your brand..."* | **Read this before quoting a 100.** If you ask an engine "How much does *X* cost?", it answers about X whatever it thinks of X - so a high score is near-guaranteed. That measures reputation, not discovery. Add a question that does not name you ("best poke in Austin"). |
 | **Share of Voice** | Of every brand mention across all the answers, the part that is yours. Needs rivals to mean anything. |
 | **#1 Recommendation Rate** | The share of answers that name you *first*. |
 | **Fact Accuracy Rate** | Mentions where the model found nothing wrong. **A model's judgement without a fact sheet** - indicative only. |

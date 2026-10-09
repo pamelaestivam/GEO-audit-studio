@@ -27,11 +27,19 @@ services:
         value: production
       - key: DATA_DIR
         value: /var/data
+      # Render puts one reverse proxy in front of the service. Without this the
+      # per-IP rate limits would see every visitor as the proxy and throttle
+      # everyone together; with a wrong number they could be spoofed.
+      - key: TRUST_PROXY
+        value: 1
       # Generated once by Render; rotating it signs everyone out.
       - key: SESSION_SECRET
         generateValue: true
-      # Comma-separated codes you hand to invited people. Removing one ends the
-      # sessions it created. At least 8 characters each.
+      # Codes you hand to invited people, as label=code pairs, comma-separated:
+      #   anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa
+      # The label is who the code belongs to; saved audits belong to (label,
+      # email), so people on different codes cannot see each other's work.
+      # Removing a code ends the sessions it created. Codes: 8+ characters.
       - key: ACCESS_CODES
         sync: false
       - key: GEMINI_API_KEY

@@ -33,6 +33,9 @@ jobs:
       - run: npm test
         env:
           CI: 'true'
+      # The built server must run from a clean directory with ONLY production
+      # dependencies - what a Docker/Render/VPS build actually has.
+      - run: bash scripts/prod-install-check.sh
 
   # Builds the production image and runs the post-deploy smoke test against the
   # running container, with a real volume - the same shape as a real deployment.
@@ -62,6 +65,18 @@ jobs:
         # No credentials: checks everything a stranger sees, that protected
         # routes refuse a stranger, and that storage on the volume is durable.
         run: node scripts/smoke.mjs http://127.0.0.1:3000
+      - name: The volume really holds the database
+        # The server creates its SQLite file at boot; seeing it in the volume
+        # (from a different container) proves DATA_DIR is what is persisted.
+        run: docker run --rm -v geo-data:/data alpine ls -la /data | grep geo-audit.sqlite
+      - name: Restart on the same volume and smoke test again
+        run: |
+          docker restart app
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/health && break
+            sleep 1
+          done
+          node scripts/smoke.mjs http://127.0.0.1:3000
       - name: Container logs
         if: always()
         run: docker logs app

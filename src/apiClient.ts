@@ -85,6 +85,8 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}): Pro
   }
 
   throw new Error(
-    'Could not reach the server after several attempts. If it has been idle for a while it may still be waking up - please wait a moment and try again.'
+    retries === 0
+      ? 'Could not reach the server. Check your connection and try again.'
+      : 'Could not reach the server after several attempts. If it has been idle for a while it may still be waking up - please wait a moment and try again.'
   );
 }

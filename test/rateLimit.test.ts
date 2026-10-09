@@ -47,5 +47,19 @@ const T0 = 1_000_000;
   check('retryAfterSeconds is never below 1', (l.check('a', T0), l.check('a', T0), l.check('a', T0 + 4_999).retryAfterSeconds), 1);
 }
 
+{
+  // An attacker rotating keys must not make every request scan every key, and
+  // must not grow memory without bound.
+  const l = new FixedWindowLimiter(5, 60_000);
+  const t0 = Date.now();
+  for (let i = 0; i < 20_000; i++) l.check(`spoof-${i}`, T0);
+  check('many distinct keys are all tracked up to the cap', l.size(T0), 20_000);
+  for (let i = 20_000; i < 60_000; i++) l.check(`spoof-${i}`, T0);
+  check('memory is bounded: past the cap, new keys are refused rather than stored', l.size(T0) <= 50_000, true);
+  check('a key that cannot be tracked is refused (fails closed)', l.check('one-more', T0).allowed, false);
+  check('tracked keys keep working', l.check('spoof-1', T0).allowed, true);
+  check('the sweep is not O(keys) per request: 60k checks finished quickly', Date.now() - t0 < 4000, true);
+}
+
 console.log(failures === 0 ? '\nAll rate limiter checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

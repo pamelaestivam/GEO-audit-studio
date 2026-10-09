@@ -180,6 +180,7 @@ export class MemoryStore implements Store {
         j.status = 'error';
         j.error = reason;
         j.finishedAt = now;
+        j.billable = false;
         n++;
       }
     }
@@ -192,6 +193,7 @@ export class MemoryStore implements Store {
         j.status = 'error';
         j.error = reason;
         j.finishedAt = now;
+        j.billable = false;
         n++;
       }
     }
@@ -374,14 +376,14 @@ export class SqliteStore implements Store {
   async failStuck(maxAgeMs: number, reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ? WHERE status = 'running' AND started_at < ?")
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0 WHERE status = 'running' AND started_at < ?")
         .run(reason, now, now - maxAgeMs).changes
     );
   }
   async failAllRunning(reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ? WHERE status = 'running'")
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0 WHERE status = 'running'")
         .run(reason, now).changes
     );
   }
@@ -465,8 +467,11 @@ export async function openStore(opts: OpenStoreOptions = {}): Promise<Store> {
     const sqlite: any = await import('node:sqlite');
     return new SqliteStore(sqlite.DatabaseSync, path.join(opts.dataDir, 'geo-audit.sqlite'));
   } catch (err: any) {
-    const note = `Could not open the SQLite database in ${opts.dataDir} (${err?.message || err}); falling back to memory, so nothing is saved.`;
-    log(`[store] ${note}`);
-    return new MemoryStore(note);
+    // The detail (a filesystem path and an OS error) goes to the server log only:
+    // the note is shown on the public status endpoint and must not leak either.
+    log(`[store] could not open the SQLite database in ${opts.dataDir}: ${err?.message || err}`);
+    return new MemoryStore(
+      'The database could not be opened, so storage fell back to memory and nothing is saved. The server log has the detail; check that DATA_DIR exists and is writable.'
+    );
   }
 }

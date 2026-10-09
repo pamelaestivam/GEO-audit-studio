@@ -24,10 +24,21 @@
 
 import crypto from 'crypto';
 
+export interface AccessCode {
+  /**
+   * The stable name of whoever holds this code. Saved audits belong to
+   * (label, email), so two people with different codes can never see each
+   * other's work even if one types the other's email address. Rotating a code
+   * keeps its label, and therefore keeps its owner's audits.
+   */
+  label: string;
+  code: string;
+}
+
 export interface AuthConfig {
   mode: 'configured' | 'dev' | 'unconfigured';
   secret: string;
-  codes: string[];
+  codes: AccessCode[];
   ttlMs: number;
   /** In `unconfigured` mode: what the operator must fix, as a sentence. */
   problem?: string;
@@ -40,23 +51,64 @@ const DEFAULT_TTL_HOURS = 7 * 24;
 /** The only code `dev` mode accepts. Never honoured in production. */
 export const DEV_ACCESS_CODE = 'dev-access';
 
-export function loadAuthConfig(env: Record<string, string | undefined> = process.env): AuthConfig {
+export interface LoadAuthOptions {
+  /**
+   * Allow the zero-configuration development sign-in. Off unless the process
+   * was started for development on purpose (`npm run dev`, or ALLOW_DEV_AUTH=1).
+   * It used to switch on whenever NODE_ENV was not "production" - which is the
+   * case for a plain `npm start` on a server nobody remembered to configure, so
+   * a publicly known code opened the whole product.
+   */
+  allowDev?: boolean;
+}
+
+const LABEL_PATTERN = /^[a-z0-9._-]{1,32}$/i;
+
+/** `anna=7Kx9mQ2v` -> label "anna"; a bare code gets a label derived from itself. */
+function parseCodes(raw: string): { codes: AccessCode[]; problems: string[] } {
+  const codes: AccessCode[] = [];
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw.split(',').map((c) => c.trim()).filter(Boolean)) {
+    const eq = entry.indexOf('=');
+    const label = eq > 0 ? entry.slice(0, eq).trim() : '';
+    const code = eq > 0 ? entry.slice(eq + 1).trim() : entry;
+    if (eq > 0 && !LABEL_PATTERN.test(label)) {
+      problems.push(`the label "${label}" is not valid (letters, digits, . _ - up to 32 characters)`);
+      continue;
+    }
+    if (code.length < MIN_CODE_LENGTH) {
+      problems.push(`every access code must be at least ${MIN_CODE_LENGTH} characters`);
+      continue;
+    }
+    if (seen.has(code)) continue;
+    seen.add(code);
+    codes.push({
+      label: label || `c-${crypto.createHash('sha256').update(code).digest('hex').slice(0, 8)}`,
+      code,
+    });
+  }
+  return { codes, problems };
+}
+
+export function loadAuthConfig(
+  env: Record<string, string | undefined> = process.env,
+  options: LoadAuthOptions = {}
+): AuthConfig {
   const production = env.NODE_ENV === 'production';
-  const rawCodes = (env.ACCESS_CODES || '')
-    .split(',')
-    .map((c) => c.trim())
-    .filter(Boolean);
+  const { codes: parsedCodes, problems: codeProblems } = parseCodes(env.ACCESS_CODES || '');
+  const rawCodes = parsedCodes;
   const secret = env.SESSION_SECRET || '';
   const ttlHours = Number(env.SESSION_TTL_HOURS);
   const ttlMs = (Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : DEFAULT_TTL_HOURS) * 3600_000;
 
-  if (!production && !secret && rawCodes.length === 0) {
+  if (!production && options.allowDev && !secret && rawCodes.length === 0) {
     return {
       mode: 'dev',
       // Fresh per process: dev sessions do not survive a restart, which is the
       // right default for something that is not a real deployment.
       secret: crypto.randomBytes(32).toString('hex'),
-      codes: [DEV_ACCESS_CODE],
+      codes: [{ label: 'dev', code: DEV_ACCESS_CODE }],
       ttlMs,
     };
   }
@@ -69,11 +121,10 @@ export function loadAuthConfig(env: Record<string, string | undefined> = process
         : 'SESSION_SECRET is not set'
     );
   }
-  if (rawCodes.length === 0) {
+  if (rawCodes.length === 0 && codeProblems.length === 0) {
     problems.push('ACCESS_CODES is not set (a comma-separated list of codes you hand to invited users)');
-  } else if (rawCodes.some((c) => c.length < MIN_CODE_LENGTH)) {
-    problems.push(`every access code must be at least ${MIN_CODE_LENGTH} characters`);
   }
+  for (const p of Array.from(new Set(codeProblems))) problems.push(p);
 
   if (problems.length > 0) {
     return {
@@ -101,10 +152,16 @@ export interface SessionUser {
   id: string;
   email: string;
   name: string;
+  /**
+   * What saved audits, jobs and budgets belong to: the code's label AND the
+   * email. Keyed on the email alone, anyone holding any code could type
+   * someone else's address and read, delete or poll their audits.
+   */
+  owner: string;
 }
 
 /** A stable identity derived from the email alone - there is no user table. */
-export function userFromEmail(email: string): SessionUser {
+export function userFromEmail(email: string, label = ''): SessionUser {
   const local = email.split('@')[0].replace(/[._+-]+/g, ' ').trim();
   const name = local
     .split(' ')
@@ -112,9 +169,10 @@ export function userFromEmail(email: string): SessionUser {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
   return {
-    id: `usr-${crypto.createHash('sha256').update(email).digest('hex').slice(0, 12)}`,
+    id: `usr-${crypto.createHash('sha256').update(`${label}|${email}`).digest('hex').slice(0, 12)}`,
     email,
     name: name || email,
+    owner: label ? `${label}|${email}` : email,
   };
 }
 
@@ -129,21 +187,28 @@ function codeId(secret: string, code: string): string {
   return hmac(secret, `code:${code}`).toString('hex').slice(0, 16);
 }
 
+/** True for the addresses that mean "this same machine". */
+export function isLoopbackAddress(ip: string | undefined): boolean {
+  if (!ip) return false;
+  const v = ip.replace(/^::ffff:/, '');
+  return v === '127.0.0.1' || v === '::1' || v === 'localhost' || /^127\.\d+\.\d+\.\d+$/.test(v);
+}
+
 function digest(value: string): Buffer {
   return crypto.createHash('sha256').update(value).digest();
 }
 
 /**
- * The id of the code `supplied` matches, or null. Checks every configured code
+ * The id and label of the code `supplied` matches, or null. Checks every configured code
  * without stopping at the first hit so timing does not reveal which one (or how
  * many) matched.
  */
-export function checkAccessCode(supplied: unknown, config: AuthConfig): string | null {
+export function checkAccessCode(supplied: unknown, config: AuthConfig): { codeId: string; label: string } | null {
   if (config.mode === 'unconfigured' || typeof supplied !== 'string' || supplied.length === 0) return null;
   const given = digest(supplied.trim());
-  let matched: string | null = null;
-  for (const code of config.codes) {
-    if (crypto.timingSafeEqual(given, digest(code))) matched = codeId(config.secret, code);
+  let matched: { codeId: string; label: string } | null = null;
+  for (const { code, label } of config.codes) {
+    if (crypto.timingSafeEqual(given, digest(code))) matched = { codeId: codeId(config.secret, code), label };
   }
   return matched;
 }
@@ -196,10 +261,13 @@ export function verifyToken(token: unknown, config: AuthConfig, now = Date.now()
   }
   if (now >= payload.exp) return { ok: false, reason: 'expired' };
 
-  const stillValid = config.codes.some((code) => codeId(config.secret, code) === payload.cid);
-  if (!stillValid) return { ok: false, reason: 'code_revoked' };
+  // The label comes from the CURRENT configuration, found through the code the
+  // session was issued under - never from the token - so it cannot be forged
+  // and a withdrawn code ends its sessions.
+  const entry = config.codes.find((c) => codeId(config.secret, c.code) === payload.cid);
+  if (!entry) return { ok: false, reason: 'code_revoked' };
 
-  return { ok: true, user: userFromEmail(payload.sub), expiresAt: payload.exp };
+  return { ok: true, user: userFromEmail(payload.sub, entry.label), expiresAt: payload.exp };
 }
 
 /** Read `Authorization: Bearer <token>`. */

@@ -62,7 +62,8 @@ async function suite(label: string, make: () => Promise<Store>) {
   }
   check(t('a second job under the same owner+key is refused'), dupRejected, true);
   await s.createJob(job({ owner: 'b@example.com', idemKey: 'k1' }));
-  check(t('the same key under another owner is fine'), true, true);
+  check(t('the same key under another owner is fine, and finds that owner\'s own job'), (await s.findJobByKey('b@example.com', 'k1'))?.owner, 'b@example.com');
+  check(t('...which is a different job from the first owner\'s'), (await s.findJobByKey('b@example.com', 'k1'))?.id !== j1.id, true);
 
   await s.updateJob(j1.id, { progress: { phase: 'querying', done: 1, total: 3 } });
   check(t('progress round-trips as structured data'), (await s.getJob(j1.id))?.progress, { phase: 'querying', done: 1, total: 3 });
@@ -81,7 +82,10 @@ async function suite(label: string, make: () => Promise<Store>) {
   const stuck = await s2.getJob('r2');
   check(t('...and is then an error with that reason'), [stuck?.status, stuck?.error], ['error', 'too slow']);
   check(t('a fresh running job is left alone by failStuck'), (await s2.getJob('r1'))?.status, 'running');
+  check(t('a job failed as stuck does not use up the budget'), (await s2.getJob('r2'))?.billable, false);
   check(t('failAllRunning fails every live job (boot cleanup)'), await s2.failAllRunning('restarted', NOW), 1);
+  check(t('...and an orphaned job (a restart or deploy) does not use up the budget either'), (await s2.getJob('r1'))?.billable, false);
+  check(t('...so a deploy cannot cost anyone their daily allowance'), await s2.countJobsSince(NOW - 1000), 1);
   check(t('...and never touches finished jobs'), (await s2.getJob('d1'))?.status, 'done');
   check(t('nothing is running afterwards'), await s2.countRunning(60 * 60_000, NOW), 0);
 
@@ -168,10 +172,13 @@ async function main() {
   // A directory that cannot exist because its parent is a regular file.
   const blocker = path.join(os.tmpdir(), `geo-blocker-${process.pid}`);
   fs.writeFileSync(blocker, 'x');
-  const unwritable = await openStore({ dataDir: path.join(blocker, 'data'), log: () => {} });
+  const logged: string[] = [];
+  const unwritable = await openStore({ dataDir: path.join(blocker, 'data'), log: (m) => logged.push(m) });
   fs.rmSync(blocker, { force: true });
   check('an unusable directory falls back to memory instead of crashing', [unwritable.info().kind, unwritable.info().durable], ['memory', false]);
-  check('...and the note names the problem', /Could not open/.test(unwritable.info().note || ''), true);
+  check('...and the public note says the database could not be opened', /could not be opened/.test(unwritable.info().note || ''), true);
+  check('...without leaking the filesystem path or the OS error (it is shown on a public endpoint)', /geo-blocker|ENOTDIR|ENOENT|\//.test(unwritable.info().note || ''), false);
+  check('...while the server log does get the detail', logged.some((m) => /geo-blocker/.test(m) && /ENOTDIR|ENOENT/.test(m)), true);
 
   // --- schema is versioned, so a later migration has something to build on
   const versioned = new SqliteStore(DatabaseSync, ':memory:');

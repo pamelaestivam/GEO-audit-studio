@@ -161,6 +161,8 @@ export interface AuditReport {
   /** Average prominence (0-100) of the brand across answers where it appeared. */
   avgProminence?: number;
   queriesAttempted?: number;
+  /** How many of the queries asked name the brand outright (so its visibility there is near-guaranteed). */
+  queriesNamingBrand?: number;
   queriesWithEvidence?: number;
 }
 

@@ -89,6 +89,7 @@ export default function App() {
     setSession(null);
     setAudits([]);
     setActiveAuditId(null);
+    setFreshSearch(false);
     setSignedOutNotice(notice);
     try {
       localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -113,7 +114,13 @@ export default function App() {
   // The server ending the session (expired, or the access code was withdrawn)
   // returns the person to sign-in with the reason, from any screen.
   useEffect(() => {
-    onSessionRejected((message) => endSession(message));
+    // The server ended the session. Whatever was running was NOT stopped by that:
+    // an audit already accepted keeps going on the server and, where storage
+    // is on, lands in the saved list - so say that rather than leaving the
+    // person to wonder whether their audit was lost.
+    onSessionRejected((message) =>
+      endSession(`${message} If an audit was running it is not cancelled; once you sign in again, check your saved audits.`)
+    );
     return () => onSessionRejected(null);
   }, []);
 

@@ -75,6 +75,12 @@ review happened" a checkable claim instead of an assertion.
 clients see, so a merge is a release — which is the reason the review is
 mandatory, not a reason to skip the merge.
 
+**CI must be green before any merge** (`.github/workflows/ci.yml`: lint, audit,
+`npm test`, production-install check, and a Docker build + container smoke
+test), and a fresh-context **adversarial review** (`.claude/agents/`,
+`docs/ENGINEERING_STANDARDS.md` §10) must have been run on the diff. Do not
+merge on a self-review alone.
+
 **`npm test` must pass before any merge.** It builds, runs the deterministic
 analysis checks, then boots the real server and asserts the product's contract
 with the user (`test/contract.test.ts`): that failed lookups never invent
@@ -260,8 +266,21 @@ have to be rediscovered from scratch, not so it can be skipped.
   precision end to end, that a failed analysis step is "not assessed" (not 100%
   accurate), that a failed audit carries no fabricated findings, and the rate
   limit / concurrency cap / JSON error behaviour (needs a current `dist/`)
-- `npx tsx test/reportView.test.ts`, `npx tsx test/rateLimit.test.ts` — pure
-  unit checks for how headline numbers are presented and for the per-IP limiter
+- `npx tsx test/reportView.test.ts`, `npx tsx test/rateLimit.test.ts`,
+  `npx tsx test/auth.test.ts`, `npx tsx test/store.test.ts`,
+  `npx tsx test/queries.test.ts` — pure unit checks (presentation of headline
+  numbers, the limiter, sign-in and sessions, the SQLite/memory store contract,
+  the standard queries)
+- `npx tsx test/foundationE2E.test.ts` — the real built server: sign-in enforced
+  on every spending route, ownership, restart survival (incl. SIGKILL
+  mid-audit), budgets, readiness, X-Forwarded-For handling, unconfigured
+  production (needs a current `dist/`)
+- `npx tsx test/uiSmoke.test.ts` — the real built app in Chromium (desktop and
+  phone): sign-in, an audit, every module, reload, delete, failure states
+  (needs a current `dist/` and `npx playwright install chromium`)
+- `node scripts/smoke.mjs <url>` — post-deploy check of a RUNNING instance;
+  `bash scripts/prod-install-check.sh` — the built server from a clean
+  production-dependencies-only install
 - `npx tsx test/contract.test.ts` — full server contract checks (needs a
   current `dist/`)
 

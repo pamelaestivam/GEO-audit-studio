@@ -48,9 +48,8 @@ interface App {
   port: number;
 }
 
-async function startApp(extraEnv: Record<string, string> = {}, port = nextPort++): Promise<App | null> {
-  const proc = spawn('node', ['dist/server.cjs'], {
-    env: {
+async function startApp(extraEnv: Record<string, string> = {}, port = nextPort++, unset: string[] = []): Promise<App | null> {
+  const childEnv: Record<string, string | undefined> = {
       ...process.env,
       PORT: String(port),
       NODE_ENV: 'production',
@@ -65,9 +64,9 @@ async function startApp(extraEnv: Record<string, string> = {}, port = nextPort++
       ANTHROPIC_API_KEY: '',
       ...TEST_AUTH_ENV,
       ...extraEnv,
-    },
-    stdio: 'ignore',
-  });
+  };
+  for (const key of unset) delete childEnv[key];
+  const proc = spawn('node', ['dist/server.cjs'], { env: childEnv as NodeJS.ProcessEnv, stdio: 'ignore' });
   const base = `http://127.0.0.1:${port}`;
   const started = Date.now();
   while (Date.now() - started < 20000) {
@@ -422,6 +421,145 @@ async function main() {
       check('...with the same sentence', l.body.code, 'auth_unconfigured');
       const run = await rawFetch(`${U.base}/api/audit/run`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer anything' }, body: JSON.stringify(BIZ) });
       check('spending routes are refused with 503, not opened', run.status, 503);
+    }
+
+    // ==================================================================
+    // 6. Findings from the independent adversarial review.
+    // ==================================================================
+
+    // --- ownership is by (code label, email), not the claimed email alone
+    const L = await startApp({ ACCESS_CODES: 'anna=anna-code-1234,ben=ben-code-56789' });
+    assert('server with labelled codes starts', !!L);
+    if (L) {
+      apps.push(L);
+      const annaSam = (await login(L, 'sam@example.com', 'anna-code-1234')).body;
+      const benSam = (await login(L, 'SAM@example.com', 'ben-code-56789')).body;
+      assert('the same email signs in under two codes', !!annaSam.token && !!benSam.token);
+      check('...as two different identities', annaSam.user.id === benSam.user.id, false);
+      const r1 = await startAudit(L, annaSam.token);
+      const d1 = await pollJob(L, annaSam.token, r1.body.jobId);
+      const id1 = d1.body.report.id;
+      check("the owner sees their audit", (await (await rawFetch(`${L.base}/api/audits`, { headers: authed(annaSam.token) })).json()).audits.length, 1);
+      check("someone typing their email under another code sees NOTHING", (await (await rawFetch(`${L.base}/api/audits`, { headers: authed(benSam.token) })).json()).audits.length, 0);
+      check("...cannot open it", (await rawFetch(`${L.base}/api/audits/${id1}`, { headers: authed(benSam.token) })).status, 404);
+      check("...cannot delete it", (await rawFetch(`${L.base}/api/audits/${id1}`, { method: 'DELETE', headers: authed(benSam.token) })).status, 404);
+      check("...cannot poll its job", (await rawFetch(`${L.base}/api/audit/job/${r1.body.jobId}`, { headers: authed(benSam.token) })).status, 404);
+    }
+
+    // --- every spending route is budgeted, not just /run
+    const LK = await startApp({ USER_LOOKUPS_PER_HOUR: '2' });
+    assert('server with a lookup limit starts', !!LK);
+    if (LK) {
+      apps.push(LK);
+      const t = (await login(LK, 'lk@example.com')).body.token;
+      const evalQ = (n: number) => rawFetch(`${LK.base}/api/audit/evaluate-query`, { method: 'POST', headers: { ...authed(t), 'Idempotency-Key': `lk-${n}` }, body: JSON.stringify({ businessName: 'Poke House', queryText: `best poke ${n}` }) });
+      const before = fake.hits();
+      const statuses = [(await evalQ(1)).status, (await evalQ(2)).status, (await evalQ(3)).status];
+      check('two quick lookups are served; the third in the hour is refused', statuses, [200, 200, 429]);
+      const refused = await (await evalQ(4)).json();
+      assert('...with a sentence that says the limit', /30|2 quick lookups/.test(refused.error) && /Try again/i.test(refused.error), JSON.stringify(refused));
+      check('the refused lookups made no Gemini calls', fake.hits() - before, 2);
+      check('a refused lookup sets Retry-After', Number((await evalQ(5)).headers.get('retry-after')) > 0, true);
+      const parse = await rawFetch(`${LK.base}/api/audit/parse-url`, { method: 'POST', headers: authed(t), body: JSON.stringify({ input: 'Poke House' }) });
+      check('brand detection counts toward the same limit', parse.status, 429);
+    }
+
+    // --- readiness: concurrent cold requests share one check
+    const RD = await startApp({});
+    if (RD) {
+      apps.push(RD);
+      const t = (await login(RD, 'rd@example.com')).body.token;
+      const before = fake.hits();
+      const all = await Promise.all(Array.from({ length: 15 }, () => rawFetch(`${RD.base}/api/audit/readiness`, { headers: authed(t) }).then((r) => r.json())));
+      check('15 simultaneous cold readiness requests all answer', all.every((r) => Array.isArray(r.checks)), true);
+      check('...and made ONE real Gemini call between them, not one each', fake.hits() - before, 1);
+    }
+
+    // --- a restart or deploy must not cost anyone their daily allowance
+    const orphanDir = tmp();
+    const O1 = await startApp({ DATA_DIR: orphanDir, USER_AUDITS_PER_DAY: '1', GLOBAL_AUDITS_PER_DAY: '0' });
+    if (O1) {
+      apps.push(O1);
+      const t = (await login(O1, 'orphan@example.com')).body.token;
+      mode = 'slow';
+      const started = await startAudit(O1, t, BIZ, { 'Idempotency-Key': 'orphan-click' });
+      check('the audit starts', started.status, 202);
+      await new Promise((r) => setTimeout(r, 400));
+      await stopApp(O1, 'SIGKILL');
+      mode = 'ok';
+      const O2 = await startApp({ DATA_DIR: orphanDir, USER_AUDITS_PER_DAY: '1', GLOBAL_AUDITS_PER_DAY: '0' }, O1.port);
+      if (O2) {
+        apps.push(O2);
+        const fresh = await startAudit(O2, t, BIZ);
+        check('after the crash the person can run their one audit of the day (the orphan was not counted)', fresh.status, 202);
+        const replay = await startAudit(O2, t, BIZ, { 'Idempotency-Key': 'orphan-click' });
+        check('replaying the orphaned click returns the same job', replay.body.jobId, started.body.jobId);
+        check('...and says what that job IS now (failed), not "running"', replay.body.status, 'error');
+      }
+    }
+
+    // --- the per-IP limits cannot be dodged by choosing your own X-Forwarded-For
+    const XF = await startApp({ AUTH_RATE_LIMIT_PER_MIN: '3' });
+    if (XF) {
+      apps.push(XF);
+      const codes: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const r = await rawFetch(`${XF.base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `9.9.9.${i}` }, body: JSON.stringify({ email: 'a@example.com', accessCode: 'wrong-code-000' }) });
+        codes.push(r.status);
+      }
+      check('with no proxy configured, a spoofed X-Forwarded-For does not buy more guesses', codes, [401, 401, 401, 429, 429, 429]);
+      const health = await (await rawFetch(`${XF.base}/api/health`)).json();
+      check('health reports that no proxy is trusted', health.trustProxyHops, 0);
+    }
+    const XT = await startApp({ AUTH_RATE_LIMIT_PER_MIN: '3', TRUST_PROXY: '1' });
+    if (XT) {
+      apps.push(XT);
+      const codes: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const r = await rawFetch(`${XT.base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `9.9.9.${i}` }, body: JSON.stringify({ email: 'a@example.com', accessCode: 'wrong-code-000' }) });
+        codes.push(r.status);
+      }
+      check('when a proxy IS declared (TRUST_PROXY=1), the address it reports is what is limited', codes, [401, 401, 401, 401]);
+      check('health reports the trusted hop count', (await (await rawFetch(`${XT.base}/api/health`)).json()).trustProxyHops, 1);
+    }
+
+    // --- a plain `node dist/server.cjs` with NODE_ENV unset and no config does not open the door
+    const NE = await startApp({ SESSION_SECRET: '', ACCESS_CODES: '', ALLOW_DEV_AUTH: '1' }, nextPort++, ['NODE_ENV']);
+    assert('a server started with NODE_ENV unset starts', !!NE);
+    if (NE) {
+      apps.push(NE);
+      const st = await (await rawFetch(`${NE.base}/api/audit/status`)).json();
+      check('it is unconfigured, not "dev mode"', st.auth.mode, 'unconfigured');
+      const l = await login(NE, 'anyone@evil.example', 'dev-access');
+      check('the publicly known dev code does not sign anyone in', l.status, 503);
+    }
+
+    // --- the public status endpoint does not leak filesystem paths or OS errors
+    const blocker = path.join(os.tmpdir(), `geo-e2e-blocker-${process.pid}`);
+    fs.writeFileSync(blocker, 'x');
+    tmpDirs.push(blocker);
+    const BK = await startApp({ DATA_DIR: path.join(blocker, 'sub') });
+    if (BK) {
+      apps.push(BK);
+      const st = await (await rawFetch(`${BK.base}/api/audit/status`)).json();
+      check('a database that cannot be opened is reported as non-durable', st.storage.durable, false);
+      assert('...with a note that names no path and no OS error', !/\/|ENOTDIR|ENOENT|geo-e2e-blocker/.test(st.storage.note), st.storage.note);
+      check('HEAD on the public status endpoint works (for HEAD-based monitors)', (await rawFetch(`${BK.base}/api/audit/status`, { method: 'HEAD' })).status, 200);
+    }
+
+    // --- the report says when every question names the brand
+    const BR = await startApp({});
+    if (BR) {
+      apps.push(BR);
+      const t = (await login(BR, 'br@example.com')).body.token;
+      const dflt = await startAudit(BR, t, { businessName: 'Poke House', domain: 'poke.house' });
+      const dd = await pollJob(BR, t, dflt.body.jobId);
+      check('default queries with no industry: all three name the brand, and the report says so', [dd.body.report.queriesNamingBrand, dd.body.report.queriesAttempted], [3, 3]);
+      const withIndustry = await startAudit(BR, t, { businessName: 'Poke House', domain: 'poke.house', industry: 'poke restaurants' });
+      const wd = await pollJob(BR, t, withIndustry.body.jobId);
+      check('with an industry, the discovery question is brand-neutral', [wd.body.report.queriesNamingBrand, wd.body.report.queriesAttempted], [2, 3]);
+      const own = await pollJob(BR, t, (await startAudit(BR, t, BIZ)).body.jobId);
+      check('a person\'s own category question does not name the brand', [own.body.report.queriesNamingBrand, own.body.report.queriesAttempted], [0, 1]);
     }
   } finally {
     for (const a of apps) a.proc.kill('SIGKILL');

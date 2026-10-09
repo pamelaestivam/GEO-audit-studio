@@ -28,9 +28,15 @@ You need:
    writes the qualitative analysis. The free tier has per-minute and per-day
    limits; enabling billing on the key is the one lever that raises them.
 2. **A decision about who gets in.** Access is by email + an **access code you
-   hand out**. Invent one code per person or per group (8+ characters,
-   unguessable). Anyone holding a code can sign in with any email, so treat a
-   code like a password and give each person their own.
+   hand out**, written as `label=code` pairs in `ACCESS_CODES`, e.g.
+   `anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa` (8+ characters, no `,` or `=` inside a code).
+   **How privacy works - read this:** saved audits belong to the pair
+   *(label, email)*. Two people on different codes cannot see each other's audits
+   even if one types the other's email. But **anyone holding a code can sign in
+   with any email *under that code*** and so see audits saved by others on the
+   same code. Give each person who needs private audits their **own** code.
+   Rotating a code (same label, new code) signs that person out but keeps their
+   audits; deleting the pair ends their access.
 3. **A host account** - Render (steps below) or any container host.
 
 Optional: a Perplexity API key (cheapest second engine: search is built into
@@ -46,7 +52,7 @@ say if a field needs adjusting.)*
 1. Render dashboard -> **New** -> **Blueprint** -> connect this GitHub
    repository -> branch `main`. Render reads `render.yaml`.
 2. When prompted for the secrets (`sync: false` values), enter:
-   - `ACCESS_CODES` - e.g. `anna-7Kx9mQ2v,ben-4Tz8pL1w` (comma-separated)
+   - `ACCESS_CODES` - e.g. `anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa`
    - `GEMINI_API_KEY`
    - optionally `PERPLEXITY_API_KEY`
    `SESSION_SECRET` is generated for you.
@@ -66,7 +72,8 @@ docker build -t geo-audit-studio .
 docker run -d --name geo -p 3000:3000 \
   -v geo-data:/data \
   -e SESSION_SECRET="$(openssl rand -hex 32)" \
-  -e ACCESS_CODES="anna-7Kx9mQ2v,ben-4Tz8pL1w" \
+  -e ACCESS_CODES="anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa" \
+  -e TRUST_PROXY=1 \   # only if a reverse proxy (TLS terminator) is in front; omit when exposed directly
   -e GEMINI_API_KEY="..." \
   geo-audit-studio
 ```
@@ -76,9 +83,11 @@ The image defaults `DATA_DIR=/data`; **the volume is what makes audits survive**
 (the host's proxy, Caddy, Cloudflare); the app itself speaks plain HTTP and
 trusts one proxy hop for client IPs.
 
-CI builds this image and smoke-tests the running container on every push, so it
-is checked in GitHub's environment even though it could not be built where it
-was written.
+CI builds this image, runs it with a volume, smoke-tests it, restarts it on the
+same volume and smoke-tests again. **That job exists in this repository but its
+first run is the first time the Dockerfile has ever been built** - it could not
+be built where it was written (Docker CLI present, no daemon). Trust the image
+once that job is green on your repository.
 
 ## 5. Environment variables
 
@@ -86,7 +95,10 @@ was written.
 |---|---|---|
 | `GEMINI_API_KEY` | yes | Answers queries and writes the analysis |
 | `SESSION_SECRET` | yes (production) | Signs sessions. 32+ characters. Rotating it signs everyone out |
-| `ACCESS_CODES` | yes (production) | Comma-separated invite codes, 8+ chars each. Removing one ends the sessions it created |
+| `ACCESS_CODES` | yes (production) | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
+| `TRUST_PROXY` | no (0) | Reverse proxies in front of the server (1 on Render/Fly/nginx). **Leave at 0 when exposed directly**: otherwise anyone can send their own `X-Forwarded-For` and dodge every per-IP limit. Too low behind a proxy = all visitors throttled together (safe, but wrong) |
+| `USER_LOOKUPS_PER_HOUR` | no (30) | Brand detection, query suggestions and added queries per person per hour (per process; resets on restart) |
+| `ALLOW_DEV_AUTH` | no | Local development only (`npm run dev` sets it). Never honoured in production, and only from the same machine |
 | `DATA_DIR` | yes for durability | Directory for the SQLite file. Unset = nothing is saved |
 | `PERPLEXITY_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | no | Adds an engine. Each multiplies per-audit spend |
 | `GEMINI_MODEL` etc. | no | Override a model id without a code change |
@@ -97,9 +109,11 @@ was written.
 | `RATE_LIMIT_PER_MIN` / `AUTH_RATE_LIMIT_PER_MIN` | no (30 / 10) | Per-IP request limits. `0` disables |
 | `SESSION_TTL_HOURS` | no (168) | Session length |
 
-**If `SESSION_SECRET` or `ACCESS_CODES` is missing in production the server still
-starts but refuses everyone, and says which variable to set** (on the sign-in
-page and in `GET /api/audit/status`). It never falls open.
+**If `SESSION_SECRET` or `ACCESS_CODES` is missing the server still starts but
+refuses everyone, and says which variable to set** (on the sign-in page and in
+`GET /api/audit/status`). It never falls open - including on a plain
+`npm start` with `NODE_ENV` unset (the built server defaults to production) and
+with `ALLOW_DEV_AUTH=1` set (ignored in production).
 
 ## 6. Verify the deployment (do not skip)
 
@@ -107,7 +121,7 @@ From any machine with Node 22:
 
 ```
 node scripts/smoke.mjs https://YOUR-URL
-node scripts/smoke.mjs https://YOUR-URL --email you@example.com --code anna-7Kx9mQ2v
+node scripts/smoke.mjs https://YOUR-URL --email you@example.com --code 7Kx9mQ2vLp
 ```
 
 The first form checks what a stranger sees and that protected routes refuse a
@@ -129,16 +143,24 @@ on a host that cannot keep the process alive (see `TECH_DEBT.md` 1.4c).
 
 ## 7. Running it
 
-- **Invite someone:** add a code to `ACCESS_CODES`, redeploy, send them the URL,
-  their email and the code. **Remove someone:** delete their code and redeploy -
-  their session ends on its next request.
+- **Invite someone:** add a `label=code` pair to `ACCESS_CODES`, redeploy, send
+  them the URL, their email and the code. **Remove someone:** delete their pair
+  and redeploy - their session ends on its next request (their saved audits stay
+  in the database, inaccessible, until you remove them).
 - **Logs:** one JSON line per API request (`id`, `path`, `status`, `ms`, `user`)
   to stdout. Every response carries `X-Request-Id`, so a reported failure can be
   found. Request bodies, queries and tokens are never logged.
-- **Spend control:** per-person and global daily audit limits (section 5) plus
-  the concurrency cap. An audit that collected no evidence is not counted
-  against anyone. Check real usage in the Gemini dashboard
-  (https://aistudio.google.com/apikey) - the app cannot see your quota.
+- **Spend control:** per-person and global *daily audit* limits and a
+  concurrency cap (all stored, so they survive restarts), plus a per-person
+  *hourly lookup* limit and per-IP request limits (in memory, so they reset on
+  restart). An audit that collected no evidence, or was cut off by a restart or
+  deploy, is not counted against anyone. **There is no spend limit on your
+  Gemini key itself** - set one in Google's console, and check real usage there
+  (https://aistudio.google.com/apikey); the app cannot see your quota.
+- **Security you should know about:** the session token is kept in the browser's
+  `localStorage` (so a script injected into the page could read it) and the app
+  sets no `Content-Security-Policy` yet. Sessions expire (7 days by default) and
+  end when their code is removed.
 - **Backups:** everything is in `DATA_DIR/geo-audit.sqlite` (plus `-wal`/`-shm`
   while running). Copy it with `sqlite3 geo-audit.sqlite ".backup backup.sqlite"`
   or use your host's disk snapshots. Nothing in this repo schedules backups.
@@ -152,13 +174,17 @@ on a host that cannot keep the process alive (see `TECH_DEBT.md` 1.4c).
 
 ## 8. What has and has not been verified
 
-**Verified by running it** (`npm test`, 600+ checks, run in CI on every push):
+**Verified by running it** (`npm test`, 700+ checks; CI runs it on every push):
 sign-in and its refusals; every spending route needing a session; ownership
-between users; audits and jobs surviving a restart, including a SIGKILL mid-
-audit; daily budgets; unconfigured production refusing everyone; the compiled
-backend not being downloadable; the smoke script passing a good deployment and
-failing a bad one; the full UI in a real browser (desktop and phone); the
-server running from a clean directory with only production dependencies.
+between users and between codes; audits and jobs surviving a restart, including
+a SIGKILL mid-audit; daily and hourly budgets; per-IP limits not being
+spoofable; unconfigured production (and `NODE_ENV` unset) refusing everyone; the
+compiled backend not being downloadable; the smoke script passing a good
+deployment and failing a bad one; the full UI in a real browser (desktop and
+phone, including a returning user with a long brand name); `npm run dev` reading
+`.env.local` (checked by hand); and - by `scripts/prod-install-check.sh` - the
+built server running from a clean directory with only production dependencies.
+Each new test was also shown to go red when its fix is reverted.
 
 **Not verified - do these yourself, they cannot be checked from the authoring
 environment:**
@@ -173,8 +199,7 @@ environment:**
 - **The ChatGPT, Perplexity and Claude adapters** have never seen a live
   response (`TECH_DEBT.md` 2.8). Enable one, run an audit, and read the evidence
   before relying on it.
-- **`render.yaml` on Render**, and the **Dockerfile** until CI has run it once
-  (CI builds it on GitHub's runners).
+- **`render.yaml` on Render**, and the **Dockerfile** until CI has run it once.
 - **Prices, free-tier limits and Render plan names** - they change; check the
   providers' pages.
 

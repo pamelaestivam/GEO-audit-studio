@@ -2,6 +2,7 @@ import React from 'react';
 import { Download, Printer, Copy, Check, Sparkles, ShieldCheck, Globe, Building2 } from 'lucide-react';
 import { AuditReport } from '../types';
 import {
+  brandedQueryCaution,
   describeAccuracy,
   formatPercent,
   formatScore,
@@ -47,6 +48,8 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   if (measured && audit.narrativeAvailable === false) {
     caveats.push('Accuracy, omissions and remediation were NOT assessed (the analysis step failed).');
   }
+  const branded = brandedQueryCaution(audit);
+  if (branded) caveats.push(branded);
   if (isLowSample(audit)) {
     caveats.push(`Small sample: only ${audit.observationsWithEvidence} captured answer(s). Indicative, not a stable rate.`);
   }

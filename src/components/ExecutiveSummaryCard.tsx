@@ -3,6 +3,7 @@ import { ShieldCheck, AlertTriangle, HelpCircle, TrendingUp, CheckCircle2, Globe
 import { AuditReport } from '../types';
 import { TabType } from './Sidebar';
 import {
+  brandedQueryCaution,
   describeAccuracy,
   findingCounts,
   formatPercent,
@@ -30,6 +31,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
   const accuracy = describeAccuracy(audit);
   const counts = findingCounts(audit);
   const basis = visibilityBasis(audit);
+  const brandedCaution = brandedQueryCaution(audit);
   const assessed = wasAssessed(audit);
   // A failed audit gets a neutral ring: red/amber/green is a verdict on the
   // brand, and there is no verdict to give.
@@ -184,6 +186,9 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
               Share of captured answers that name your brand.
               {basis && <span className="block text-slate-300 font-medium mt-0.5">{basis}</span>}
             </p>
+            {brandedCaution && (
+              <p className="text-[11px] text-amber-300/90 mt-1 max-w-[220px] leading-tight">{brandedCaution}</p>
+            )}
             {isLowSample(audit) && (
               <p className="text-[11px] text-amber-300/90 mt-1 max-w-[200px] leading-tight">
                 Only {audit.observationsWithEvidence} {audit.observationsWithEvidence === 1 ? 'answer' : 'answers'}: indicative, not a stable rate. Add queries to firm it up.

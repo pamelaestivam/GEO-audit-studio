@@ -166,6 +166,19 @@ export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
   return kept;
 }
 
+/**
+ * Whether the QUESTION ITSELF names the brand. A query like "How much does
+ * Poke House cost?" will get an answer about Poke House whatever the engine
+ * thinks of it, so it measures reputation, not discovery. If every query in an
+ * audit names the brand, a visibility of 100% is close to guaranteed by
+ * construction and says nothing about whether buyers who do NOT already know
+ * the brand are pointed to it. The report surfaces this instead of letting a
+ * perfect score pass for a finding.
+ */
+export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boolean {
+  return findFirstMention(queryText, matcher) >= 0;
+}
+
 /** True when the brand's own domain appears among the cited sources. */
 export function isCitedAsSource(citations: QueryEvidence['citations'], matcher: BrandMatcher): boolean {
   if (!matcher.domain) return false;
