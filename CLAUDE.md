@@ -112,6 +112,8 @@ protocol described there. Decisions land in `docs/DECISIONS.md`. Product
 requirements, including what's genuinely known versus still open (never
 fabricated to fill a gap), live in `docs/PRD.md` — read it before
 prioritizing the backlog in `TECH_DEBT.md` §3.
+The latest adversarial audit, its 20-item roadmap and the decisions awaiting
+the owner are in `docs/MVP_AUDIT.md` - read it before choosing what to build.
 Engineering process (design notes, review bar, testing pyramid, release
 gates) is in `docs/ENGINEERING_STANDARDS.md` — it makes this file's
 "working dynamic" section repeatable as a checklist rather than tribal
@@ -249,6 +251,13 @@ have to be rediscovered from scratch, not so it can be skipped.
   it does not fall back to serving the frontend for a non-API path; also
   proves the Render/local long-running path is unchanged (needs a current
   `dist/`)
+- `npx tsx test/mvpHardeningE2E.test.ts` — spawns the real built server against
+  a fake Gemini endpoint with switchable failure modes; proves vendor discovery
+  precision end to end, that a failed analysis step is "not assessed" (not 100%
+  accurate), that a failed audit carries no fabricated findings, and the rate
+  limit / concurrency cap / JSON error behaviour (needs a current `dist/`)
+- `npx tsx test/reportView.test.ts`, `npx tsx test/rateLimit.test.ts` — pure
+  unit checks for how headline numbers are presented and for the per-IP limiter
 - `npx tsx test/contract.test.ts` — full server contract checks (needs a
   current `dist/`)
 

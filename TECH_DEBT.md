@@ -209,6 +209,23 @@ directly (which every other test in this file does) cannot detect this
 failure mode at all - it bypasses Vercel's own routing layer entirely,
 which is exactly where this bug lived.
 
+### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured)
+
+Found in the 2026-10-09 MVP audit (`docs/MVP_AUDIT.md` A1). `POST
+/api/audit/run` answers `202` and then keeps working after the response;
+`GET /api/audit/job/:id` reads the result from a process-global `Map`. On a
+serverless host nothing guarantees the function keeps executing after its
+response is sent, a poll can land on a different instance than the submit, and
+a default three-query audit takes at least ~26s of deliberate Gemini pacing.
+The expected symptom is the "That audit is no longer available" message on a
+healthy audit, intermittently.
+
+**Not measured** - this environment has no Vercel access. **To confirm:** run
+one default audit on the live site and watch for that message; in Vercel ->
+Logs check the function duration and any "Task timed out". If it reproduces,
+the fix is not another routing tweak - it is item 1 in the roadmap (an
+always-on service, or a real queue), decided by the owner (D1).
+
 ### 1.5 Set up auth with Google (Google Cloud Console) (tracked, not started)
 
 Raised in the same session, alongside 2.2 (auth is currently not real
@@ -289,6 +306,33 @@ live automation. Real scheduling still needs 3.1 (persistence) and 3.2
 (alerting) built first - this only stops the UI from claiming it already
 exists.
 
+### 2.1b A failed analysis step was reported as "100% accuracy" (fixed)
+
+If evidence was collected but the narrative call failed, `inaccuracies` was
+`[]`, so the report showed 100% fact accuracy, 0 inaccuracies and "No
+Inaccuracies Found - all mentions were factually accurate" - failed work
+counted as a negative finding (`CLAUDE.md`, "Denominators"). The report now
+carries `narrativeAvailable` / `narrativeNote`; accuracy is `null`; the
+summary card, the three qualitative tabs and the export all say "Not assessed".
+A fully failed audit no longer ships a placeholder Schema.org task (with an
+invented `"price": "0"`), a made-up omission, `accuracyRate: 0`, or every
+engine marked `omitted` - it carries empty findings, only the configured
+engines, status "no data" and the per-engine reason. One module,
+`src/reportView.ts`, now decides how headline numbers are presented, so the
+card, export and sidebar cannot disagree again.
+
+Also fixed in the same pass because they were the same defect in different
+places: the "Share of Voice" tile described visibility; the Visibility Index
+claimed to include accuracy; one answer rendered as a green 100/100 with no
+sample size; ticking a remediation checkbox raised the headline score;
+"Add & Audit Query" recomputed headline metrics with a formula that counted
+failed lookups as appearances; blank offerings/audience were filled with guesses;
+and the sidebar said "Continuous Sweeps - Active" for a feature that schedules
+nothing.
+
+**Still imperfect:** `accuracyRate` is still a model judgement with no ground
+truth (2.5) - it is now labelled "indicative" everywhere it appears.
+
 ### 2.2 Authentication is not authentication (high)
 
 `/api/auth/login` **auto-registers any email/password it has not seen**, so
@@ -299,6 +343,18 @@ timestamp string that nothing checks.
 
 Anyone with the URL has full access. Do not put this in front of paying clients
 without replacing it (real user table, hashed passwords, signed sessions).
+
+**2026-10-09 update (partly fixed; the server side is still open).** Confirmed
+by `curl`: a never-seen email with any password returns a user and a token, and
+`POST /api/audit/run` with no credentials starts spending quota. The
+*client* also made it worse - `AuthPage` caught every sign-in failure
+(wrong password, server down) and logged the person in anyway with a locally
+invented user, so a wrong password reached the dashboard (reproduced in a real
+browser). That fallback is removed, the false "OAuth & encrypted sessions"
+and "password reset email sent" copy is corrected, and the dead "Remember me"
+box is gone. What remains: the token is checked by nothing, passwords are
+plaintext, a demo credential is in source, and audits are unowned. That is
+roadmap items 4 and 15, pending D3 in `docs/MVP_AUDIT.md`.
 
 ### 2.3 Audit jobs live in memory (medium)
 
@@ -423,6 +479,23 @@ makes a normal audit roughly 8 seconds slower. It is a fixed guess at the
 limit, not a measured one; a real fix reads the provider's own rate-limit
 headers, or the account enables billing (1.1) and the question stops mattering.
 
+### 2.3d Nothing limited how fast, or how many, one client could spend (fixed per process)
+
+Every `POST /api/audit/*` spends the shared quota and was open to anyone with
+the URL. Added: a per-IP fixed-window limit (`RATE_LIMIT_PER_MIN`, default 30,
+0 disables - `src/rateLimit.ts`), a cap on concurrent audits
+(`MAX_CONCURRENT_AUDITS`, default 2 - a replayed submit under the same
+`Idempotency-Key` is never refused by it), a reaper for jobs stuck "running"
+past 15 minutes (they used to hold a slot forever), a 100kb body limit, and
+length/type bounds on `parse-url`, `generate-queries` and `evaluate-query`
+(only `/run` had them). Proved against the real binary in
+`test/mvpHardeningE2E.test.ts`.
+
+**Still imperfect:** the counters are per process. On a serverless host each
+instance has its own, so the effective limit is looser than configured; the
+real fix is the same shared store as 2.1/2.3 (roadmap item 11). Limits are by
+IP, not by user, because there are no real users yet (2.2).
+
 ### 2.4 Render free tier sleeps (medium - partially mitigated)
 
 First request after ~15 minutes idle takes 50 s or more, and the very first
@@ -493,6 +566,35 @@ exactly `N + 1` for `N` queries, not `N + 3` (query generation, vendor
 discovery, and narrative all used to be separate calls on top of the
 per-query searches).
 
+### 2.6b Vendor discovery was dominated by capitalised filler (fixed, with a recall cost)
+
+2.6a removed the vendor-extraction LLM call and documented the cost as lost
+*recall*. Measured in the 2026-10-09 audit, the real cost was lost
+*precision*: a realistic markdown answer about Austin poke restaurants
+produced 15 "vendors", 13 of them junk (`Monday`, `Pricing`, `Key`, `Why`,
+`Austin`, `Yelp`, `Ask Siri`). The client's share of voice - divided by 16
+instead of 3 - read 6% instead of 33%, and the "Rivals the engines named that
+you did not list" card named `Pricing`, `Key` and `Fresh`. A fabricated rival
+is exactly the failure `CLAUDE.md` warns about, and this one was introduced by
+an optimisation that was reviewed for its failure mode and still got it wrong.
+
+`extractCandidateVendors` now requires a name to be in a structural position
+(bold, list head, heading, table cell) **or** be named at least twice, and
+drops weekdays, months, label words ("Pricing", "Key"), generic table headers,
+and review sites / search engines / the answer engines themselves (those are
+sources, and already appear in the Citation Source Map). `Monday.com` survives
+the weekday filter via its domain suffix; `Lowe's` keeps its apostrophe-s.
+Tests in `test/analysis.test.ts` pin each of these, including the original
+answer.
+
+**Recall cost, stated plainly:** a vendor named exactly once, in unformatted
+prose, is no longer discovered. That slightly flatters the client; the user can
+add the rival as a tracked competitor and it is then always scored. The
+stoplists are hand-maintained (like `COMMON_WORD_BRANDS`, 2.8). The durable fix
+is a labelled golden set of real answers with precision/recall asserted in CI,
+and an explicit decision on whether one *batched* extraction call per audit is
+worth its cost (roadmap item 6).
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer
@@ -513,9 +615,8 @@ client's rank. Recall is unmeasured.
 - `untrackedRivals` is computed and returned, and those rivals do appear in
   Competitor Intelligence, but nothing labels them as *discovered* rather than
   tracked — the most interesting part of that finding is not called out.
-- `generateSynthesizedAudit` still emits placeholder remediation text. It is
-  only reachable on the degraded path, which is now clearly banner-flagged, but
-  the content itself is invented and should ideally be empty.
+- ~~`generateSynthesizedAudit` still emits placeholder remediation text.~~ Fixed
+  2026-10-09, see 2.1b: the failed-audit report now carries no findings.
 - The provider adapters are untested against real API responses — their parsers
   are written defensively but have never seen live payloads from OpenAI,
   Perplexity or Anthropic. This is the largest remaining untested surface.
