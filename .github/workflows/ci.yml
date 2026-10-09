@@ -65,18 +65,30 @@ jobs:
         # No credentials: checks everything a stranger sees, that protected
         # routes refuse a stranger, and that storage on the volume is durable.
         run: node scripts/smoke.mjs http://127.0.0.1:3000
-      - name: The volume really holds the database
-        # The server creates its SQLite file at boot; seeing it in the volume
-        # (from a different container) proves DATA_DIR is what is persisted.
-        run: docker run --rm -v geo-data:/data alpine ls -la /data | grep geo-audit.sqlite
-      - name: Restart on the same volume and smoke test again
+      - name: Write real state, restart, and prove it survived
+        # Deep readiness writes a probe row to the store BEFORE it calls Gemini,
+        # so signing in and calling it leaves durable state even though the fake
+        # key makes the Gemini check fail. We then restart the container and read
+        # the row back from the volume with a separate container.
         run: |
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:3000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","accessCode":"ci-access-code-1"}' | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).token))")
+          curl -sS http://127.0.0.1:3000/api/audit/readiness -H "Authorization: Bearer $TOKEN" > /dev/null
           docker restart app
           for i in $(seq 1 30); do
             curl -fsS http://127.0.0.1:3000/api/health && break
             sleep 1
           done
-          node scripts/smoke.mjs http://127.0.0.1:3000
+          docker run --rm -v geo-data:/data node:22-slim node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync('/data/geo-audit.sqlite');
+            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
+            console.log('probe rows surviving the restart:', n);
+            process.exit(n >= 1 ? 0 : 1);
+          "
+      - name: Smoke test the restarted container
+        run: node scripts/smoke.mjs http://127.0.0.1:3000
       - name: Container logs
         if: always()
         run: docker logs app

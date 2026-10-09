@@ -27,6 +27,8 @@ export interface StoredJob {
   owner: string;
   /** The client's Idempotency-Key for the click that started it, if any. */
   idemKey?: string;
+  /** What the daily budget is counted against (the access code's label). Defaults to owner. */
+  budgetKey?: string;
   status: JobStatus;
   startedAt: number;
   finishedAt?: number;
@@ -79,10 +81,10 @@ export interface Store {
   ): Promise<void>;
   /** Jobs still running that started within `maxAgeMs`. */
   countRunning(maxAgeMs: number, now?: number): Promise<number>;
-  /** Jobs started at or after `sinceMs`, by one owner or (owner omitted) everyone. */
-  countJobsSince(sinceMs: number, owner?: string): Promise<number>;
-  /** Start time of the oldest job at or after `sinceMs`, for "try again at". */
-  oldestJobSince(sinceMs: number, owner?: string): Promise<number | null>;
+  /** Billable jobs started at or after `sinceMs` under one budget key, or (omitted) everyone's. */
+  countJobsSince(sinceMs: number, budgetKey?: string): Promise<number>;
+  /** Start time of the oldest such job, for "try again at". */
+  oldestJobSince(sinceMs: number, budgetKey?: string): Promise<number | null>;
   /** Mark running jobs older than `maxAgeMs` as failed. Returns how many. */
   failStuck(maxAgeMs: number, reason: string, now?: number): Promise<number>;
   /** Mark EVERY running job failed - run once at boot, when none can still be alive. */
@@ -136,7 +138,7 @@ export class MemoryStore implements Store {
     if (job.idemKey && (await this.findJobByKey(job.owner, job.idemKey))) {
       throw new Error('duplicate idempotency key');
     }
-    this.jobs.set(job.id, { ...job, billable: job.billable ?? true });
+    this.jobs.set(job.id, { ...job, billable: job.billable ?? true, budgetKey: job.budgetKey ?? job.owner });
   }
   async getJob(id: string) {
     const j = this.jobs.get(id);
@@ -160,14 +162,14 @@ export class MemoryStore implements Store {
   async countJobsSince(sinceMs: number, owner?: string) {
     let n = 0;
     for (const j of this.jobs.values()) {
-      if (j.startedAt >= sinceMs && j.billable !== false && (!owner || j.owner === owner)) n++;
+      if (j.startedAt >= sinceMs && j.billable !== false && (!owner || j.budgetKey === owner)) n++;
     }
     return n;
   }
   async oldestJobSince(sinceMs: number, owner?: string) {
     let oldest: number | null = null;
     for (const j of this.jobs.values()) {
-      if (j.startedAt >= sinceMs && j.billable !== false && (!owner || j.owner === owner)) {
+      if (j.startedAt >= sinceMs && j.billable !== false && (!owner || j.budgetKey === owner)) {
         if (oldest === null || j.startedAt < oldest) oldest = j.startedAt;
       }
     }
@@ -240,7 +242,7 @@ export class MemoryStore implements Store {
 // ---------------------------------------------------------------------------
 
 /** Each entry upgrades the schema by one version; never edit an applied one. */
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE jobs (
     id TEXT PRIMARY KEY,
@@ -267,6 +269,10 @@ const MIGRATIONS: string[] = [
   `,
   // 2: failed-without-evidence jobs must not consume the daily budget.
   `ALTER TABLE jobs ADD COLUMN billable INTEGER NOT NULL DEFAULT 1;`,
+  // 3: budgets are counted per access code (label), not per claimed email.
+  `ALTER TABLE jobs ADD COLUMN budget_key TEXT;
+   UPDATE jobs SET budget_key = CASE WHEN instr(owner, '|') > 0 THEN substr(owner, 1, instr(owner, '|') - 1) ELSE owner END;
+   CREATE INDEX jobs_budget_started ON jobs(budget_key, started_at);`,
 ];
 
 type Row = Record<string, any>;
@@ -322,7 +328,7 @@ export class SqliteStore implements Store {
   async createJob(job: StoredJob) {
     this.db
       .prepare(
-        'INSERT INTO jobs (id, owner, idem_key, status, started_at, finished_at, progress, result, error, billable) VALUES (?,?,?,?,?,?,?,?,?,?)'
+        'INSERT INTO jobs (id, owner, idem_key, status, started_at, finished_at, progress, result, error, billable, budget_key) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
       )
       .run(
         job.id,
@@ -334,7 +340,8 @@ export class SqliteStore implements Store {
         job.progress === undefined ? null : JSON.stringify(job.progress),
         job.result === undefined ? null : JSON.stringify(job.result),
         job.error ?? null,
-        job.billable === false ? 0 : 1
+        job.billable === false ? 0 : 1,
+        job.budgetKey ?? job.owner
       );
   }
   async getJob(id: string) {
@@ -364,12 +371,12 @@ export class SqliteStore implements Store {
   }
   async countJobsSince(sinceMs: number, owner?: string) {
     return owner
-      ? this.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= ? AND owner = ? AND billable = 1').get(sinceMs, owner).n
+      ? this.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= ? AND budget_key = ? AND billable = 1').get(sinceMs, owner).n
       : this.db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= ? AND billable = 1').get(sinceMs).n;
   }
   async oldestJobSince(sinceMs: number, owner?: string) {
     const r = owner
-      ? this.db.prepare('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= ? AND owner = ? AND billable = 1').get(sinceMs, owner)
+      ? this.db.prepare('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= ? AND budget_key = ? AND billable = 1').get(sinceMs, owner)
       : this.db.prepare('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= ? AND billable = 1').get(sinceMs);
     return r.t ?? null;
   }

@@ -7,7 +7,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { MemoryStore, SqliteStore, openStore, type Store, type StoredJob } from '../src/store';
+import { MIGRATIONS, MemoryStore, SqliteStore, openStore, type Store, type StoredJob } from '../src/store';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -41,6 +41,12 @@ const report = (id: string, owner = 'x', createdAt = '2026-10-09T10:00:00.000Z',
   queriesTested: [{ id: 'q1' }, { id: 'q2' }],
   ...extra,
 });
+
+async function s5Default(make: () => Promise<Store>) {
+  const st = await make();
+  await st.createJob(job({ id: 'd1', owner: 'solo@example.com' }));
+  return (await st.getJob('d1'))?.budgetKey ?? (await st.countJobsSince(0, 'solo@example.com') === 1 ? 'solo@example.com' : 'MISSING');
+}
 
 async function suite(label: string, make: () => Promise<Store>) {
   const s = await make();
@@ -102,6 +108,15 @@ async function suite(label: string, make: () => Promise<Store>) {
   check(t('no jobs means no oldest'), await s3.oldestJobSince(since, 'nobody'), null);
   check(t('pruning drops old jobs only'), await s3.pruneJobs(NOW - 24 * 3600_000), 1);
 
+  // Budgets are per access code (budget key), not per claimed email.
+  const s6 = await make();
+  await s6.createJob(job({ id: 'e1', owner: 'anna|a@example.com', budgetKey: 'anna', startedAt: NOW - 1000 }));
+  await s6.createJob(job({ id: 'e2', owner: 'anna|b@example.com', budgetKey: 'anna', startedAt: NOW - 500 }));
+  await s6.createJob(job({ id: 'e3', owner: 'ben|a@example.com', budgetKey: 'ben', startedAt: NOW - 400 }));
+  check(t('changing the email under one code does not reset the budget'), await s6.countJobsSince(NOW - 5000, 'anna'), 2);
+  check(t('another code is counted separately'), await s6.countJobsSince(NOW - 5000, 'ben'), 1);
+  check(t('the budget key defaults to the owner when none is given'), (await s5Default(make)), 'solo@example.com');
+
   // A job that failed without spending anything must not use up the budget.
   const s5 = await make();
   await s5.createJob(job({ id: 'p1', owner: 'u1', startedAt: NOW - 1000 }));
@@ -137,6 +152,12 @@ async function suite(label: string, make: () => Promise<Store>) {
   await s4.saveAudit('u1', report('a2', 'u1', '2026-10-03T00:00:00.000Z', { geoVisibilityScore: 99 }));
   check(t('saving an id again replaces it rather than duplicating'), [(await s4.listAudits('u1')).length, (await s4.getAudit('u1', 'a2')).geoVisibilityScore], [1, 99]);
   check(t('limit is honoured'), (await s4.listAudits('u1', 0)).length, 0);
+}
+
+let tmpRoot: string | null = null;
+function dir0() {
+  if (!tmpRoot) tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'geo-store-mig-'));
+  return tmpRoot;
 }
 
 async function main() {
@@ -180,11 +201,28 @@ async function main() {
   check('...without leaking the filesystem path or the OS error (it is shown on a public endpoint)', /geo-blocker|ENOTDIR|ENOENT|\//.test(unwritable.info().note || ''), false);
   check('...while the server log does get the detail', logged.some((m) => /geo-blocker/.test(m) && /ENOTDIR|ENOENT/.test(m)), true);
 
+  // --- migration 3 backfills budget keys on a database created before it existed
+  {
+    const old = path.join(dir0(), 'old.sqlite');
+    const raw = new DatabaseSync(old);
+    raw.exec(MIGRATIONS[0]);
+    raw.exec(MIGRATIONS[1]);
+    raw.exec('PRAGMA user_version = 2');
+    raw.prepare("INSERT INTO jobs (id, owner, status, started_at) VALUES ('m1','anna|x@example.com','done',1),('m2','plain@example.com','done',2)").run();
+    raw.close();
+    const upgraded = new SqliteStore(DatabaseSync, old);
+    check('an existing database upgrades in place', (upgraded as any).db.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
+    check('...and a labelled owner is backfilled with its label', await upgraded.countJobsSince(0, 'anna'), 1);
+    check('...and an unlabelled owner with itself', await upgraded.countJobsSince(0, 'plain@example.com'), 1);
+    upgraded.close();
+  }
+
   // --- schema is versioned, so a later migration has something to build on
   const versioned = new SqliteStore(DatabaseSync, ':memory:');
   const v = (versioned as any).db.prepare('PRAGMA user_version').get().user_version;
   check('the schema version is recorded', v >= 1, true);
 
+  if (tmpRoot) fs.rmSync(tmpRoot, { recursive: true, force: true });
   console.log(failures === 0 ? '\nAll store checks passed.' : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

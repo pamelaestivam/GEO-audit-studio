@@ -131,7 +131,7 @@ them) - run a new audit to include it.
 | Message | Meaning |
 |---|---|
 | "Answer engine temporarily unavailable" | The shared quota is known to be used up. The message says when it resets; wait, or the operator can enable billing on the key. |
-| "You have used your N audits for the last 24 hours" | Your daily allowance. It says when the next one frees up. |
+| "You have used your N audits for the last 24 hours" | Your daily allowance, counted **per access code** (so people sharing a code share it). It says when the next one frees up. |
 | "This service is already running N audits" | Audits share one quota; try again in a minute or two. |
 | "You are sending audit requests faster than this service allows" | Slow down for the stated seconds. |
 | "Your session has expired" / "Your access has been withdrawn" | Sign in again / ask whoever invited you. |

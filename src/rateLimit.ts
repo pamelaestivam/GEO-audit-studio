@@ -76,3 +76,23 @@ export class FixedWindowLimiter {
     return this.windows.size;
   }
 }
+
+/**
+ * The key a client is limited under. An IPv4 address is its own key. An IPv6
+ * host controls a whole /64, so keying on the full address lets it rotate
+ * through 2^64 identities - filling the table (see MAX_KEYS) or dodging a
+ * limit - so IPv6 clients are limited by their /64.
+ */
+export function limiterKey(ip: string | undefined): string {
+  if (!ip) return 'unknown';
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  if (!ip.includes(':')) return ip;
+  // Expand "::" so the first four groups are well defined, then keep them.
+  const [head, tail = ''] = ip.split('::');
+  const headParts = head ? head.split(':') : [];
+  const tailParts = tail ? tail.split(':') : [];
+  const missing = ip.includes('::') ? Math.max(0, 8 - headParts.length - tailParts.length) : 0;
+  const groups = [...headParts, ...Array(missing).fill('0'), ...tailParts];
+  return `${groups.slice(0, 4).map((g) => g.toLowerCase().replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}

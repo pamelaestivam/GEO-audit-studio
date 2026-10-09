@@ -7,6 +7,8 @@ import {
   DEV_ACCESS_CODE,
   bearerToken,
   checkAccessCode,
+  devLoginAllowed,
+  publicUser,
   isLoopbackAddress,
   describeAuthFailure,
   issueToken,
@@ -65,7 +67,7 @@ check('whitespace inside is refused', normaliseEmail('a b@example.com'), null);
 check('no TLD is refused', normaliseEmail('a@b'), null);
 check('non-strings are refused', normaliseEmail({ toString: () => 'a@b.com' }), null);
 check('absurd length is refused', normaliseEmail('a'.repeat(300) + '@example.com'), null);
-check('identity is derived from the label and email', userFromEmail('sarah.j@example.com', 'anna'), { id: userFromEmail('sarah.j@example.com', 'anna').id, email: 'sarah.j@example.com', name: 'Sarah J', owner: 'anna|sarah.j@example.com' });
+check('identity is derived from the label and email', userFromEmail('sarah.j@example.com', 'anna'), { id: userFromEmail('sarah.j@example.com', 'anna').id, email: 'sarah.j@example.com', name: 'Sarah J', owner: 'anna|sarah.j@example.com', budgetKey: 'anna' });
 check('the same email under another label is a different owner and id', [userFromEmail('x@y.com', 'anna').owner === userFromEmail('x@y.com', 'ben').owner, userFromEmail('x@y.com', 'anna').id === userFromEmail('x@y.com', 'ben').id], [false, false]);
 check('the same email is the same id', userFromEmail('x@y.com').id === userFromEmail('x@y.com').id, true);
 check('different emails are different ids', userFromEmail('x@y.com').id === userFromEmail('z@y.com').id, false);
@@ -133,7 +135,8 @@ check('a token cannot claim another label (the label comes from configuration)',
   return verifyToken(`${forged}.${annaTok.split('.')[1]}`, labelled, NOW).ok;
 })(), false);
 check('an invalid label is a configuration problem', loadAuthConfig({ ...prod, ACCESS_CODES: 'bad label=alpha-code-1' }).mode, 'unconfigured');
-check('a duplicate code is collapsed', loadAuthConfig({ ...prod, ACCESS_CODES: 'alpha-code-1,anna=alpha-code-1' }).codes.length, 1);
+check('a bare code listed twice is collapsed', loadAuthConfig({ ...prod, ACCESS_CODES: 'alpha-code-1,alpha-code-1' }).codes.length, 1);
+check('a code listed bare and again under a label is a conflict (it would sign someone in as someone else)', loadAuthConfig({ ...prod, ACCESS_CODES: 'alpha-code-1,anna=alpha-code-1' }).mode, 'unconfigured');
 
 // loopback (dev sign-in is for this machine only)
 check('127.0.0.1 is loopback', isLoopbackAddress('127.0.0.1'), true);
@@ -147,6 +150,47 @@ check('adding other codes does not disturb existing sessions', verifyToken(token
 const reordered = loadAuthConfig({ ...prod, ACCESS_CODES: 'beta-code-22,alpha-code-1' });
 check('reordering codes does not disturb existing sessions', verifyToken(token, reordered, NOW).ok, true);
 check('nothing verifies when unconfigured', verifyToken(token, loadAuthConfig({ NODE_ENV: 'production' }), NOW), { ok: false, reason: 'unconfigured' });
+
+
+// ---- parser edge cases found by review
+check('a bare base64 code ending in "=" is one code, not a label with an empty code', loadAuthConfig({ ...prod, ACCESS_CODES: 'YWJjZGVmZ2hpams=' }).codes.map((c) => c.code), ['YWJjZGVmZ2hpams=']);
+check('...and it works', loadAuthConfig({ ...prod, ACCESS_CODES: 'YWJjZGVmZ2hpams=' }).mode, 'configured');
+check('a labelled code may itself contain "="', loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=YWJjZGVmZ2hpams=' }).codes.map((c) => `${c.label}:${c.code}`), ['anna:YWJjZGVmZ2hpams=']);
+const dupe = loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=same-code-123,bob=same-code-123' });
+check('the same code under two labels is a configuration error, not a silent drop', dupe.mode, 'unconfigured');
+check('...that names both labels', /"anna" and "bob"/.test(dupe.problem || ''), true);
+check('the same code listed twice under one label is just collapsed', loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=same-code-123,anna=same-code-123' }).codes.length, 1);
+const twoCodes = loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=old-code-1234,anna=new-code-5678' });
+check('two codes may share one label (zero-downtime rotation)', twoCodes.codes.map((c) => c.label), ['anna', 'anna']);
+check('...and so share one owner', (() => {
+  const a = checkAccessCode('old-code-1234', twoCodes)!; const b = checkAccessCode('new-code-5678', twoCodes)!;
+  const ua = verifyToken(issueToken('s@example.com', a.codeId, twoCodes, NOW).token, twoCodes, NOW);
+  const ub = verifyToken(issueToken('s@example.com', b.codeId, twoCodes, NOW).token, twoCodes, NOW);
+  return ua.ok && ub.ok && ua.user.owner === ub.user.owner;
+})(), true);
+
+// ---- budgets are per code, owners are per (code, email)
+{
+  const c = loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=anna-code-1234' });
+  const m = checkAccessCode('anna-code-1234', c)!;
+  const u1 = verifyToken(issueToken('one@example.com', m.codeId, c, NOW).token, c, NOW);
+  const u2 = verifyToken(issueToken('two@example.com', m.codeId, c, NOW).token, c, NOW);
+  check('two emails under one code have different owners', u1.ok && u2.ok && u1.user.owner !== u2.user.owner, true);
+  check('...but the SAME budget key, so changing the email does not buy more audits', u1.ok && u2.ok && u1.user.budgetKey === u2.user.budgetKey && u1.user.budgetKey === 'anna', true);
+  check('the browser is never told the operator\'s code label', u1.ok && Object.keys(publicUser(u1.user)).sort(), ['email', 'id', 'name']);
+  check('...nor in any value', u1.ok && JSON.stringify(publicUser(u1.user)).includes('anna|'), false);
+}
+
+// ---- the dev sign-in loopback guard (was untested)
+{
+  const dev = loadAuthConfig({}, { allowDev: true });
+  check('dev sign-in is allowed from loopback', devLoginAllowed(dev, '127.0.0.1'), true);
+  check('...from ::1', devLoginAllowed(dev, '::1'), true);
+  check('...but NOT from a LAN address', devLoginAllowed(dev, '192.168.1.20'), false);
+  check('...nor a public one', devLoginAllowed(dev, '203.0.113.9'), false);
+  check('...nor an unknown one', devLoginAllowed(dev, undefined), false);
+  check('a configured server is not restricted by this guard', devLoginAllowed(cfg, '203.0.113.9'), true);
+}
 
 // header parsing
 check('a bearer token is read', bearerToken({ authorization: 'Bearer abc.def' }), 'abc.def');

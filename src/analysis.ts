@@ -176,7 +176,25 @@ export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
  * perfect score pass for a finding.
  */
 export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boolean {
-  return findFirstMention(queryText, matcher) >= 0;
+  if (!queryText) return false;
+  // Deliberately more permissive than findFirstMention, which is built to avoid
+  // false MENTIONS in answers: here the question is only "was the brand put in
+  // the query", so a short name ("3M", "HP"), a lowercase typing ("notion") and
+  // the domain root all count. The cost of the permissiveness: a brand whose
+  // name is also a category word ("Gym") is treated as named by "best gym in
+  // Austin" - the caution then appears when it need not, which errs towards
+  // warning about an inflated score rather than missing one.
+  // The full domain counts too: "poke.house" is not among the matcher's tokens
+  // (its root "poke" is just the category word), but typing it names the brand.
+  const candidates = matcher.domain ? [...matcher.tokens, matcher.domain] : matcher.tokens;
+  for (const token of candidates) {
+    const t = token.trim();
+    if (t.length < 2) continue;
+    const leading = /^\w/.test(t) ? '\\b' : '';
+    const trailing = /\w$/.test(t) ? '\\b' : '';
+    if (new RegExp(`${leading}${escapeRegex(t)}${trailing}`, 'i').test(queryText)) return true;
+  }
+  return false;
 }
 
 /** True when the brand's own domain appears among the cited sources. */

@@ -64,29 +64,44 @@ export interface LoadAuthOptions {
 
 const LABEL_PATTERN = /^[a-z0-9._-]{1,32}$/i;
 
-/** `anna=7Kx9mQ2v` -> label "anna"; a bare code gets a label derived from itself. */
+/**
+ * `anna=7Kx9mQ2v` -> label "anna"; a bare code gets a label derived from itself.
+ *
+ * The FIRST "=" separates a label from its code, so a code may itself contain
+ * "=" if it is given a label (`anna=YWJj...=`). A bare entry that merely ends in
+ * "=" (base64 padding: `YWJjZGVmZ2hpams=`) has nothing after its first "=" and
+ * is taken whole as a code rather than as a label with an empty code.
+ */
 function parseCodes(raw: string): { codes: AccessCode[]; problems: string[] } {
   const codes: AccessCode[] = [];
   const problems: string[] = [];
-  const seen = new Set<string>();
+  const labelOf = new Map<string, string>();
   for (const entry of raw.split(',').map((c) => c.trim()).filter(Boolean)) {
     const eq = entry.indexOf('=');
-    const label = eq > 0 ? entry.slice(0, eq).trim() : '';
-    const code = eq > 0 ? entry.slice(eq + 1).trim() : entry;
-    if (eq > 0 && !LABEL_PATTERN.test(label)) {
-      problems.push(`the label "${label}" is not valid (letters, digits, . _ - up to 32 characters)`);
-      continue;
+    let label = '';
+    let code = entry;
+    if (eq > 0 && entry.slice(eq + 1).trim().length >= MIN_CODE_LENGTH) {
+      label = entry.slice(0, eq).trim();
+      code = entry.slice(eq + 1).trim();
+      if (!LABEL_PATTERN.test(label)) {
+        problems.push(`the label "${label}" is not valid (letters, digits, . _ - up to 32 characters)`);
+        continue;
+      }
     }
     if (code.length < MIN_CODE_LENGTH) {
       problems.push(`every access code must be at least ${MIN_CODE_LENGTH} characters`);
       continue;
     }
-    if (seen.has(code)) continue;
-    seen.add(code);
-    codes.push({
-      label: label || `c-${crypto.createHash('sha256').update(code).digest('hex').slice(0, 8)}`,
-      code,
-    });
+    const resolved = label || `c-${crypto.createHash('sha256').update(code).digest('hex').slice(0, 8)}`;
+    const existing = labelOf.get(code);
+    if (existing !== undefined) {
+      // The same code under two labels would silently sign the second person in
+      // as the first. Say so instead of dropping one.
+      if (existing !== resolved) problems.push(`the same access code is listed for two different labels ("${existing}" and "${resolved}")`);
+      continue;
+    }
+    labelOf.set(code, resolved);
+    codes.push({ label: resolved, code });
   }
   return { codes, problems };
 }
@@ -153,11 +168,18 @@ export interface SessionUser {
   email: string;
   name: string;
   /**
-   * What saved audits, jobs and budgets belong to: the code's label AND the
-   * email. Keyed on the email alone, anyone holding any code could type
-   * someone else's address and read, delete or poll their audits.
+   * What saved audits and jobs belong to: the code's label AND the email.
+   * Keyed on the email alone, anyone holding any code could type someone else's
+   * address and read, delete or poll their audits.
    */
   owner: string;
+  /**
+   * What DAILY BUDGETS and lookup limits are counted against: the code's label.
+   * Budgets keyed on the owner could be dodged by typing a fresh email for each
+   * audit (the email is free text); a code is the thing that was actually handed
+   * out, so it is what is metered. People sharing a code share a budget.
+   */
+  budgetKey: string;
 }
 
 /** A stable identity derived from the email alone - there is no user table. */
@@ -173,6 +195,7 @@ export function userFromEmail(email: string, label = ''): SessionUser {
     email,
     name: name || email,
     owner: label ? `${label}|${email}` : email,
+    budgetKey: label || email,
   };
 }
 
@@ -185,6 +208,22 @@ function hmac(secret: string, data: string): Buffer {
 /** A keyed, non-reversible id for a code, carried in the token so revoking the code ends its sessions. */
 function codeId(secret: string, code: string): string {
   return hmac(secret, `code:${code}`).toString('hex').slice(0, 16);
+}
+
+/** What the browser is told about the signed-in person: never the operator's code label. */
+export function publicUser(user: SessionUser): { id: string; email: string; name: string } {
+  return { id: user.id, email: user.email, name: user.name };
+}
+
+/**
+ * Whether a development sign-in may proceed from this address. Dev sign-in is
+ * for the machine it runs on; even if switched on by mistake on a reachable
+ * host, strangers are not let in by it. (Behind a local reverse proxy with
+ * TRUST_PROXY unset every request looks local, which is why dev sign-in also
+ * needs an explicit opt-in and is never honoured in production.)
+ */
+export function devLoginAllowed(config: AuthConfig, ip: string | undefined): boolean {
+  return config.mode !== 'dev' || isLoopbackAddress(ip);
 }
 
 /** True for the addresses that mean "this same machine". */

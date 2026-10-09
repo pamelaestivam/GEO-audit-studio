@@ -115,6 +115,17 @@ function assert(name: string, condition: boolean, detail = '') {
   })());
 }
 
+// ---------------------------------------------------------------- peek
+{
+  const store = new IdempotencyStore<boolean>(1000);
+  check('peek on a key never stored is false', store.peek('k', 0), false);
+  check('peek on no key is false', store.peek(undefined, 0), false);
+  store.run('k', () => true, 0);
+  check('peek on a stored key is true', store.peek('k', 10), true);
+  check('peek does not create entries', store.peek('other', 10) || store.size(10) !== 1, false);
+  check('peek on an expired key is false', store.peek('k', 5000), false);
+}
+
 // ---------------------------------------------------------------- header parsing
 {
   check('a normal header value is read', readIdempotencyKey({ 'idempotency-key': 'abc' }), 'abc');

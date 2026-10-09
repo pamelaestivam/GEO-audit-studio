@@ -631,6 +631,22 @@ Written 2026-10-09 so none of these is rediscovered:
   spoof their address, too low throttles everyone together.
 - **No admin kill switch** and **no spend cap on the Gemini key itself** - set one
   in Google's console.
+- **Budgets are per access code, not per person.** People who share a code share
+  its allowance, and changing the email does not reset it (the email is free
+  text). Give each person their own code if they need separate allowances.
+  Reusing a label for a *new* person hands them the previous holder's saved audits
+  (audits belong to label + email and survive code removal): treat labels as
+  identities and retire them, do not recycle them.
+- **"Non-billable" failures could be farmed.** An audit that collects no evidence
+  is not counted against the budget. Someone could craft queries the engines
+  reject and run many such audits; they are still bounded by the concurrency cap
+  and the per-IP limit, and cost little, but it is a hole in the budget.
+- **A job reaped as stuck stops counting toward the concurrency cap** even while
+  its work is still running, and tells the person it failed; if it later finishes
+  it flips to done and is saved (the audit was paid for). Slightly confusing, never lossy.
+- **The limiter table is capped (50,000 keys)** and fails closed past that: a
+  flood from many addresses can make new addresses wait. IPv6 clients are limited
+  by /64 to make that hard. Acceptable against unbounded memory.
 - **Jobs are not resumable.** An audit cut off by a restart or deploy is marked
   failed with a sentence (and is not counted against the daily budget); the
   person re-runs it. A job reaped as stuck after 15 minutes that later finishes

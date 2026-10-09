@@ -73,10 +73,14 @@ docker run -d --name geo -p 3000:3000 \
   -v geo-data:/data \
   -e SESSION_SECRET="$(openssl rand -hex 32)" \
   -e ACCESS_CODES="anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa" \
-  -e TRUST_PROXY=1 \   # only if a reverse proxy (TLS terminator) is in front; omit when exposed directly
   -e GEMINI_API_KEY="..." \
   geo-audit-studio
 ```
+
+Add `-e TRUST_PROXY=1` **only** if a reverse proxy (the thing that terminates TLS)
+sits in front of the container; leave it out when the container is exposed
+directly (see the variable table - getting this wrong either lets visitors dodge
+the per-IP limits or throttles everyone together).
 
 The image defaults `DATA_DIR=/data`; **the volume is what makes audits survive**
 - without `-v`, they are lost when the container is replaced. Put TLS in front
@@ -98,11 +102,12 @@ once that job is green on your repository.
 | `ACCESS_CODES` | yes (production) | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
 | `TRUST_PROXY` | no (0) | Reverse proxies in front of the server (1 on Render/Fly/nginx). **Leave at 0 when exposed directly**: otherwise anyone can send their own `X-Forwarded-For` and dodge every per-IP limit. Too low behind a proxy = all visitors throttled together (safe, but wrong) |
 | `USER_LOOKUPS_PER_HOUR` | no (30) | Brand detection, query suggestions and added queries per person per hour (per process; resets on restart) |
-| `ALLOW_DEV_AUTH` | no | Local development only (`npm run dev` sets it). Never honoured in production, and only from the same machine |
+| `ALLOW_DEV_AUTH` | no | Local development only: `npm run dev` passes `--dev`, which has the same effect. Never honoured in production, and only from the same machine. Do not set it on a server behind a local reverse proxy without `TRUST_PROXY` (every request would look local) |
+| `JOB_MAX_RUN_MS` | no (900000) | An audit still running after this long is reported as stopped (it is recorded if it later finishes) |
 | `DATA_DIR` | yes for durability | Directory for the SQLite file. Unset = nothing is saved |
 | `PERPLEXITY_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | no | Adds an engine. Each multiplies per-audit spend |
 | `GEMINI_MODEL` etc. | no | Override a model id without a code change |
-| `USER_AUDITS_PER_DAY` | no (10) | Rolling 24h audits per person. `0` disables |
+| `USER_AUDITS_PER_DAY` | no (10) | Rolling 24h audits **per access code**. People sharing a code share this allowance; changing the email does not reset it. `0` disables |
 | `GLOBAL_AUDITS_PER_DAY` | no (100) | Rolling 24h audits for everyone. `0` disables |
 | `MAX_CONCURRENT_AUDITS` | no (2) | Audits running at once (they share one quota) |
 | `MAX_AUDIT_QUERIES` | no (8) | Queries per audit |
@@ -174,17 +179,21 @@ on a host that cannot keep the process alive (see `TECH_DEBT.md` 1.4c).
 
 ## 8. What has and has not been verified
 
-**Verified by running it** (`npm test`, 700+ checks; CI runs it on every push):
+**Verified by running it** (`npm test`, 850+ checks; CI runs it on every push):
 sign-in and its refusals; every spending route needing a session; ownership
 between users and between codes; audits and jobs surviving a restart, including
 a SIGKILL mid-audit; daily and hourly budgets; per-IP limits not being
-spoofable; unconfigured production (and `NODE_ENV` unset) refusing everyone; the
+spoofable **when `TRUST_PROXY` matches the real number of proxies**; unconfigured production (and `NODE_ENV` unset) refusing everyone; the
 compiled backend not being downloadable; the smoke script passing a good
 deployment and failing a bad one; the full UI in a real browser (desktop and
 phone, including a returning user with a long brand name); `npm run dev` reading
 `.env.local` (checked by hand); and - by `scripts/prod-install-check.sh` - the
 built server running from a clean directory with only production dependencies.
-Each new test was also shown to go red when its fix is reverted.
+Each new test was shown to go red when its fix is reverted, in rounds of
+mutation runs (round 1: 5 reverts, 12 red; round 2 and its review: 5 + 6 reverts,
+24 red) - with two honest exceptions at the time of the first review, since
+closed: the late-completion fix and the dev-sign-in loopback guard now have tests
+of their own.
 
 **Not verified - do these yourself, they cannot be checked from the authoring
 environment:**

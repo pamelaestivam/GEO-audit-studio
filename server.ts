@@ -29,15 +29,16 @@ import {
   bearerToken,
   checkAccessCode,
   describeAuthFailure,
-  isLoopbackAddress,
+  devLoginAllowed,
   issueToken,
   loadAuthConfig,
   normaliseEmail,
+  publicUser,
   userFromEmail,
   verifyToken,
 } from './src/auth.js';
 import { openStore, type StoredJob } from './src/store.js';
-import { FixedWindowLimiter } from './src/rateLimit.js';
+import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries } from './src/queries.js';
 import {
   askEngine,
@@ -202,7 +203,7 @@ async function buildApp() {
   const spendLimiter = new FixedWindowLimiter(RATE_LIMIT_PER_MIN, 60_000);
   app.use('/api/audit', (req, res, next) => {
     if (req.method !== 'POST' || RATE_LIMIT_PER_MIN <= 0) return next();
-    const decision = spendLimiter.check(req.ip || 'unknown');
+    const decision = spendLimiter.check(limiterKey(req.ip));
     if (decision.allowed) return next();
     res.setHeader('Retry-After', String(decision.retryAfterSeconds));
     return res.status(429).json({
@@ -225,12 +226,25 @@ async function buildApp() {
   // budgets, which live in the store). 0 disables.
   const USER_LOOKUPS_PER_HOUR = Number(process.env.USER_LOOKUPS_PER_HOUR ?? 30);
   const lookupLimiter = new FixedWindowLimiter(USER_LOOKUPS_PER_HOUR, 3600_000);
+  // A retry of one click (the browser re-sends a request that seemed to hang,
+  // up to four times on a cold start) carries the same Idempotency-Key and
+  // costs one real call - the routes dedupe it. It must not also cost four
+  // units of the person's hourly allowance, so a key already admitted within
+  // the dedupe window passes without being counted again.
+  const lookupAdmitted = new IdempotencyStore<true>(60 * 1000);
   app.use(
     ['/api/audit/parse-url', '/api/audit/generate-queries', '/api/audit/evaluate-query'],
     (req, res, next) => {
       if (req.method !== 'POST' || USER_LOOKUPS_PER_HOUR <= 0) return next();
-      const decision = lookupLimiter.check(res.locals.user.owner);
-      if (decision.allowed) return next();
+      const budgetKey: string = res.locals.user.budgetKey;
+      const idem = readIdempotencyKey(req.headers as any);
+      const admittedKey = idem ? `${budgetKey}:${req.path}:${idem}` : undefined;
+      if (lookupAdmitted.peek(admittedKey)) return next();
+      const decision = lookupLimiter.check(budgetKey);
+      if (decision.allowed) {
+        lookupAdmitted.run(admittedKey, () => true);
+        return next();
+      }
       res.setHeader('Retry-After', String(decision.retryAfterSeconds));
       return res.status(429).json({
         error: `You have used your ${USER_LOOKUPS_PER_HOUR} quick lookups for this hour (brand detection, query suggestions and added queries each count). Try again in about ${formatDuration(decision.retryAfterSeconds * 1000)}.`,
@@ -613,7 +627,7 @@ async function buildApp() {
 
   app.post('/api/auth/login', (req, res) => {
     if (AUTH_RATE_LIMIT_PER_MIN > 0) {
-      const decision = authLimiter.check(req.ip || 'unknown');
+      const decision = authLimiter.check(limiterKey(req.ip));
       if (!decision.allowed) {
         res.setHeader('Retry-After', String(decision.retryAfterSeconds));
         return res.status(429).json({
@@ -626,7 +640,7 @@ async function buildApp() {
     }
     // Development sign-in is for the machine it runs on. Even if it is switched
     // on by mistake on a reachable host, strangers are not let in by it.
-    if (auth.mode === 'dev' && !isLoopbackAddress(req.ip)) {
+    if (!devLoginAllowed(auth, req.ip)) {
       return res.status(403).json({
         error: 'Development sign-in only works from the same machine as the server. Configure SESSION_SECRET and ACCESS_CODES to let other people in.',
       });
@@ -638,13 +652,13 @@ async function buildApp() {
       return res.status(401).json({ error: 'That access code is not valid. Check it with the person who invited you.' });
     }
     const { token, expiresAt } = issueToken(email, matched.codeId, auth);
-    res.json({ user: userFromEmail(email, matched.label), token, expiresAt });
+    res.json({ user: publicUser(userFromEmail(email, matched.label)), token, expiresAt });
   });
 
   // Lets the client confirm a stored session is still good (not expired, its
   // code not revoked) instead of trusting whatever is in localStorage.
   app.get('/api/auth/me', requireAuth, (_req, res) => {
-    res.json({ user: res.locals.user, storage: store.info() });
+    res.json({ user: publicUser(res.locals.user), storage: store.info() });
   });
 
   // POST: Live URL & Brand Name parser using Gemini Grounded Web Search
@@ -1690,7 +1704,7 @@ Return valid JSON matching the schema.`;
    * An audit still "running" after this long is stuck (a provider call that
    * never returned). Left alone it would hold a concurrency slot forever.
    */
-  const JOB_MAX_RUN_MS = 15 * 60 * 1000;
+  const JOB_MAX_RUN_MS = Number(process.env.JOB_MAX_RUN_MS || 15 * 60 * 1000);
   /** Job rows are kept this long: they are also the record the daily budget counts. */
   const JOB_RETENTION_MS = 7 * 24 * 3600 * 1000;
   const DAY_MS = 24 * 3600 * 1000;
@@ -1729,7 +1743,7 @@ Return valid JSON matching the schema.`;
     return next;
   }
 
-  async function admit(owner: string): Promise<void> {
+  async function admit(budgetKey: string): Promise<void> {
     const running = await store.countRunning(JOB_MAX_RUN_MS);
     if (running >= MAX_CONCURRENT_AUDITS) {
       throw new AdmissionError(
@@ -1741,10 +1755,10 @@ Return valid JSON matching the schema.`;
     const since = Date.now() - DAY_MS;
     const wait = (oldest: number | null) => Math.max(60, Math.ceil(((oldest ?? Date.now()) + DAY_MS - Date.now()) / 1000));
 
-    if (USER_AUDITS_PER_DAY > 0 && (await store.countJobsSince(since, owner)) >= USER_AUDITS_PER_DAY) {
-      const retry = wait(await store.oldestJobSince(since, owner));
+    if (USER_AUDITS_PER_DAY > 0 && (await store.countJobsSince(since, budgetKey)) >= USER_AUDITS_PER_DAY) {
+      const retry = wait(await store.oldestJobSince(since, budgetKey));
       throw new AdmissionError(
-        `You have used your ${USER_AUDITS_PER_DAY} audits for the last 24 hours. The next one frees up in about ${formatDuration(retry * 1000)}. Failed audits that collected no evidence are not counted.`,
+        `You have used your ${USER_AUDITS_PER_DAY} audits for the last 24 hours (counted per access code). The next one frees up in about ${formatDuration(retry * 1000)}. Failed audits that collected no evidence are not counted.`,
         429,
         retry
       );
@@ -1842,6 +1856,7 @@ Return valid JSON matching the schema.`;
         }));
 
       const owner: string = res.locals.user.owner;
+      const budgetKey: string = res.locals.user.budgetKey;
 
       // The single most expensive thing to get wrong. A cold instance stalls
       // the submit long enough for the browser's own retry to fire, while the
@@ -1865,11 +1880,12 @@ Return valid JSON matching the schema.`;
             if (existing) return { id: existing.id, replayed: true };
           }
 
-          await admit(owner);
+          await admit(budgetKey);
 
           const job: StoredJob = {
             id: `job-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
             owner,
+            budgetKey,
             idemKey,
             status: 'running',
             startedAt: Date.now(),

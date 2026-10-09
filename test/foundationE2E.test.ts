@@ -131,6 +131,37 @@ async function pollJob(app: App, token: string, jobId: string, timeoutMs = 30000
   return { status: 0, body: { status: 'timeout' } as any };
 }
 
+
+/** Poll until the job is "done" (an "error" seen on the way - e.g. reaped - is not final). */
+async function pollJobAllowingError(app: App, token: string, jobId: string, timeoutMs: number) {
+  const began = Date.now();
+  while (Date.now() - began < timeoutMs) {
+    const res = await rawFetch(`${app.base}/api/audit/job/${jobId}`, { headers: authed(token) });
+    const body = await res.json().catch(() => ({}));
+    if (body.status === 'done') return body;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return null as any;
+}
+
+/**
+ * Wait until the fake Gemini has been quiet for a moment. Checks that count the
+ * calls a request caused compare a before/after tally of ONE shared fake, so a
+ * straggler from an earlier scenario (a slow audit finishing, a killed server's
+ * last request) would otherwise land inside the window and fail them at random.
+ */
+async function settle(fake: { hits: () => number }, quietMs = 900) {
+  let last = fake.hits();
+  let quietSince = Date.now();
+  while (Date.now() - quietSince < quietMs) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (fake.hits() !== last) {
+      last = fake.hits();
+      quietSince = Date.now();
+    }
+  }
+}
+
 async function main() {
   const fake = await startFakeGemini(GEMINI_PORT, () => mode);
   const apps: App[] = [];
@@ -283,6 +314,7 @@ async function main() {
     check('...and it is gone', (await rawFetch(`${A3.base}/api/audits/${reportId}`, { headers: authed(alice.body.token) })).status, 404);
 
     // --- deep readiness: a real call, said as such, cached
+    await settle(fake);
     const hitsBefore = fake.hits();
     const ready = await (await rawFetch(`${A3.base}/api/audit/readiness`, { headers: authed(alice.body.token) })).json();
     check('readiness passes on a healthy deployment', ready.ok, true);
@@ -330,13 +362,15 @@ async function main() {
     // ==================================================================
     // 3. Daily budgets: per user, and failures that cost nothing do not count.
     // ==================================================================
-    const B = await startApp({ USER_AUDITS_PER_DAY: '2', GLOBAL_AUDITS_PER_DAY: '3', MAX_CONCURRENT_AUDITS: '5' });
+    // One code per person: budgets are counted per CODE (see src/auth.ts), so
+    // three people need three codes to have three separate allowances.
+    const B = await startApp({ ACCESS_CODES: 'u1=code-for-u1-aaaa,u2=code-for-u2-bbbb,u3=code-for-u3-cccc', USER_AUDITS_PER_DAY: '2', GLOBAL_AUDITS_PER_DAY: '3', MAX_CONCURRENT_AUDITS: '5' });
     assert('server with budgets starts', !!B);
     if (B) {
       apps.push(B);
-      const u1 = (await login(B, 'u1@example.com')).body.token;
-      const u2 = (await login(B, 'u2@example.com')).body.token;
-      const u3 = (await login(B, 'u3@example.com')).body.token;
+      const u1 = (await login(B, 'u1@example.com', 'code-for-u1-aaaa')).body.token;
+      const u2 = (await login(B, 'u2@example.com', 'code-for-u2-bbbb')).body.token;
+      const u3 = (await login(B, 'u3@example.com', 'code-for-u3-cccc')).body.token;
 
       mode = 'unauthorized';
       const free = await startAudit(B, u1);
@@ -453,6 +487,7 @@ async function main() {
       apps.push(LK);
       const t = (await login(LK, 'lk@example.com')).body.token;
       const evalQ = (n: number) => rawFetch(`${LK.base}/api/audit/evaluate-query`, { method: 'POST', headers: { ...authed(t), 'Idempotency-Key': `lk-${n}` }, body: JSON.stringify({ businessName: 'Poke House', queryText: `best poke ${n}` }) });
+      await settle(fake);
       const before = fake.hits();
       const statuses = [(await evalQ(1)).status, (await evalQ(2)).status, (await evalQ(3)).status];
       check('two quick lookups are served; the third in the hour is refused', statuses, [200, 200, 429]);
@@ -469,6 +504,7 @@ async function main() {
     if (RD) {
       apps.push(RD);
       const t = (await login(RD, 'rd@example.com')).body.token;
+      await settle(fake);
       const before = fake.hits();
       const all = await Promise.all(Array.from({ length: 15 }, () => rawFetch(`${RD.base}/api/audit/readiness`, { headers: authed(t) }).then((r) => r.json())));
       check('15 simultaneous cold readiness requests all answer', all.every((r) => Array.isArray(r.checks)), true);
@@ -560,6 +596,82 @@ async function main() {
       check('with an industry, the discovery question is brand-neutral', [wd.body.report.queriesNamingBrand, wd.body.report.queriesAttempted], [2, 3]);
       const own = await pollJob(BR, t, (await startAudit(BR, t, BIZ)).body.jobId);
       check('a person\'s own category question does not name the brand', [own.body.report.queriesNamingBrand, own.body.report.queriesAttempted], [0, 1]);
+    }
+
+    // ==================================================================
+    // 7. Findings from the second review pass.
+    // ==================================================================
+
+    // --- the daily budget is per CODE: a fresh email does not buy a fresh allowance
+    const SK = await startApp({ USER_AUDITS_PER_DAY: '1', GLOBAL_AUDITS_PER_DAY: '0', MAX_CONCURRENT_AUDITS: '9' });
+    if (SK) {
+      apps.push(SK);
+      const results: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const t = (await login(SK, `sock${i}@example.com`)).body.token;
+        results.push((await startAudit(SK, t)).status);
+      }
+      check('four different emails on ONE code get one audit between them, not four', results, [202, 429, 429, 429]);
+    }
+
+    // --- retries of one click do not burn the hourly lookup allowance
+    const LR = await startApp({ USER_LOOKUPS_PER_HOUR: '3' });
+    if (LR) {
+      apps.push(LR);
+      const t = (await login(LR, 'lr@example.com')).body.token;
+      const evalQ = (key: string, text: string) => rawFetch(`${LR.base}/api/audit/evaluate-query`, { method: 'POST', headers: { ...authed(t), 'Idempotency-Key': key }, body: JSON.stringify({ businessName: 'Poke House', queryText: text }) });
+      await settle(fake);
+      const before = fake.hits();
+      const replays = await Promise.all(Array.from({ length: 10 }, () => evalQ('one-click', 'best poke')));
+      check('ten retries of one click are all served', replays.map((r) => r.status), Array(10).fill(200));
+      check('...cost ONE real call', fake.hits() - before, 1);
+      check('...and ONE unit of the allowance (two more distinct lookups still fit)', [(await evalQ('b', 'q b')).status, (await evalQ('c', 'q c')).status], [200, 200]);
+      check('the next distinct lookup is refused', (await evalQ('d', 'q d')).status, 429);
+      check('but a late retry of an already-admitted click still passes', (await evalQ('one-click', 'best poke')).status, 200);
+    }
+
+    // --- the browser is never told the operator's code label
+    const PU = await startApp({ ACCESS_CODES: 'secretlabel=public-user-code-1' });
+    if (PU) {
+      apps.push(PU);
+      const lg = await login(PU, 'pu@example.com', 'public-user-code-1');
+      check('login returns the person, without the owner key', Object.keys(lg.body.user).sort(), ['email', 'id', 'name']);
+      const me = await (await rawFetch(`${PU.base}/api/auth/me`, { headers: authed(lg.body.token) })).json();
+      check('/api/auth/me too', Object.keys(me.user).sort(), ['email', 'id', 'name']);
+      assert('the label appears nowhere in either response', !JSON.stringify(lg.body).includes('secretlabel') && !JSON.stringify(me).includes('secretlabel'));
+    }
+
+    // --- access-code parsing: base64 padding, and a conflict is an error not a silent drop
+    const B64 = await startApp({ ACCESS_CODES: 'YWJjZGVmZ2hpams=' });
+    if (B64) {
+      apps.push(B64);
+      check('a code ending in "=" (base64 padding) signs in', (await login(B64, 'b@example.com', 'YWJjZGVmZ2hpams=')).status, 200);
+    }
+    const CF = await startApp({ ACCESS_CODES: 'anna=shared-code-1234,bob=shared-code-1234' });
+    if (CF) {
+      apps.push(CF);
+      const st = await (await rawFetch(`${CF.base}/api/audit/status`)).json();
+      check('the same code under two labels refuses everyone', st.auth.mode, 'unconfigured');
+      assert('...and says which labels collide', /"anna" and "bob"/.test(st.auth.problem), st.auth.problem);
+    }
+
+    // --- a job reaped as stuck that later finishes is still recorded (the audit was paid for)
+    const RP = await startApp({ JOB_MAX_RUN_MS: '1500', DATA_DIR: tmp() });
+    if (RP) {
+      apps.push(RP);
+      const t = (await login(RP, 'rp@example.com')).body.token;
+      mode = 'slow';
+      const started = await startAudit(RP, t);
+      await new Promise((r) => setTimeout(r, 2600));
+      const mid = await rawFetch(`${RP.base}/api/audit/job/${started.body.jobId}`, { headers: authed(t) });
+      const midBody = await mid.json();
+      check('past the limit the job is reported as stopped', [mid.status, midBody.status], [500, 'error']);
+      assert('...with a sentence', /took too long/.test(midBody.error), JSON.stringify(midBody));
+      const final = await pollJobAllowingError(RP, t, started.body.jobId, 20000);
+      mode = 'ok';
+      check('when the engines finally answer, the finished audit is recorded', final?.status, 'done');
+      check('...and saved', final?.saved, true);
+      check('...so it appears in the person\'s history', (await (await rawFetch(`${RP.base}/api/audits`, { headers: authed(t) })).json()).audits.length, 1);
     }
   } finally {
     for (const a of apps) a.proc.kill('SIGKILL');
