@@ -1,0 +1,53 @@
+# Render Blueprint: one always-on web service with a persistent disk.
+# New -> Blueprint -> pick this repository. See docs/DEPLOYMENT.md.
+#
+# This file follows Render's documented Blueprint fields but has not been
+# validated against Render from the environment it was written in: the first
+# sync will tell you if a field name needs adjusting.
+services:
+  - type: web
+    name: geo-audit-studio
+    runtime: node
+    # A persistent disk is not available on Render's free plan, and a free
+    # instance sleeps - which is exactly what made earlier audits fail on the
+    # first request of the day. Pick a paid plan; check Render's pricing page.
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: geo-audit-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      # Render puts one reverse proxy in front of the service. Without this the
+      # per-IP rate limits would see every visitor as the proxy and throttle
+      # everyone together; with a wrong number they could be spoofed.
+      - key: TRUST_PROXY
+        value: 1
+      # Generated once by Render; rotating it signs everyone out.
+      - key: SESSION_SECRET
+        generateValue: true
+      # Codes you hand to invited people, as label=code pairs, comma-separated:
+      #   anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa
+      # The label is who the code belongs to; saved audits belong to (label,
+      # email), so people on different codes cannot see each other's work.
+      # Removing a code ends the sessions it created. Codes: 8+ characters.
+      - key: ACCESS_CODES
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      # Optional extra engines - each one multiplies per-audit spend.
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

@@ -141,8 +141,11 @@ export const CompetitorIntelligenceTab: React.FC<CompetitorIntelligenceTabProps>
 
               <div>
                 <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-                  Primary Citation Sources Trusted by AI:
+                  Sources cited in answers that named this brand:
                 </span>
+                {(comp.mainCitationSources || []).length === 0 && (
+                  <p className="text-xs text-slate-500">None - no answer that named this brand cited a source.</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {(comp.mainCitationSources || []).map((source, i) => (
                     <span

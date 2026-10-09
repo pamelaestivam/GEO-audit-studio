@@ -77,6 +77,24 @@ export function visibilityBasis(
   return `Based on ${answers}${where}${failed}`;
 }
 
+/**
+ * When every question asked names the brand, "visible in 100% of answers" is
+ * close to guaranteed by construction - the engine was asked about the brand.
+ * That measures reputation, not discovery, and must not pass for a finding.
+ * Returns the caution to show, or null when at least one query was brand-neutral.
+ */
+export function brandedQueryCaution(
+  audit: Pick<AuditReport, 'degraded' | 'queriesAttempted' | 'queriesNamingBrand'>
+): string | null {
+  if (!hasMeasurements(audit)) return null;
+  const total = audit.queriesAttempted;
+  if (typeof total !== 'number' || total === 0 || typeof audit.queriesNamingBrand !== 'number') return null;
+  if (audit.queriesNamingBrand < total) return null;
+  return total === 1
+    ? 'The question names your brand, so this mostly shows whether engines answer questions about you - not whether buyers who do not know you are pointed to you.'
+    : `All ${total} questions name your brand, so this mostly shows whether engines answer questions about you - not whether buyers who do not know you are pointed to you. Add a category question (e.g. "best poke in Austin") to measure discovery.`;
+}
+
 /** The accuracy tile: a value and the sentence that says what it means. */
 export function describeAccuracy(
   audit: Pick<AuditReport, 'degraded' | 'accuracyRate' | 'narrativeAvailable'>

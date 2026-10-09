@@ -166,6 +166,37 @@ export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
   return kept;
 }
 
+/**
+ * Whether the QUESTION ITSELF names the brand. A query like "How much does
+ * Poke House cost?" will get an answer about Poke House whatever the engine
+ * thinks of it, so it measures reputation, not discovery. If every query in an
+ * audit names the brand, a visibility of 100% is close to guaranteed by
+ * construction and says nothing about whether buyers who do NOT already know
+ * the brand are pointed to it. The report surfaces this instead of letting a
+ * perfect score pass for a finding.
+ */
+export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boolean {
+  if (!queryText) return false;
+  // Deliberately more permissive than findFirstMention, which is built to avoid
+  // false MENTIONS in answers: here the question is only "was the brand put in
+  // the query", so a short name ("3M", "HP"), a lowercase typing ("notion") and
+  // the domain root all count. The cost of the permissiveness: a brand whose
+  // name is also a category word ("Gym") is treated as named by "best gym in
+  // Austin" - the caution then appears when it need not, which errs towards
+  // warning about an inflated score rather than missing one.
+  // The full domain counts too: "poke.house" is not among the matcher's tokens
+  // (its root "poke" is just the category word), but typing it names the brand.
+  const candidates = matcher.domain ? [...matcher.tokens, matcher.domain] : matcher.tokens;
+  for (const token of candidates) {
+    const t = token.trim();
+    if (t.length < 2) continue;
+    const leading = /^\w/.test(t) ? '\\b' : '';
+    const trailing = /\w$/.test(t) ? '\\b' : '';
+    if (new RegExp(`${leading}${escapeRegex(t)}${trailing}`, 'i').test(queryText)) return true;
+  }
+  return false;
+}
+
 /** True when the brand's own domain appears among the cited sources. */
 export function isCitedAsSource(citations: QueryEvidence['citations'], matcher: BrandMatcher): boolean {
   if (!matcher.domain) return false;
@@ -283,6 +314,39 @@ export function buildCitationSourceMap(
   return Array.from(byDomain.values())
     .map(({ queries, ...rest }) => ({ ...rest, queryCount: queries.size }))
     .sort((a, b) => b.citationCount - a.citationCount || a.domain.localeCompare(b.domain));
+}
+
+/**
+ * The sources cited in the answers that actually NAMED this brand - most
+ * frequent first, each domain counted once per answer, the brand's own domain
+ * left out. Per-brand, because the Competitor Intelligence cards claim to show
+ * "the sources the AI trusts" for each brand, and they used to print the same
+ * audit-wide list under every one of them. A brand named in no answer has no
+ * sources of its own to show, and gets none.
+ */
+export function sourcesForBrand(
+  evidence: QueryEvidence[],
+  analysis: Map<QueryEvidence, BrandQueryResult[]>,
+  brand: string,
+  ownDomain = '',
+  limit = 4
+): string[] {
+  const counts = new Map<string, number>();
+  for (const ev of evidence) {
+    const row = analysis.get(ev)?.find((r) => r.brand === brand);
+    if (!row?.mentioned) continue;
+    const seen = new Set<string>();
+    for (const c of ev.citations) {
+      if (!c.domain || seen.has(c.domain)) continue;
+      seen.add(c.domain);
+      if (ownDomain && (c.domain === ownDomain || c.domain.endsWith(`.${ownDomain}`))) continue;
+      counts.set(c.domain, (counts.get(c.domain) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([domain]) => domain);
 }
 
 export interface BrandScorecard {

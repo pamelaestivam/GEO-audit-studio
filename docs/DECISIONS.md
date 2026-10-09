@@ -5,6 +5,44 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-10-09 - Foundation: always-on service, SQLite, invitation sign-in (decided without the owner)
+
+**Decision:** D1 (runtime), D2 (datastore) and D3 (auth) from `docs/MVP_AUDIT.md`
+were taken at their recommendations and built, because the owner instructed
+"continue ... with no stop" and the alternatives all needed an account or
+credential only the owner can create:
+
+- **Runtime:** one always-on process (Docker / Render with a disk) serving API and
+  frontend. Vercel is no longer a supported deployment for real use.
+- **Datastore:** SQLite via Node's built-in `node:sqlite` on a persistent disk,
+  behind a `Store` interface so Postgres can replace it. Single instance.
+- **Auth:** email + operator-issued access codes (`label=code`), HMAC-signed
+  expiring sessions, ownership by (label, email). No password database.
+
+**Why:** each is the smallest thing that is correct for an invitation-only MVP and
+needs nothing from the owner but a host and a few environment variables. SQLite
+avoids a managed-database account and bill; invitation codes avoid a Google Cloud
+OAuth client; an always-on process is what the code already was.
+
+**Alternatives rejected:** Postgres now (an account and a bill the owner has not
+chosen, for traffic that does not need it); Google sign-in now (needs the owner's
+OAuth credentials, `TECH_DEBT.md` 1.5); staying on Vercel and rebuilding around a
+queue (more moving parts, and the platform's limits are the original problem);
+passwords (state to secure, no benefit before real accounts).
+
+**Reversibility:** all three sit behind small seams - `src/store.ts`,
+`src/auth.ts`, and `Dockerfile`/`render.yaml` - and none of the audit pipeline
+knows which is in use. **D4 (which paid engine keys, and a monthly ceiling) was
+not decided: it is the owner's money.** The limits of this foundation are in
+`TECH_DEBT.md` 2.11.
+
+**Process note:** the independent adversarial review of this work found 12 real
+defects in it, including an auth fall-open the author had not considered. That
+review is now a standing step (`docs/ENGINEERING_STANDARDS.md` section 10,
+`.claude/agents/adversarial-reviewer.md`).
+
+---
+
 ## 2026-10-09 - MVP audit: fix what needs no decision, queue the rest as owner decisions
 
 **Decision:** run an adversarial audit of the whole product against a real

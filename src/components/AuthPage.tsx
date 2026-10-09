@@ -1,109 +1,91 @@
 import React, { useState } from 'react';
-import { Sparkles, Eye, EyeOff, Lock, Mail, User as UserIcon, Building2, ArrowRight, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { User } from '../types';
 import { apiFetch } from '../apiClient';
+import { useAuditStatus } from '../useQuotaStatus';
 
-interface AuthPageProps {
-  onLoginSuccess: (user: User) => void;
+export interface Session {
+  user: User;
+  token: string;
+  expiresAt: number;
 }
 
-export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [company, setCompany] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+interface AuthPageProps {
+  onLoginSuccess: (session: Session) => void;
+  /** Why the person is back here (e.g. "Your session has expired."), when they were signed out. */
+  notice?: string | null;
+}
 
+/**
+ * Early access sign-in: an email and the access code the operator gave you.
+ *
+ * It used to catch every failure - wrong password, server down - and sign the
+ * person in anyway as a locally invented user. A failed sign-in is now a
+ * failed sign-in, and the server's own sentence is what is shown.
+ */
+export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) => {
+  const [email, setEmail] = useState('');
+  const [accessCode, setAccessCode] = useState('');
+  const [showCode, setShowCode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { auth } = useAuditStatus();
+
+  const unconfigured = auth?.mode === 'unconfigured';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!email || !email.includes('@')) {
-      setError('Please enter a valid work email address.');
+    if (!email.includes('@')) {
+      setError('Enter the email address you were invited with.');
       return;
     }
-
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters long.');
-      return;
-    }
-
-    if (isSignUp && !name.trim()) {
-      setError('Please enter your full name.');
+    if (!accessCode.trim()) {
+      setError('Enter your access code.');
       return;
     }
 
     setIsLoading(true);
-
     try {
-      const endpoint = isSignUp ? '/api/auth/signup' : '/api/auth/login';
-      const response = await apiFetch(endpoint, {
+      const response = await apiFetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name, company }),
+        body: JSON.stringify({ email, accessCode }),
+        // A wrong code is an answer, not a network failure: never retry it.
+        retries: 0,
       });
+      const data = await response.json().catch(() => ({}));
 
-      const data = await response.json();
-
-      if (response.ok && data.user) {
-        onLoginSuccess(data.user);
+      if (response.ok && data.user && data.token) {
+        onLoginSuccess({ user: data.user, token: data.token, expiresAt: data.expiresAt });
       } else {
-        throw new Error(data.error || 'Sign-in did not succeed. Please try again.');
+        setError(data.error || 'Sign-in did not succeed. Please try again.');
       }
     } catch (err: any) {
-      // A failed sign-in is a failed sign-in. This used to catch the error and
-      // log the person in anyway with a locally-invented user ("mock login
-      // fallback"), so a wrong password - or the server being down - landed
-      // straight in the dashboard.
       setError(err?.message || 'Could not sign in. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleQuickDemoLogin = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      const demoUser: User = {
-        id: 'usr-demo-101',
-        name: 'Sarah Jenkins',
-        email: 'sarah.jenkins@enterprise.com',
-        company: 'Acme Cloud Platform',
-        role: 'Head of Growth & GEO',
-        avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150',
-        createdAt: new Date().toISOString(),
-      };
-      onLoginSuccess(demoUser);
-      setIsLoading(false);
-    }, 400);
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6 lg:p-8 font-sans relative overflow-hidden">
-      {/* Subtle Background Glow Spheres */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-10 right-10 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-12 bg-slate-900/90 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden relative z-10 backdrop-blur-xl">
-        {/* Left Side: Brand Overview & Value Proposition */}
         <div className="lg:col-span-5 bg-gradient-to-br from-indigo-950/80 via-slate-900 to-slate-950 p-6 sm:p-8 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-800">
           <div>
-            {/* Logo */}
             <div className="flex items-center gap-3 mb-8">
               <div className="p-2.5 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center">
                 <Sparkles className="h-6 w-6" />
               </div>
               <div>
                 <span className="font-extrabold text-xl tracking-tight text-white flex items-center gap-1.5">
-                  GEO <span className="text-indigo-400">Radar</span>
+                  GEO <span className="text-indigo-400">Audit Studio</span>
                 </span>
-                <span className="block text-[10px] uppercase tracking-widest text-indigo-300 font-bold">
-                  AI Search Intelligence
-                </span>
+                <span className="block text-[10px] uppercase tracking-widest text-indigo-300 font-bold">Early access</span>
               </div>
             </div>
 
@@ -111,18 +93,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
               Audit Brand Visibility in AI Search Engines
             </h2>
             <p className="text-xs text-slate-300 leading-relaxed mb-6">
-              Find out whether AI answer engines recommend your brand, who they recommend instead, and which sources they trust.
+              Find out whether AI answer engines recommend your brand, who they recommend instead, and which sources
+              they trust.
             </p>
 
-            {/* Feature Highlights */}
             <div className="space-y-3.5 pt-2">
               {[
                 'Live, web-grounded answers captured verbatim with their sources',
                 'Share of voice measured against the vendors the engines name',
                 'Suggested fixes tied to the gaps found in your audit',
                 'Failures are reported as failures, never as zeros',
-              ].map((text, idx) => (
-                <div key={idx} className="flex items-start gap-2.5">
+              ].map((text) => (
+                <div key={text} className="flex items-start gap-2.5">
                   <div className="p-1 rounded bg-indigo-500/20 text-indigo-400 mt-0.5 shrink-0">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                   </div>
@@ -132,93 +114,58 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
             </div>
           </div>
 
-          {/* Trust Badge */}
-          <div className="mt-8 pt-6 border-t border-slate-800/80 flex items-center gap-3">
-            <ShieldCheck className="h-5 w-5 text-emerald-400 shrink-0" />
-            <div className="text-[11px] text-slate-400">
-              <span className="text-slate-200 font-semibold block">Early access</span>
-              Accounts are a placeholder while real sign-in is being built. Do not reuse a real password.
-            </div>
+          <div className="mt-8 pt-6 border-t border-slate-800/80 text-[11px] text-slate-400 leading-relaxed">
+            Access is by invitation. Your access code is checked on the server; sessions expire and end if your code is
+            withdrawn.
           </div>
         </div>
 
-        {/* Right Side: Auth Form Container */}
         <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between bg-slate-900/60">
           <div>
-            {/* Header / Mode Switcher */}
-            <div className="flex items-center justify-between gap-4 mb-6">
-              <div>
-                <h3 className="text-lg font-bold text-white">
-                  {isSignUp ? 'Create Auditor Account' : 'Sign in to Dashboard'}
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {isSignUp
-                    ? 'Create an account to run AI search visibility audits'
-                    : 'Enter your work email and password to continue'}
-                </p>
-              </div>
-
-              <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSignUp(false);
-                    setError(null);
-                  }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    !isSignUp ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Sign In
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSignUp(true);
-                    setError(null);
-                  }}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
-                    isSignUp ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Sign Up
-                </button>
-              </div>
+            <div className="mb-6">
+              <h3 className="text-lg font-bold text-white">Sign in</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Enter the email you were invited with and your access code.</p>
             </div>
 
-            {/* Error Banner */}
+            {notice && !error && (
+              <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-2 text-amber-200 text-xs font-medium">
+                <Info className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                <span>{notice}</span>
+              </div>
+            )}
+
+            {/* The server cannot let anyone in until the operator configures it. Say so before they type. */}
+            {unconfigured && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2 text-rose-200 text-xs font-medium">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                <span>{auth?.problem || 'Sign-in is not configured on this server.'}</span>
+              </div>
+            )}
+
+            {auth?.mode === 'dev' && (
+              <div className="mb-4 p-3 rounded-xl bg-slate-800/60 border border-slate-700 flex items-start gap-2 text-slate-300 text-xs">
+                <Info className="h-4 w-4 shrink-0 text-slate-400 mt-0.5" />
+                <span>
+                  Development mode: this server has no access codes configured, so the code <code>dev-access</code> works.
+                  This is never accepted in production.
+                </span>
+              </div>
+            )}
+
             {error && (
-              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-2 text-rose-300 text-xs font-medium animate-fadeIn">
+              <div
+                role="alert"
+                className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-2 text-rose-300 text-xs font-medium"
+              >
                 <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
                 <span>{error}</span>
               </div>
             )}
 
-            {/* Auth Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
-              {isSignUp && (
-                <div>
-                  <label htmlFor="auth-name-input" className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    Full Name <span className="text-rose-400">*</span>
-                  </label>
-                  <div className="relative">
-                    <UserIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                    <input
-                      id="auth-name-input"
-                      type="text"
-                      required
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g. Sarah Jenkins"
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-950 text-white text-xs rounded-xl border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-500 shadow-inner"
-                    />
-                  </div>
-                </div>
-              )}
-
               <div>
                 <label htmlFor="auth-email-input" className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                  Work Email Address <span className="text-rose-400">*</span>
+                  Email <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
                   <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
@@ -226,116 +173,64 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
                     id="auth-email-input"
                     type="email"
                     required
+                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="name@company.com"
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 text-white text-xs rounded-xl border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-500 shadow-inner"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-950 text-white text-sm rounded-xl border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-500 shadow-inner"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="auth-password-input" className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                  Password <span className="text-rose-400">*</span>
+                <label htmlFor="auth-code-input" className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Access code <span className="text-rose-400">*</span>
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
                   <input
-                    id="auth-password-input"
-                    type={showPassword ? 'text' : 'password'}
+                    id="auth-code-input"
+                    type={showCode ? 'text' : 'password'}
                     required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full pl-10 pr-10 py-2.5 bg-slate-950 text-white text-xs rounded-xl border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-500 shadow-inner"
+                    autoComplete="off"
+                    value={accessCode}
+                    onChange={(e) => setAccessCode(e.target.value)}
+                    placeholder="The code you were given"
+                    className="w-full pl-10 pr-10 py-2.5 bg-slate-950 text-white text-sm rounded-xl border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-500 shadow-inner"
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
+                    onClick={() => setShowCode(!showCode)}
+                    aria-label={showCode ? 'Hide access code' : 'Show access code'}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showCode ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
               </div>
 
-              {isSignUp && (
-                <div>
-                  <label htmlFor="auth-company-input" className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    Company / Organization (Optional)
-                  </label>
-                  <div className="relative">
-                    <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-                    <input
-                      id="auth-company-input"
-                      type="text"
-                      value={company}
-                      onChange={(e) => setCompany(e.target.value)}
-                      placeholder="e.g. Acme Corp"
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-950 text-white text-xs rounded-xl border border-slate-700/80 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-500 shadow-inner"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-                <span className="text-slate-500">Your session stays on this browser until you sign out.</span>
-                {!isSignUp && (
-                  <button
-                    type="button"
-                    onClick={() => setError('Password reset is not available yet, and no email was sent. Contact the person who invited you.')}
-                    className="text-indigo-400 hover:text-indigo-300 font-medium transition"
-                  >
-                    Forgot password?
-                  </button>
-                )}
-              </div>
-
-              {/* Submit Main Action Button */}
               <button
                 type="submit"
-                disabled={isLoading}
-                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold text-xs tracking-wide shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                disabled={isLoading || unconfigured}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold text-xs tracking-wide shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
                   <span className="flex items-center gap-2">
                     <span className="h-4 w-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                    Authenticating Session...
+                    Signing in...
                   </span>
                 ) : (
                   <>
-                    <span>{isSignUp ? 'Create Auditor Account' : 'Sign In to Dashboard'}</span>
+                    <span>Sign in</span>
                     <ArrowRight className="h-4 w-4" />
                   </>
                 )}
               </button>
             </form>
-
-            {/* Divider */}
-            <div className="relative my-6 text-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-800" />
-              </div>
-              <span className="relative px-3 bg-slate-900 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                Or Continue Instantly
-              </span>
-            </div>
-
-            {/* Quick Demo Login Option */}
-            <button
-              type="button"
-              onClick={handleQuickDemoLogin}
-              disabled={isLoading}
-              className="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-indigo-300 hover:text-indigo-200 border border-indigo-500/30 font-semibold text-xs transition flex items-center justify-center gap-2 shadow-sm"
-            >
-              <Sparkles className="h-4 w-4 text-indigo-400" />
-              <span>Quick Demo Sign In (1-Click Tester Access)</span>
-            </button>
           </div>
 
-          {/* Footer Note */}
           <div className="mt-6 pt-4 border-t border-slate-800/80 text-center text-[11px] text-slate-500">
-            By signing in, you agree to the Terms of Service & Privacy Policy.
+            Need access? Ask the person who runs this service for an invitation.
           </div>
         </div>
       </div>

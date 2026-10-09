@@ -14,6 +14,8 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
+import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+installAuthFetch();
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -114,6 +116,7 @@ async function main() {
         ...process.env,
         PORT: String(APP_PORT),
         NODE_ENV: 'production',
+        ...TEST_AUTH_ENV,
         GEMINI_API_KEY: 'fake-key-for-e2e-quota-test',
         GEMINI_BASE_URL: `http://127.0.0.1:${GEMINI_PORT}`,
         GEMINI_MAX_RETRIES: '2', // realistic default, to prove the breaker (not a low test-only cap) is what limits calls
@@ -202,6 +205,7 @@ async function main() {
           ...process.env,
           PORT: String(APP2_PORT),
           NODE_ENV: 'production',
+        ...TEST_AUTH_ENV,
           GEMINI_API_KEY: 'fake-key-for-e2e-quota-test-2',
           GEMINI_BASE_URL: `http://127.0.0.1:${GEMINI_PORT}`,
           GEMINI_MAX_RETRIES: '2',

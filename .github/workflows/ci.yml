@@ -26,7 +26,69 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The browser tests drive the real built app in Chromium.
+      - run: npx playwright install --with-deps chromium
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm test
         env:
           CI: 'true'
+      # The built server must run from a clean directory with ONLY production
+      # dependencies - what a Docker/Render/VPS build actually has.
+      - run: bash scripts/prod-install-check.sh
+
+  # Builds the production image and runs the post-deploy smoke test against the
+  # running container, with a real volume - the same shape as a real deployment.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build image
+        run: docker build -t geo-audit-studio:ci .
+      - name: Run container
+        run: |
+          docker volume create geo-data
+          docker run -d --name app -p 3000:3000 -v geo-data:/data \
+            -e SESSION_SECRET=ci-session-secret-0123456789abcdef0123456789 \
+            -e ACCESS_CODES=ci-access-code-1 \
+            -e GEMINI_API_KEY=not-a-real-key \
+            geo-audit-studio:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/health && break
+            sleep 1
+          done
+      - name: Smoke test the container
+        # No credentials: checks everything a stranger sees, that protected
+        # routes refuse a stranger, and that storage on the volume is durable.
+        run: node scripts/smoke.mjs http://127.0.0.1:3000
+      - name: Write real state, restart, and prove it survived
+        # Deep readiness writes a probe row to the store BEFORE it calls Gemini,
+        # so signing in and calling it leaves durable state even though the fake
+        # key makes the Gemini check fail. We then restart the container and read
+        # the row back from the volume with a separate container.
+        run: |
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:3000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","accessCode":"ci-access-code-1"}' | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).token))")
+          curl -sS http://127.0.0.1:3000/api/audit/readiness -H "Authorization: Bearer $TOKEN" > /dev/null
+          docker restart app
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/health && break
+            sleep 1
+          done
+          docker run --rm -v geo-data:/data node:22-slim node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync('/data/geo-audit.sqlite');
+            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
+            console.log('probe rows surviving the restart:', n);
+            process.exit(n >= 1 ? 0 : 1);
+          "
+      - name: Smoke test the restarted container
+        run: node scripts/smoke.mjs http://127.0.0.1:3000
+      - name: Container logs
+        if: always()
+        run: docker logs app

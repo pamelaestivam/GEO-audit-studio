@@ -18,6 +18,8 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
+import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+installAuthFetch();
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -106,6 +108,7 @@ async function startApp(extraEnv: Record<string, string> = {}): Promise<App | nu
       ...process.env,
       PORT: String(port),
       NODE_ENV: 'production',
+        ...TEST_AUTH_ENV,
       GEMINI_API_KEY: 'fake-key',
       GEMINI_BASE_URL: `http://127.0.0.1:${GEMINI_PORT}`,
       GEMINI_MIN_INTERVAL_MS: '0',
@@ -271,7 +274,7 @@ async function main() {
     assert('the X-Powered-By header is not advertised', health.headers.get('x-powered-by') === null);
     check('nosniff is set', health.headers.get('x-content-type-options'), 'nosniff');
     const healthBody = await health.json();
-    check('health states that storage is in-memory', healthBody.storage, 'in-memory');
+    check('health states that storage is not durable when no DATA_DIR is set', healthBody.storage, { kind: 'memory', durable: false });
 
     // ------------------------------------------------------------------
     // Server B: per-IP rate limit of 3 / minute on quota-spending POSTs.

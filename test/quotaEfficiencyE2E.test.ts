@@ -18,6 +18,8 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
+import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+installAuthFetch();
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -138,6 +140,7 @@ async function main() {
         ...process.env,
         PORT: String(APP_PORT),
         NODE_ENV: 'production',
+        ...TEST_AUTH_ENV,
         GEMINI_API_KEY: 'fake-key-for-efficiency-test',
         GEMINI_BASE_URL: `http://127.0.0.1:${GEMINI_PORT}`,
         GEMINI_MIN_INTERVAL_MS: '0',

@@ -50,6 +50,13 @@ export class IdempotencyStore<T> {
     return { value, replayed: false };
   }
 
+  /** Whether a live entry exists for `key`, without creating one. */
+  peek(key: string | undefined | null, now = Date.now()): boolean {
+    if (!key) return false;
+    this.prune(now);
+    return this.entries.has(key);
+  }
+
   /**
    * Drop a key so the next request under it does the work again. Used when
    * the stored value is a promise that rejected: sharing an in-flight call is

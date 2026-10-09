@@ -6,6 +6,10 @@ export interface AuditStatus {
   quota: QuotaState | null;
   /** Engines the server will genuinely query. null until the first response. */
   engines: string[] | null;
+  /** Whether audits are kept across a refresh or restart on this deployment. null until known. */
+  storage: { kind: string; durable: boolean; note?: string } | null;
+  /** Whether people can sign in at all, and if not, what the operator must fix. */
+  auth: { mode: 'configured' | 'dev' | 'unconfigured'; problem?: string } | null;
 }
 
 export interface QuotaState {
@@ -28,6 +32,8 @@ export function useQuotaStatus(): QuotaState | null {
 export function useAuditStatus(): AuditStatus {
   const [quota, setQuota] = useState<QuotaState | null>(null);
   const [engines, setEngines] = useState<string[] | null>(null);
+  const [storage, setStorage] = useState<AuditStatus['storage']>(null);
+  const [auth, setAuth] = useState<AuditStatus['auth']>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +46,8 @@ export function useAuditStatus(): AuditStatus {
         if (cancelled) return;
         setQuota(data.quota || null);
         setEngines(Array.isArray(data.engines) ? data.engines : null);
+        setStorage(data.storage || null);
+        setAuth(data.auth || null);
         if (data.quota && !data.quota.available) {
           const recheckIn = Math.min(60000, Math.max(5000, data.quota.msRemaining / 10));
           timer = setTimeout(check, recheckIn);
@@ -57,7 +65,7 @@ export function useAuditStatus(): AuditStatus {
     };
   }, []);
 
-  return { quota, engines };
+  return { quota, engines, storage, auth };
 }
 
 /** "Gemini and Perplexity" - for copy that must name only engines actually queried. */

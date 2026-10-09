@@ -209,7 +209,7 @@ directly (which every other test in this file does) cannot detect this
 failure mode at all - it bypasses Vercel's own routing layer entirely,
 which is exactly where this bug lived.
 
-### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured)
+### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured; the supported deployment is now an always-on service)
 
 Found in the 2026-10-09 MVP audit (`docs/MVP_AUDIT.md` A1). `POST
 /api/audit/run` answers `202` and then keeps working after the response;
@@ -333,7 +333,10 @@ nothing.
 **Still imperfect:** `accuracyRate` is still a model judgement with no ground
 truth (2.5) - it is now labelled "indicative" everywhere it appears.
 
-### 2.2 Authentication is not authentication (high)
+### 2.2 Authentication is not authentication (FIXED for the invitation-only MVP, 2026-10-09 - see 2.11 for what remains)
+
+**Superseded.** Sign-in is now real: email + an access code the operator hands out, an HMAC-signed expiring session, enforced server-side on every spending and saved-audit route, ownership by (code label, email), production refusing to run unconfigured (`src/auth.ts`, `docs/DEPLOYMENT.md`). The text below is the history of why it was replaced.
+
 
 `/api/auth/login` **auto-registers any email/password it has not seen**, so
 every login attempt succeeds. Users are held in an in-memory `Map` wiped on
@@ -356,7 +359,10 @@ box is gone. What remains: the token is checked by nothing, passwords are
 plaintext, a demo credential is in source, and audits are unowned. That is
 roadmap items 4 and 15, pending D3 in `docs/MVP_AUDIT.md`.
 
-### 2.3 Audit jobs live in memory (medium)
+### 2.3 Audit jobs live in memory (FIXED for one instance, 2026-10-09)
+
+**Superseded.** Jobs and saved audits live in the store (`src/store.ts`; SQLite on a persistent disk, memory fallback that says it is not durable). A restart fails orphaned jobs with a sentence. History below.
+
 
 Audits now run as background jobs (`POST /api/audit/run` returns a job id, the
 client polls `/api/audit/job/:id`), which fixed the "Load failed" aborts on
@@ -601,6 +607,67 @@ Discovery is guarded — every extracted name must literally occur in the answer
 text or it is discarded — so it cannot invent a competitor. It can still *miss*
 one (a vendor mentioned only obliquely), which would slightly flatter the
 client's rank. Recall is unmeasured.
+
+### 2.11 Known limits of the MVP foundation (read before scaling)
+
+Written 2026-10-09 so none of these is rediscovered:
+
+- **One instance only.** SQLite is a file on one machine. A second instance would
+  not see the first one's jobs or audits. The next step is Postgres behind the
+  same `Store` interface (`src/store.ts`); the admission lock in `server.ts`
+  (`serialised`) only matters once the store is asynchronous and would need to
+  become a transaction.
+- **Privacy model.** Saved audits belong to (code label, email). Anyone holding a
+  code can sign in as any email *under that code* and see audits saved under it.
+  Give people who need private audits their own code. The operator can read
+  everything in the database. Real per-person accounts need the user table
+  (roadmap item 4, Google sign-in - 1.5).
+- **Session token is in `localStorage`** and the app sets no
+  `Content-Security-Policy`; an injected script could read it. Sessions expire
+  (7 days) and die with their code. A CSP and an httpOnly cookie are the fix.
+- **Some limits are per process:** the hourly lookup limit and the per-IP limits
+  reset on restart (the daily *audit* budgets are in the store and do not).
+  `TRUST_PROXY` must match the real number of proxies - too high lets clients
+  spoof their address, too low throttles everyone together.
+- **No admin kill switch** and **no spend cap on the Gemini key itself** - set one
+  in Google's console.
+- **Budgets are per access code, not per person.** People who share a code share
+  its allowance, and changing the email does not reset it (the email is free
+  text). Give each person their own code if they need separate allowances.
+  Reusing a label for a *new* person hands them the previous holder's saved audits
+  (audits belong to label + email and survive code removal): treat labels as
+  identities and retire them, do not recycle them.
+- **"Non-billable" failures could be farmed.** An audit that collects no evidence
+  is not counted against the budget. Someone could craft queries the engines
+  reject and run many such audits; they are still bounded by the concurrency cap
+  and the per-IP limit, and cost little, but it is a hole in the budget.
+- **A job reaped as stuck stops counting toward the concurrency cap** even while
+  its work is still running, and tells the person it failed; if it later finishes
+  it flips to done and is saved (the audit was paid for). Slightly confusing, never lossy.
+- **The limiter table is capped (50,000 keys)** and fails closed past that: a
+  flood from many addresses can make new addresses wait. IPv6 clients are limited
+  by /64 to make that hard. Acceptable against unbounded memory.
+- **Jobs are not resumable.** An audit cut off by a restart or deploy is marked
+  failed with a sentence (and is not counted against the daily budget); the
+  person re-runs it. A job reaped as stuck after 15 minutes that later finishes
+  is still recorded.
+- **No automated backups.** Copy `DATA_DIR/geo-audit.sqlite` or use the host's
+  disk snapshots. Deleting an access code does not delete that person's saved
+  audits.
+- **`node:sqlite` is marked experimental by Node 22** (it prints a warning at
+  start). It is stable in practice but the API could change; `engines` pins
+  Node >= 22.13.
+- **The standard queries are generic.** Two of the three necessarily name the
+  brand (a comparison and a price question). The first is brand-neutral only
+  when an industry or competitor is given; the report and card warn when every
+  query names the brand, because then "100% visible" is near-guaranteed. A real
+  audit needs the person's own category questions. Visibility is still a share of
+  a handful of answers (the card says how many).
+- **Nothing has run against a real answer engine** (no key where this was
+  built). The Gemini adapter is exercised against a protocol-faithful fake and,
+  once, a real rejected-key response; the ChatGPT/Perplexity/Claude adapters have
+  never seen a live payload (2.8).
+- **Docker image and `render.yaml`** are unproven until CI/Render run them.
 
 ### 2.8 Smaller items (low)
 

@@ -27,6 +27,8 @@ export interface AuditRequest {
 export interface StartAuditResult {
   report: any;
   degraded?: boolean;
+  /** Whether the server kept this audit (durable storage, and the save succeeded). */
+  saved?: boolean;
 }
 
 /** Mirrors the server's job progress: what the audit is genuinely doing now. */
@@ -122,7 +124,9 @@ export async function runAuditJob(
     if (!data.report) {
       throw new Error('The audit finished but returned no report. Please try again.');
     }
-    return data as StartAuditResult;
+    // Carry "was it kept" on the report itself, so every screen that shows it
+    // can say the truth about whether a refresh will lose it.
+    return { ...data, report: { ...data.report, saved: !!data.saved } } as StartAuditResult;
   }
 
   throw new Error('The audit is taking longer than expected. It may still finish - please try again in a few minutes.');
