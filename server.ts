@@ -444,6 +444,104 @@ async function buildApp() {
     });
   });
 
+  /**
+   * Deep readiness: does this deployment actually work, not just answer HTTP?
+   *
+   * A wrong model id or a rejected key is currently discovered by the first
+   * person to run an audit. This asks for one tiny answer from Gemini (the one
+   * engine that is mandatory) and round-trips the store, so the failure shows
+   * up when the operator checks a deploy. It states exactly what it verified:
+   * engines it did not call are reported as "not checked", never as healthy.
+   * Cached, because every call spends a real request of a shared quota.
+   */
+  const READINESS_TTL_MS = 5 * 60 * 1000;
+  let readinessCache: { at: number; body: any } | null = null;
+  async function checkReadiness() {
+    /** `verified`: this check made a real call or write. A key merely being set is not verified. */
+    const checks: { name: string; ok: boolean; verified: boolean; detail: string }[] = [];
+
+    checks.push({
+      name: 'sign-in',
+      verified: true,
+      ok: auth.mode === 'configured',
+      detail:
+        auth.mode === 'configured'
+          ? 'SESSION_SECRET and ACCESS_CODES are set.'
+          : auth.mode === 'dev'
+            ? 'Development mode: any email with the dev code can sign in. Not acceptable for a real deployment.'
+            : auth.problem || 'Sign-in is not configured.',
+    });
+
+    const info = store.info();
+    try {
+      const probe = `readiness-${crypto.randomBytes(3).toString('hex')}`;
+      await store.createJob({ id: probe, owner: 'readiness@system', status: 'done', startedAt: Date.now(), billable: false });
+      const back = await store.getJob(probe);
+      // (The probe row is non-billable and ages out with ordinary job retention.)
+      checks.push({
+        name: 'storage',
+        verified: true,
+        ok: !!back && info.durable,
+        detail: !back
+          ? 'The store accepted a write but did not return it.'
+          : info.durable
+            ? `${info.kind} store works and survives restarts.`
+            : info.note || 'Storage works but is not durable: audits are lost on restart.',
+      });
+    } catch (err: any) {
+      checks.push({ name: 'storage', verified: true, ok: false, detail: `The store could not be written: ${err?.message || err}` });
+    }
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      checks.push({ name: 'gemini', verified: true, ok: false, detail: 'GEMINI_API_KEY is not set. Audits cannot be analysed without it.' });
+    } else if (geminiBreaker.isTripped()) {
+      checks.push({ name: 'gemini', verified: false, ok: false, detail: geminiBreaker.status().reason || 'The Gemini quota is known to be exhausted.' });
+    } else {
+      try {
+        const reply = await generateContentWithRetry(ai, { model: AUDIT_MODEL, contents: 'Reply with the single word OK.' }, 0);
+        checks.push({
+          name: 'gemini',
+          verified: true,
+          ok: typeof reply?.text === 'string' && reply.text.trim().length > 0,
+          detail: `Model ${AUDIT_MODEL} answered a live request.`,
+        });
+      } catch (err: any) {
+        checks.push({
+          name: 'gemini',
+          verified: true,
+          ok: false,
+          detail: `${describeProviderError(err, 'Gemini').message} (model: ${AUDIT_MODEL})`,
+        });
+      }
+    }
+
+    for (const engine of configuredEngines().filter((e) => e !== 'Gemini')) {
+      checks.push({
+        name: engine.toLowerCase(),
+        verified: false,
+        ok: true,
+        detail: `${engine}'s key is set. Its answers have not been verified against a live call by this check.`,
+      });
+    }
+
+    return { checkedAt: new Date().toISOString(), ok: checks.every((c) => c.ok), checks };
+  }
+
+  app.get(
+    '/api/audit/readiness',
+    handle(async (req, res) => {
+      const fresh = readinessCache && Date.now() - readinessCache.at < READINESS_TTL_MS;
+      if (!fresh || req.query.refresh === '1') {
+        // A forced refresh is still limited to once a minute: it spends quota.
+        if (!(readinessCache && req.query.refresh === '1' && Date.now() - readinessCache.at < 60_000)) {
+          readinessCache = { at: Date.now(), body: await checkReadiness() };
+        }
+      }
+      res.json({ ...readinessCache!.body, cached: fresh && req.query.refresh !== '1' });
+    })
+  );
+
   // ---- Sign in. An email plus an access code the operator handed out; the
   // answer is an expiring, signed session token (src/auth.ts). A tighter
   // limit than the audit routes: this is the one place a code can be guessed.
@@ -1784,6 +1882,17 @@ Return valid JSON matching the schema.`;
     app.use(vite.middlewares);
   } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
+    // The backend bundle is built into dist/ next to the frontend, so serving
+    // that directory as static files published it (and its source map) to
+    // anyone who asked: GET /server.cjs returned 200 on every non-Vercel
+    // deployment. vercel.json deletes the files on Vercel; this is the same
+    // protection for everywhere else. Found by scripts/smoke.mjs.
+    app.use((req, res, next) => {
+      if (/^\/server\.cjs(\.map)?$/.test(req.path)) {
+        return res.status(404).json({ error: 'Not found.' });
+      }
+      next();
+    });
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

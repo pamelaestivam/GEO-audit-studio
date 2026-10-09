@@ -1,0 +1,45 @@
+# Render Blueprint: one always-on web service with a persistent disk.
+# New -> Blueprint -> pick this repository. See docs/DEPLOYMENT.md.
+#
+# This file follows Render's documented Blueprint fields but has not been
+# validated against Render from the environment it was written in: the first
+# sync will tell you if a field name needs adjusting.
+services:
+  - type: web
+    name: geo-audit-studio
+    runtime: node
+    # A persistent disk is not available on Render's free plan, and a free
+    # instance sleeps - which is exactly what made earlier audits fail on the
+    # first request of the day. Pick a paid plan; check Render's pricing page.
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: geo-audit-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      # Generated once by Render; rotating it signs everyone out.
+      - key: SESSION_SECRET
+        generateValue: true
+      # Comma-separated codes you hand to invited people. Removing one ends the
+      # sessions it created. At least 8 characters each.
+      - key: ACCESS_CODES
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      # Optional extra engines - each one multiplies per-audit spend.
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

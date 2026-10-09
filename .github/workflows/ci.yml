@@ -33,3 +33,35 @@ jobs:
       - run: npm test
         env:
           CI: 'true'
+
+  # Builds the production image and runs the post-deploy smoke test against the
+  # running container, with a real volume - the same shape as a real deployment.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build image
+        run: docker build -t geo-audit-studio:ci .
+      - name: Run container
+        run: |
+          docker volume create geo-data
+          docker run -d --name app -p 3000:3000 -v geo-data:/data \
+            -e SESSION_SECRET=ci-session-secret-0123456789abcdef0123456789 \
+            -e ACCESS_CODES=ci-access-code-1 \
+            -e GEMINI_API_KEY=not-a-real-key \
+            geo-audit-studio:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/health && break
+            sleep 1
+          done
+      - name: Smoke test the container
+        # No credentials: checks everything a stranger sees, that protected
+        # routes refuse a stranger, and that storage on the volume is durable.
+        run: node scripts/smoke.mjs http://127.0.0.1:3000
+      - name: Container logs
+        if: always()
+        run: docker logs app

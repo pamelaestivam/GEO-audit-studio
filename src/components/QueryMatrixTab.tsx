@@ -511,6 +511,33 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
                         </div>
                       )}
 
+                      {/* The evidence itself: exactly what the engine said, when, and what it searched.
+                          The excerpt above is one sentence of this; every number in the report
+                          is computed from this text, so a reader can check it. */}
+                      {(() => {
+                        const captured = selectedQueryModal.evidence?.find((e) => e.engine === eng);
+                        if (!captured || !captured.answerText) return null;
+                        return (
+                          <details className="bg-slate-900/70 border border-slate-800 rounded-lg">
+                            <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-indigo-300 hover:text-indigo-200">
+                              Show the full answer as captured
+                              {captured.capturedAt ? ` (${new Date(captured.capturedAt).toLocaleString()})` : ''}
+                            </summary>
+                            <div className="px-3 pb-3 space-y-2">
+                              {(captured.searchQueries || []).length > 0 && (
+                                <p className="text-[11px] text-slate-400">
+                                  <strong className="text-slate-300">{eng} searched for:</strong>{' '}
+                                  {(captured.searchQueries || []).join(' · ')}
+                                </p>
+                              )}
+                              <pre className="whitespace-pre-wrap break-words text-xs text-slate-200 font-sans leading-relaxed max-h-80 overflow-y-auto">
+                                {captured.answerText}
+                              </pre>
+                            </div>
+                          </details>
+                        );
+                      })()}
+
                       {/* Cited Sources */}
                       {res.citations && res.citations.length > 0 && (
                         <div className="pt-1">

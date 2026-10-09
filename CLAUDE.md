@@ -114,6 +114,10 @@ fabricated to fill a gap), live in `docs/PRD.md` — read it before
 prioritizing the backlog in `TECH_DEBT.md` §3.
 The latest adversarial audit, its 20-item roadmap and the decisions awaiting
 the owner are in `docs/MVP_AUDIT.md` - read it before choosing what to build.
+How to deploy and operate it is `docs/DEPLOYMENT.md`; how to use it is
+`docs/USER_GUIDE.md`. Standing review agents live in `.claude/agents/`
+(`adversarial-reviewer`, `eval-pm`, `ux-tourist`) and the session workflow that
+uses them is `docs/ENGINEERING_STANDARDS.md` §10 - follow it.
 Engineering process (design notes, review bar, testing pyramid, release
 gates) is in `docs/ENGINEERING_STANDARDS.md` — it makes this file's
 "working dynamic" section repeatable as a checklist rather than tribal

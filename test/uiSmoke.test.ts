@@ -154,6 +154,16 @@ async function main() {
       assert(`the "${label}" module renders its content`, expect.test(txt), txt.slice(0, 200));
     }
 
+    // --- the evidence behind the numbers can be read
+    await page.locator('aside').getByText('Query Intent Matrix', { exact: false }).first().click();
+    await page.locator('tbody tr').first().click();
+    assert('a query row opens its detail', await appears(page, 'text=Captured AI Engine Responses'));
+    await page.click('summary:has-text("Show the full answer as captured")');
+    const evidenceText = await page.locator('details[open]').innerText();
+    assert('the full verbatim answer is shown', /Pokeworks/.test(evidenceText) && /consistently rated highest/.test(evidenceText), evidenceText.slice(0, 200));
+    assert('...with the searches the engine ran', /Gemini searched for/.test(evidenceText) && /poke austin/.test(evidenceText));
+    await page.locator('.fixed button:has-text("✕")').click();
+
     // --- summary tiles are real buttons that go somewhere
     await page.locator('aside').getByText('Query Intent Matrix', { exact: false }).first().click();
     await page.locator('button:has-text("Fact Accuracy Rate")').click();

@@ -159,6 +159,10 @@ async function main() {
     const health = await (await rawFetch(`${A.base}/api/health`)).json();
     check('health reports durable storage', health.storage, { kind: 'sqlite', durable: true });
 
+    check('the compiled backend bundle is not downloadable', (await rawFetch(`${A.base}/server.cjs`)).status, 404);
+    check('...nor its source map', (await rawFetch(`${A.base}/server.cjs.map`)).status, 404);
+    check('the frontend itself is still served', (await rawFetch(`${A.base}/`)).status, 200);
+
     // --- nothing that spends or reads saved work is open
     const noAuthRun = await rawFetch(`${A.base}/api/audit/run`, {
       method: 'POST',
@@ -279,6 +283,32 @@ async function main() {
     check('the owner can delete a saved audit', del.status, 200);
     check('...and it is gone', (await rawFetch(`${A3.base}/api/audits/${reportId}`, { headers: authed(alice.body.token) })).status, 404);
 
+    // --- deep readiness: a real call, said as such, cached
+    const hitsBefore = fake.hits();
+    const ready = await (await rawFetch(`${A3.base}/api/audit/readiness`, { headers: authed(alice.body.token) })).json();
+    check('readiness passes on a healthy deployment', ready.ok, true);
+    const byName = Object.fromEntries(ready.checks.map((c: any) => [c.name, c]));
+    check('...it made one real Gemini call', fake.hits() - hitsBefore, 1);
+    check('...and says gemini was verified', [byName.gemini.ok, byName.gemini.verified], [true, true]);
+    check('...storage is verified durable', [byName.storage.ok, byName.storage.verified], [true, true]);
+    check('...sign-in is verified configured', byName['sign-in'].ok, true);
+    const again = await (await rawFetch(`${A3.base}/api/audit/readiness`, { headers: authed(alice.body.token) })).json();
+    check('a repeat within minutes is served from cache, costing no quota', [again.cached, fake.hits() - hitsBefore], [true, 1]);
+    check('readiness needs a session', (await rawFetch(`${A3.base}/api/audit/readiness`)).status, 401);
+
+    // --- the post-deploy smoke script, run for real against a real server
+    const runSmoke = (base: string, extra: string[] = []) =>
+      new Promise<{ code: number | null; out: string }>((resolve) => {
+        const child = spawn('node', ['scripts/smoke.mjs', base, ...extra], { env: { ...process.env, HTTP_PROXY: '', HTTPS_PROXY: '', NO_PROXY: '*' } });
+        let out = '';
+        child.stdout.on('data', (d) => (out += d));
+        child.stderr.on('data', (d) => (out += d));
+        child.on('exit', (code) => resolve({ code, out }));
+      });
+    const smokeGood = await runSmoke(A3.base, ['--email', 'smoke@example.com', '--code', TEST_ACCESS_CODE]);
+    check('the smoke script passes against a healthy, configured, durable deployment', smokeGood.code, 0);
+    assert('...and exercised sign-in and readiness', /signing in with the supplied credentials works/.test(smokeGood.out) && /readiness: gemini/.test(smokeGood.out), smokeGood.out.slice(-600));
+
     // ==================================================================
     // 2. A revoked access code ends the sessions it created.
     // ==================================================================
@@ -352,6 +382,28 @@ async function main() {
       check('...but is reported as not saved', d.body.saved, false);
     }
 
+    // --- readiness reports a rejected key as a sentence, and a missing one as missing
+    const RB = await startApp({});
+    if (RB) {
+      apps.push(RB);
+      mode = 'unauthorized';
+      const t2 = (await login(RB, 'r@example.com')).body.token;
+      const bad = await (await rawFetch(`${RB.base}/api/audit/readiness`, { headers: authed(t2) })).json();
+      check('a rejected key fails readiness', bad.ok, false);
+      const g = bad.checks.find((c: any) => c.name === 'gemini');
+      assert('...with a sentence naming the model and the problem', /rejected the API key/.test(g.detail) && /model:/.test(g.detail) && !g.detail.includes('{'), g.detail);
+      assert('...and no raw provider payload', !JSON.stringify(bad).includes('SECRET_PAYLOAD_MARKER'));
+      assert('non-durable storage is flagged by readiness too', bad.checks.find((c: any) => c.name === 'storage').ok === false);
+      mode = 'ok';
+    }
+    const NK = await startApp({ GEMINI_API_KEY: '' });
+    if (NK) {
+      apps.push(NK);
+      const t3 = (await login(NK, 'nk@example.com')).body.token;
+      const missing = await (await rawFetch(`${NK.base}/api/audit/readiness`, { headers: authed(t3) })).json();
+      assert('a missing Gemini key is reported as missing', /GEMINI_API_KEY is not set/.test(missing.checks.find((c: any) => c.name === 'gemini').detail));
+    }
+
     // ==================================================================
     // 5. Unconfigured production never falls open.
     // ==================================================================
@@ -363,7 +415,10 @@ async function main() {
       check('status reports sign-in as unconfigured', s.auth.mode, 'unconfigured');
       assert('...and names what the operator must set', /SESSION_SECRET/.test(s.auth.problem) && /ACCESS_CODES/.test(s.auth.problem), s.auth.problem);
       const l = await login(U, 'x@example.com', 'anything-at-all');
-      check('sign-in is refused with 503, not accepted', l.status, 503);
+      const smokeBad = await runSmoke(U.base);
+    check('the smoke script FAILS against an unconfigured deployment', smokeBad.code, 1);
+    assert('...and names sign-in and storage as the problems', /FAIL  sign-in is configured/.test(smokeBad.out) && /FAIL  storage is durable/.test(smokeBad.out), smokeBad.out.slice(-700));
+    check('sign-in is refused with 503, not accepted', l.status, 503);
       check('...with the same sentence', l.body.code, 'auth_unconfigured');
       const run = await rawFetch(`${U.base}/api/audit/run`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer anything' }, body: JSON.stringify(BIZ) });
       check('spending routes are refused with 503, not opened', run.status, 503);

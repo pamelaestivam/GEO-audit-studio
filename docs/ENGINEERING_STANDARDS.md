@@ -107,6 +107,31 @@ repeatable instead of vibes-based:
       view on a phone screen.
 - [ ] The failure path is visually distinguishable from a real zero.
 
+Added after the 2026-10 audit, each from a defect that shipped past a green build:
+
+- [ ] **Read the literal output with real inputs, including the empty default.**
+      The default audit asked the engines "Best software alternatives to  for
+      modern teams" (an empty array interpolated, a category invented) and no
+      test noticed, because no test read the sentence. Print it. Look at it.
+- [ ] **Is it true of this deployment?** Labels and copy that name engines,
+      storage, monitoring or security ("Active", "encrypted sessions", "saved")
+      must be derived from real state - or removed.
+- [ ] **What is public?** List every route and file reachable without a session.
+      `GET /server.cjs` returned the compiled backend for months on every
+      non-Vercel host. `scripts/smoke.mjs` checks this; run it.
+- [ ] **Per-X means per-X.** A "per brand" / "per user" / "per query" value
+      computed once and copied to every X is fabricated for all but one of them.
+- [ ] **Would the test fail if the code were wrong?** Break the code on purpose
+      and watch the test go red. An assertion like `assert(name, true)` after a
+      wait, or `check(x, x)`, cannot fail and does not count. If a test passes the
+      first time it ran, be suspicious of the test before you celebrate.
+- [ ] **Look at the screen.** Open it in a browser at desktop *and* phone width and
+      read it as a person would. Half the defects fixed in the 2026-10 round were
+      visible at a glance and invisible to every assertion.
+- [ ] **A destructive helper does what its name says to everything.** A cleanup
+      written as `prune(now + 1000)` deletes the whole table. Read cleanup code as
+      if it were the attack.
+
 ## 6. Testing pyramid (Google/industry-standard shape, applied here)
 
 - **Unit** — pure functions in `src/analysis.ts`, `src/errors.ts`,
@@ -121,11 +146,34 @@ repeatable instead of vibes-based:
   JSON) as executable checks, so a violation is a test failure, not a
   bug report from a client.
 
+- **UI** — `test/uiSmoke.test.ts` drives the real built app in Chromium
+  (desktop and phone) against the real server and a fake engine: sign-in,
+  an audit, every module, reload persistence, delete, failure states. Added
+  because every UI defect before it was found by eye.
+- **Foundation E2E** — `test/foundationE2E.test.ts`: sign-in enforced on every
+  spending route, ownership between users, restart survival (including SIGKILL
+  mid-audit), budgets, unconfigured-production behaviour.
+- **Post-deploy smoke** — `scripts/smoke.mjs <url>` runs against a DEPLOYED
+  instance (and CI runs it against the built container). It is the only layer
+  that sees what the platform does between the user and the code.
+
+A passing test proves nothing until it has been seen to fail. Break the code on
+purpose and confirm the red (§5).
+
 New capability, new call site touching an answer engine, or new
-persisted state → it needs a home in one of these three layers before
+persisted state → it needs a home in one of these layers before
 merge, not "we'll add a test later."
 
 ## 7. Release process
+
+- **CI is the gate** (`.github/workflows/ci.yml`): lint, `npm audit` (high+),
+  `npm test` including the browser tests, and a job that builds the Docker
+  image and smoke-tests the running container. A PR does not merge on red.
+  *Owner action not doable from a repo:* turn on branch protection for `main`
+  requiring the `test` and `docker` checks, so this is enforced by GitHub rather
+  than by habit.
+- **Fill in the PR template** (`.github/pull_request_template.md`) - it asks for
+  what was *not* verified, which is the section that matters.
 
 - `main` auto-deploys (Vercel — see `TECH_DEBT.md` §1.4) — a merge to
   `main` is a release to real users, not a checkpoint.
@@ -143,11 +191,12 @@ merge, not "we'll add a test later."
 
 Run (or invoke the `security-review` skill) before merging any change
 that touches: authentication, session handling, anything reading
-`req.body`/`req.query` into a code path that calls an external API or a
-future datastore, secrets/env handling, or CORS. Given `TECH_DEBT.md`
-§2.2 (auth is currently a stub with plaintext-compared passwords and no
-session validation), **do not treat auth as low-risk by default in this
-repo** — it is the single largest known exposure until it's replaced.
+`req.body`/`req.query` into a code path that calls an external API or the
+datastore, secrets/env handling, or CORS. Sign-in is now real (`src/auth.ts`:
+access code, signed expiring sessions, enforced server-side) but it is still the
+single most security-sensitive file: any change to it needs a new test that fails
+without the change, and a check that **production still refuses to run
+unconfigured instead of falling open**.
 
 ## 9. Decision log
 
@@ -156,3 +205,63 @@ adoption included) gets one entry in `docs/DECISIONS.md`: date, decision,
 who weighed in, and the one alternative that was seriously considered and
 rejected, with why. This is what makes "why does the code do it this way"
 answerable six months later without reconstructing the conversation.
+
+## 10. Working with agents (Claude sessions and the standing seats)
+
+The product is built by Claude sessions working for the owner. The same rules
+apply to every session; they are written down so the next one does not have to
+rediscover them.
+
+**Start of a session.** Read `CLAUDE.md`, `TECH_DEBT.md` (open owner actions),
+`docs/MVP_AUDIT.md` (current roadmap and decisions waiting on the owner), and
+`git log` for what just changed. Run `git status` and `npm test` *before*
+touching anything, so you know whether a failure is yours.
+
+**The loop for every change.**
+1. Reproduce the problem against the real thing (built server, real browser) and
+   record what you saw. If you cannot reproduce it, you do not yet understand it.
+2. Fix the root cause. Ask "does this need to exist at all" before "how do I make
+   it fail softly".
+3. Prove it: a test that fails on the old code and passes on the new, plus the
+   whole suite. Then break it on purpose and watch the test go red.
+4. **Look at it** - desktop and phone - if a person will see it.
+5. **Independent adversarial review**: delegate to the `adversarial-reviewer`
+   agent (`.claude/agents/`), which has a fresh context and the brief to break
+   the change. Fix every CONFIRMED finding; say why for any you reject. The
+   author's own pass (§5) comes first and does not replace this.
+6. **EVAL PM** (`eval-pm` agent) scores it. Only SHIP merges.
+7. PR using the template, CI green, merge, delete the branch, confirm `main`.
+8. Update `TECH_DEBT.md` / `docs/DECISIONS.md` / docs in the same change.
+
+**The `ux-tourist` agent** drives the built app in a browser and reports what
+looks untrue, inert or malformed. Use it after any UI-visible change; it found
+defects in the 2026-10 round that no assertion could have.
+
+**Truth in reporting.** These are non-negotiable and apply to chat replies as
+much as to the UI:
+- Say what you *ran* and what it *printed*. "Should work" is not a result.
+- Say what you did **not** verify, and why (no API key, no deploy access, a
+  network policy). A tryout against a fake must be called a tryout against a fake.
+- Never present a fake, a fixture, a placeholder or a guess as a measurement.
+- A green suite is not a review, and a suite that has never failed is not yet
+  evidence.
+- If the owner's instruction cannot be followed as stated (a blocked network, a
+  disallowed shortcut), say so plainly and do the honest alternative - do not
+  quietly substitute.
+
+**Sandbox hygiene (learned the hard way).**
+- Never `pkill -f <pattern>` / `pgrep -f <pattern> | xargs kill` from a shell
+  whose own command line contains the pattern: it kills itself. Record the PID
+  (`cmd & echo $!`) and kill that.
+- Start servers on random ports and always kill them in a `finally`.
+- Recursive `mkdir` under `/proc` hangs in this environment; test an unwritable
+  path with a directory under a regular file instead.
+- The environment's network policy may block hosts (it blocks `google.com`).
+  Do not try to route around it; report it and work with what is reachable.
+
+**Permissions and shared state.** Do not push to `main` directly, force-push
+shared branches, skip hooks, rotate secrets, or change repository/hosting
+settings; those are the owner's. Do not post to GitHub more than a change needs.
+Merge only what the standing instruction in `CLAUDE.md` allows (reviewed, scored
+SHIP, CI green), and leave nothing stale: merged branches are deleted, open
+questions are in `TECH_DEBT.md`.
