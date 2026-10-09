@@ -181,6 +181,23 @@ function looksLikeRateLimit(lower: string): boolean {
   );
 }
 
+/**
+ * The quota advice below (Pacific-midnight reset, AI Studio, billing) is
+ * Google's. It was printed for every provider, so a ChatGPT 429 told the owner
+ * to check a Google page; it now applies unless the error is from another engine.
+ */
+function isGemini(provider: string): boolean {
+  return !/chatgpt|openai|perplexity|claude|anthropic/i.test(provider);
+}
+
+/** The environment variable that names the model for a provider. */
+function modelEnvFor(provider: string): string {
+  if (/chatgpt|openai/i.test(provider)) return 'OPENAI_MODEL';
+  if (/perplexity/i.test(provider)) return 'PERPLEXITY_MODEL';
+  if (/claude|anthropic/i.test(provider)) return 'ANTHROPIC_MODEL';
+  return 'GEMINI_MODEL';
+}
+
 export function describeProviderError(err: unknown, provider = 'The answer engine'): ReadableError {
   // A circuit-breaker refusal is already a finished, human-readable sentence
   // (built by computeQuotaCooldownMs/formatDuration at trip time). Re-running
@@ -203,6 +220,24 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
   const isOwnDailyMessage = lower.includes(DAILY_QUOTA_MARKER_LC);
   const isOwnRateLimitMessage = lower.includes(RATE_LIMIT_MARKER_LC);
 
+  // An account with no credit is a billing wall, not a pacing signal: waiting a
+  // minute never fixes it, and the retry advice below would be wrong.
+  if (lower.includes('insufficient_quota') || lower.includes('credit balance is too low') || lower.includes('billing_hard_limit')) {
+    return {
+      kind: 'quota',
+      isDailyQuota: true,
+      message: `${provider} says this account is out of credit or over its spending limit. Waiting will not fix it: add credit or raise the limit in the provider's billing settings, then re-run.`,
+    };
+  }
+  // A retired or misspelled model id looks like any other failure ("unexpected
+  // error") unless it is named.
+  if (lower.includes('not_found_error') || /model[^a-z]{0,6}[^,]{0,60}(not found|does not exist|not supported)/.test(lower)) {
+    return {
+      kind: 'unknown',
+      message: `${provider} does not recognise (or this key cannot use) the model configured for it, so nothing was measured. Set a current model id that the key can use in ${modelEnvFor(provider)} and re-run.`,
+    };
+  }
+
   if (isOwnDailyMessage || isOwnRateLimitMessage || looksLikeRateLimit(lower)) {
     // Our own prose, round-tripped back through here as a plain string:
     // return it untouched, and preserve which of the two events it described
@@ -215,9 +250,12 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
         kind: 'quota',
         retryAfterSeconds,
         isDailyQuota: true,
-        message:
-          `${provider}'s ${DAILY_QUOTA_MARKER}. Daily quotas reset at midnight Pacific time ` +
-          `(in ${formatDuration(computeQuotaCooldownMs(raw))}). Enabling billing on the key raises the cap immediately.`,
+        message: isGemini(provider)
+          ? `${provider}'s ${DAILY_QUOTA_MARKER}. Daily quotas reset at midnight Pacific time ` +
+            `(in ${formatDuration(computeQuotaCooldownMs(raw))}). Enabling billing on the key raises the cap immediately.`
+          : // The Pacific-midnight reset and the billing advice are Google's; another
+            // provider's reset time is not known here, so none is claimed.
+            `${provider}'s ${DAILY_QUOTA_MARKER}. Check the usage limits for that key in the provider's own dashboard, or raise them there.`,
       };
     }
 
@@ -232,8 +270,8 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
       isDailyQuota: false,
       message:
         retryAfterSeconds !== undefined
-          ? `${provider} rate limited this request: ${RATE_LIMIT_MARKER}. It asked us to wait ${formatDuration(retryAfterSeconds * 1000)} before trying again. Enabling billing on the API key lifts the per-minute cap.`
-          : `${provider} rate limited this request: ${RATE_LIMIT_MARKER}, and did not say for how long. Wait a minute and re-run; if it keeps happening, check the key's quota at https://aistudio.google.com/apikey or enable billing on it.`,
+          ? `${provider} rate limited this request: ${RATE_LIMIT_MARKER}. It asked us to wait ${formatDuration(retryAfterSeconds * 1000)} before trying again. ${isGemini(provider) ? 'Enabling billing on the API key lifts the per-minute cap.' : 'Check the usage limits for that key in the provider\'s own dashboard.'}`
+          : `${provider} rate limited this request: ${RATE_LIMIT_MARKER}, and did not say for how long. Wait a minute and re-run; if it keeps happening, ${isGemini(provider) ? 'check the key\'s quota at https://aistudio.google.com/apikey or enable billing on it' : 'check the usage limits for that key in the provider\'s own dashboard'}.`,
     };
   }
 

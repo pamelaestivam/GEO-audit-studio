@@ -1132,8 +1132,10 @@ Return a JSON array of exactly 3 query objects.`;
       if (engine === 'Gemini') return collectGeminiEvidence(aiInstance, query);
 
       const answer = await askEngine(engine, query.queryText);
-      const readable = answer.error ? describeProviderError(answer.error, engine) : null;
-      if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.error}`);
+      // The adapter already worded the failure for this provider; describing it again
+      // flattened every specific reason ("cut off", "declined", "out of credit") to
+      // "unexpected error".
+      if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.rawError || answer.error}`);
       return {
         queryId: query.id,
         queryText: query.queryText,
@@ -1142,8 +1144,8 @@ Return a JSON array of exactly 3 query objects.`;
         searchQueries: answer.searchQueries,
         capturedAt: new Date().toISOString(),
         engine,
-        error: readable?.message,
-        errorKind: readable?.kind,
+        error: answer.error,
+        errorKind: answer.errorKind,
       };
     });
 

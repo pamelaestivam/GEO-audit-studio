@@ -684,9 +684,17 @@ Written 2026-10-09 so none of these is rediscovered:
   tracked — the most interesting part of that finding is not called out.
 - ~~`generateSynthesizedAudit` still emits placeholder remediation text.~~ Fixed
   2026-10-09, see 2.1b: the failed-audit report now carries no findings.
-- The provider adapters are untested against real API responses — their parsers
-  are written defensively but have never seen live payloads from OpenAI,
-  Perplexity or Anthropic. This is the largest remaining untested surface.
+- The provider adapters have never seen a LIVE payload from OpenAI, Perplexity or
+  Anthropic. `test/providers.test.ts` (added 2026-10-09) runs them against
+  fixtures written from the vendors' docs - it pins what is sent and how the
+  documented shapes are parsed, not what the services return today. Recording one
+  real response per engine into the fixtures is the next step once keys exist.
+  Also untested: that `server.ts` passes an adapter's sentence through unflattened (the
+  suites never configure a non-Gemini engine, because the vendor URLs are hard-coded);
+  re-introducing a second `describeProviderError` over `answer.error` would go unnoticed.
+  An invalid-model 400 from OpenAI or Perplexity gets the generic sentence (only the
+  wordings listed in `errors.ts` name the model variable), and a 403 "no access to
+  model" reads as a rejected key.
 - `Core Offerings` was removed from the audit form as low value; the field still
   exists in the API and types, unused, and should be retired properly.
 - There is no UI test layer. Interactive regressions (a tile that is not a
