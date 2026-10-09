@@ -628,6 +628,8 @@ async function main() {
       check('...and ONE unit of the allowance (two more distinct lookups still fit)', [(await evalQ('b', 'q b')).status, (await evalQ('c', 'q c')).status], [200, 200]);
       check('the next distinct lookup is refused', (await evalQ('d', 'q d')).status, 429);
       check('but a late retry of an already-admitted click still passes', (await evalQ('one-click', 'best poke')).status, 200);
+      const sameKeyOtherRoute = await rawFetch(`${LR.base}/api/audit/parse-url`, { method: 'POST', headers: { ...authed(t), 'Idempotency-Key': 'one-click' }, body: JSON.stringify({ input: 'Poke House' }) });
+      check('...but the same key on a DIFFERENT lookup route is not a free pass', sameKeyOtherRoute.status, 429);
     }
 
     // --- the browser is never told the operator's code label

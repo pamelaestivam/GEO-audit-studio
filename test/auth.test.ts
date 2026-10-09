@@ -153,6 +153,9 @@ check('nothing verifies when unconfigured', verifyToken(token, loadAuthConfig({ 
 
 
 // ---- parser edge cases found by review
+check('a labelled code that is too short is an error, not a bare code "label=short"', loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=short' }).mode, 'unconfigured');
+check('...that says why', /at least 8 characters/.test(loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=short' }).problem || ''), true);
+check('double padding is still a bare code', loadAuthConfig({ ...prod, ACCESS_CODES: 'YWJjZGVmZ2hpamtsbQ==' }).codes.map((c) => c.code), ['YWJjZGVmZ2hpamtsbQ==']);
 check('a bare base64 code ending in "=" is one code, not a label with an empty code', loadAuthConfig({ ...prod, ACCESS_CODES: 'YWJjZGVmZ2hpams=' }).codes.map((c) => c.code), ['YWJjZGVmZ2hpams=']);
 check('...and it works', loadAuthConfig({ ...prod, ACCESS_CODES: 'YWJjZGVmZ2hpams=' }).mode, 'configured');
 check('a labelled code may itself contain "="', loadAuthConfig({ ...prod, ACCESS_CODES: 'anna=YWJjZGVmZ2hpams=' }).codes.map((c) => `${c.label}:${c.code}`), ['anna:YWJjZGVmZ2hpams=']);

@@ -238,7 +238,9 @@ async function buildApp() {
       if (req.method !== 'POST' || USER_LOOKUPS_PER_HOUR <= 0) return next();
       const budgetKey: string = res.locals.user.budgetKey;
       const idem = readIdempotencyKey(req.headers as any);
-      const admittedKey = idem ? `${budgetKey}:${req.path}:${idem}` : undefined;
+      // baseUrl, not path: inside a mounted middleware `path` is just "/", which would
+      // let one key admitted on one lookup route pass uncounted on the others.
+      const admittedKey = idem ? `${budgetKey}:${req.baseUrl}:${idem}` : undefined;
       if (lookupAdmitted.peek(admittedKey)) return next();
       const decision = lookupLimiter.check(budgetKey);
       if (decision.allowed) {

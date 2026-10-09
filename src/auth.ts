@@ -69,8 +69,9 @@ const LABEL_PATTERN = /^[a-z0-9._-]{1,32}$/i;
  *
  * The FIRST "=" separates a label from its code, so a code may itself contain
  * "=" if it is given a label (`anna=YWJj...=`). A bare entry that merely ends in
- * "=" (base64 padding: `YWJjZGVmZ2hpams=`) has nothing after its first "=" and
- * is taken whole as a code rather than as a label with an empty code.
+ * "=" (base64 padding: `YWJjZGVmZ2hpams=`) has nothing but padding after its
+ * first "=" and is taken whole as a code. A label with a code that is too short
+ * (`anna=short`) is an error, never silently reinterpreted as a bare code.
  */
 function parseCodes(raw: string): { codes: AccessCode[]; problems: string[] } {
   const codes: AccessCode[] = [];
@@ -80,7 +81,9 @@ function parseCodes(raw: string): { codes: AccessCode[]; problems: string[] } {
     const eq = entry.indexOf('=');
     let label = '';
     let code = entry;
-    if (eq > 0 && entry.slice(eq + 1).trim().length >= MIN_CODE_LENGTH) {
+    // "=" followed by nothing but more "=" is base64 padding, not a label.
+    const rest = eq > 0 ? entry.slice(eq + 1).trim() : '';
+    if (eq > 0 && !/^=*$/.test(rest)) {
       label = entry.slice(0, eq).trim();
       code = entry.slice(eq + 1).trim();
       if (!LABEL_PATTERN.test(label)) {
