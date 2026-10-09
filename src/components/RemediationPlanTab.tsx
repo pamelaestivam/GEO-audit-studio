@@ -63,6 +63,9 @@ export const RemediationPlanTab: React.FC<RemediationPlanTabProps> = ({
           <p className="text-xs text-slate-400 mt-1">
             Actionable fixes ranked by ROI impact to update LLM training corpora, fix schema entity data, and capture AI recommendations.
           </p>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Ticking a task tracks your own progress in this browser tab only. It is not saved: it is lost on reload, and it never changes a score.
+          </p>
         </div>
 
         {/* Progress Pill & Category Filter */}

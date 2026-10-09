@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'unauthorized' | 'slow';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_remediation' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -38,9 +38,23 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
         res.end(JSON.stringify({ error: { code: 500, message: 'internal SECRET_PAYLOAD_MARKER', status: 'INTERNAL' } }));
         return;
       }
-      const text = wantsJson
-        ? JSON.stringify({ executiveSummary: 'Narrative ok.', inaccuracies: [], omissions: [], remediationPlan: [] })
-        : FAKE_ANSWER;
+      const isLookup = body.includes('Analyze the brand/business');
+      const lookup = (domain: string) => JSON.stringify({ businessName: 'Acme Widgets', domain, industry: 'widgets', coreOfferings: 'widgets', targetAudience: 'buyers', competitors: [] });
+      const text = wantsJson && isLookup && mode === 'lookup_placeholder'
+        ? lookup('N/A')
+        : wantsJson && isLookup && mode === 'lookup_good'
+          ? lookup('https://www.Acme-Widgets.com/menu')
+          : wantsJson
+            ? JSON.stringify({
+                executiveSummary: 'Narrative ok.',
+                inaccuracies: [],
+                omissions: [],
+                remediationPlan:
+                  mode === 'narrative_remediation'
+                    ? [{ title: 'Add schema', category: 'Schema & Entity Data', priority: 'P1 High', effort: 'Quick Win (< 2h)', description: 'Add JSON-LD', stepByStepInstructions: ['Add it'], targetUrls: [] }]
+                    : [],
+              })
+            : FAKE_ANSWER;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({

@@ -601,6 +601,15 @@ is a labelled golden set of real answers with precision/recall asserted in CI,
 and an explicit decision on whether one *batched* extraction call per audit is
 worth its cost (roadmap item 6).
 
+### 2.12 Edits made after an audit are not persisted (low-medium)
+
+Found in the 2026-10-09 UX tour. Queries added with "Add & Audit Query" and
+remediation tasks ticked as done exist in browser state only: the server never
+receives them, so they are lost on reload (the card and the Remediation tab now say
+so). An added query still costs a real engine call. Persisting both means a PATCH
+on the saved audit and a decision on whether an added query joins the headline
+figures (today it deliberately does not).
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer

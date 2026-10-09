@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <optgroup label="Active Audit Benchmarks">
                     {audits.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.businessName} ({a.domain}) — GEO Score: {formatPercent(a, a.geoVisibilityScore)}
+                        {a.businessName}{a.domain ? ` (${a.domain})` : ''} — GEO Score: {formatPercent(a, a.geoVisibilityScore)}
                       </option>
                     ))}
                   </optgroup>

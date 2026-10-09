@@ -206,6 +206,7 @@ async function main() {
       `found placeholder: ${parseFabrication}`
     );
     check('brand lookup reports that detection did not succeed', parseBody.detected, false);
+    check('a failed lookup of a plain name returns no guessed domain', parseBody.details?.domain ?? '', '');
     assert(
       'brand lookup returns no industry it could not determine',
       !parseBody.details?.industry,

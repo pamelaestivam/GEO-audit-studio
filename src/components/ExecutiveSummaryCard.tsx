@@ -115,6 +115,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             this audit ran. {audit.queriesAddedAfterAudit === 1 ? 'It appears' : 'They appear'} in the Query Matrix with
             {audit.queriesAddedAfterAudit === 1 ? ' its' : ' their'} own result, but the figures on this card cover the
             original audit only. Run a new audit to include {audit.queriesAddedAfterAudit === 1 ? 'it' : 'them'}.
+            {' '}Added queries and ticked tasks are kept in this browser tab only; they are lost on reload.
           </p>
         </div>
       )}
