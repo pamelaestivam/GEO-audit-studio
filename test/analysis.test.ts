@@ -12,6 +12,8 @@ import {
   dedupeMatchers,
   extractCandidateVendors,
   extractDomain,
+  attributeInaccuracies,
+  computeAccuracyRate,
   queryNamesBrand,
   sourcesForBrand,
   type QueryEvidence,
@@ -374,6 +376,49 @@ check(
   // Documented limit: a brand that is also a category word is treated as named
   // (errs towards the caution appearing, not towards missing an inflated score).
   check('KNOWN LIMIT: a category-word brand ("Gym") counts as named by "best gym in Austin"', named('best gym in Austin', 'Gym'), true);
+}
+
+// ---------------------------------------------------------------- inaccuracy attribution
+{
+  const queries = [{ queryText: 'Best poke in Austin?' }, { queryText: 'poke cost' }, { queryText: 'poke cost' }];
+  const answers = new Set(['0|Gemini', '1|Gemini', '2|Gemini']); // answers that name the brand
+  const attr = (claims: any[], engines = ['Gemini'], keys = answers) => attributeInaccuracies(claims, queries, engines, keys);
+  const where = (r: ReturnType<typeof attr>) => r.kept.map((k) => [k.queryIndex, k.engine]);
+
+  check('an exact query text is matched', where(attr([{ queryText: 'Best poke in Austin?', engine: 'Gemini' }])), [[0, 'Gemini']]);
+  check('case, spacing, quotes and trailing punctuation do not lose a claim', where(attr([
+    { queryText: 'best poke in austin', engine: 'Gemini' },
+    { queryText: '  "Best  poke in Austin"  ', engine: 'gemini' },
+    { queryText: 'BEST POKE IN AUSTIN?!', engine: 'Gemini' },
+  ])), [[0, 'Gemini'], [0, 'Gemini'], [0, 'Gemini']]);
+  check('the query NUMBER wins, so duplicate or paraphrased query texts are not confused', where(attr([
+    { queryNumber: 3, queryText: 'poke cost', engine: 'Gemini' },
+    { queryNumber: 2, queryText: 'something else entirely', engine: 'Gemini' },
+  ])), [[2, 'Gemini'], [1, 'Gemini']]);
+  check('duplicate query text without a number is ambiguous and is discarded, not given to the first', attr([{ queryText: 'poke cost', engine: 'Gemini' }]).discarded, 1);
+  check('a number outside the audit falls back to the text', where(attr([{ queryNumber: 9, queryText: 'Best poke in Austin?', engine: 'Gemini' }])), [[0, 'Gemini']]);
+  check('a missing engine means the one engine that answered', where(attr([{ queryText: 'Best poke in Austin?' }])), [[0, 'Gemini']]);
+  check('a number and a text that name DIFFERENT questions are not placed under a guess', attr([
+    { queryNumber: 2, queryText: 'Best poke in Austin?', engine: 'Gemini' },
+    { queryNumber: 3, queryText: 'Best poke in Austin?', engine: 'Gemini' },
+  ]).discarded, 2);
+  check('a number and a text that agree are kept', where(attr([{ queryNumber: 1, queryText: 'best poke in austin', engine: 'Gemini' }])), [[0, 'Gemini']]);
+  check('a query never asked is discarded, not re-attributed', attr([{ queryText: 'not a query we asked', engine: 'Gemini' }]).discarded, 1);
+  check('an engine never measured is discarded', attr([{ queryText: 'Best poke in Austin?', engine: 'ChatGPT' }]).discarded, 1);
+  check('a non-string query and no number is discarded', attr([{ queryText: 42 as any, engine: 'Gemini' }]).discarded, 1);
+  const two = attributeInaccuracies([{ queryText: 'Best poke in Austin?' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Gemini', '0|Perplexity']));
+  check('with several engines having answered, an unnamed engine cannot be attributed and is discarded', [two.kept.length, two.discarded], [0, 1]);
+  const onlyOne = attributeInaccuracies([{ queryText: 'Best poke in Austin?' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Perplexity']));
+  check('...but if only one engine answered that query, an unnamed engine can only mean it', onlyOne.kept.map((k) => k.engine), ['Perplexity']);
+  check('a claim about an answer that does not name the brand is discarded (the list and the accuracy rate must agree)', attr([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])).discarded, 1);
+  check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0 });
+
+  const mentioned = new Set(['0|Gemini', '1|Gemini']);
+  check('accuracy counts answers, not claims: two claims on one of two mentioning answers is 50%', computeAccuracyRate(mentioned, ['0|Gemini', '0|Gemini']), 50);
+  check('accuracy with no flagged answer is 100%', computeAccuracyRate(mentioned, []), 100);
+  check('a flagged answer that did not mention the brand does not lower accuracy', computeAccuracyRate(mentioned, ['2|Gemini']), 100);
+  check('accuracy is null (nothing to check) when no answer mentions the brand', computeAccuracyRate(new Set(), ['0|Gemini']), null);
+  check('accuracy never goes below 0', computeAccuracyRate(new Set(['0|Gemini']), ['0|Gemini', '0|Gemini', '0|Gemini']), 0);
 }
 
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);

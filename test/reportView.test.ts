@@ -112,13 +112,18 @@ check('counts are withheld on a failed audit', findingCounts({ degraded: true, i
 check(
   'a genuine zero is a zero',
   findingCounts({ degraded: false, narrativeAvailable: true, inaccuracies: [], omissions: [] }),
-  { inaccuracies: 0, omissions: 0 }
+  { inaccuracies: 0, omissions: 0, unattributed: 0 }
 );
 
 check('assessed: normal audit', wasAssessed({ degraded: false, narrativeAvailable: true }), true);
 check('assessed: legacy report', wasAssessed({ degraded: false }), true);
 check('assessed: analysis failed', wasAssessed({ degraded: false, narrativeAvailable: false }), false);
 check('assessed: audit failed', wasAssessed({ degraded: true }), false);
+
+check('accuracy with discarded claims is labelled an upper bound', /at most this, since 2 reported claims/.test(describeAccuracy({ degraded: false, narrativeAvailable: true, accuracyRate: 100, inaccuraciesDiscarded: 2 }).caption), true);
+check('accuracy without discards keeps the plain caption', /no flagged inaccuracy \(model judgement/.test(describeAccuracy({ degraded: false, narrativeAvailable: true, accuracyRate: 100 }).caption), true);
+
+check('discarded claims are carried as unattributed, never as a clean zero', findingCounts({ degraded: false, narrativeAvailable: true, inaccuracies: [], omissions: [], inaccuraciesDiscarded: 2 })?.unattributed, 2);
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

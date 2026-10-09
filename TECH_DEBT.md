@@ -601,6 +601,25 @@ is a labelled golden set of real answers with precision/recall asserted in CI,
 and an explicit decision on whether one *batched* extraction call per audit is
 worth its cost (roadmap item 6).
 
+### 2.5a Inaccuracy claims are attributed, not verified (medium)
+
+Found in the 2026-10-09 independent review. The accuracy rate is now counted per
+answer (not claim over mention) and a claim is kept only if it points at a
+captured answer that names the brand (by query number, else by loosely matched
+text; an engine that is not named means the only engine that answered).
+**This is a shape check, not a fact check:** nothing verifies that the claimed
+fact appears in that answer, so a hallucinated claim carrying a real query and
+engine is still counted. Also: reports saved before this change used a different
+definition (claims over mentions); do not trend `accuracyRate` across them. The
+structured-output schema asks the model for `engine` and `queryNumber`; whether a
+real model honours them has not been seen (no key), which is why discards are
+shown to the user rather than hidden (the accuracy tile says "at most this", the
+findings tile and sidebar show them as unlisted, never as a clean zero). A claim
+whose number and text name different questions is discarded, not placed under a
+guess. The narrative model is shown every answer up to `max(40, MAX_AUDIT_QUERIES x
+4)`; beyond that cap, answers it never saw would count as "no flagged
+inaccuracy". Reports saved before 2026-10-09 carry the older rate and no marker.
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer

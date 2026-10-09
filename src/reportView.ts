@@ -97,7 +97,7 @@ export function brandedQueryCaution(
 
 /** The accuracy tile: a value and the sentence that says what it means. */
 export function describeAccuracy(
-  audit: Pick<AuditReport, 'degraded' | 'accuracyRate' | 'narrativeAvailable'>
+  audit: Pick<AuditReport, 'degraded' | 'accuracyRate' | 'narrativeAvailable' | 'inaccuraciesDiscarded'>
 ): { value: string; caption: string } {
   if (!hasMeasurements(audit)) {
     return { value: NOT_MEASURED, caption: 'Not measured - the audit did not complete' };
@@ -108,20 +108,27 @@ export function describeAccuracy(
   if (audit.accuracyRate === null || audit.accuracyRate === undefined) {
     return { value: 'N/A', caption: 'The brand was not mentioned, so there is nothing to check' };
   }
+  const discarded = audit.inaccuraciesDiscarded ?? 0;
   return {
     value: `${audit.accuracyRate}%`,
-    caption: 'Mentions with no flagged inaccuracy (model judgement, no fact sheet - indicative)',
+    caption:
+      discarded > 0
+        ? `Answers naming you with no flagged inaccuracy: at most this, since ${discarded} reported ${discarded === 1 ? 'claim' : 'claims'} could not be tied to an answer (model judgement, no fact sheet)`
+        : 'Answers naming you with no flagged inaccuracy (model judgement, no fact sheet - indicative)',
   };
 }
 
 /** Counts of qualitative findings, or null when they were never assessed. */
 export function findingCounts(
-  audit: Pick<AuditReport, 'degraded' | 'narrativeAvailable' | 'inaccuracies' | 'omissions'>
-): { inaccuracies: number; omissions: number } | null {
+  audit: Pick<AuditReport, 'degraded' | 'narrativeAvailable' | 'inaccuracies' | 'omissions' | 'inaccuraciesDiscarded'>
+): { inaccuracies: number; omissions: number; unattributed: number } | null {
   if (!hasMeasurements(audit) || audit.narrativeAvailable === false) return null;
   return {
     inaccuracies: (audit.inaccuracies || []).length,
     omissions: (audit.omissions || []).length,
+    // Claims the analysis reported that could not be tied to a captured answer: neither
+    // listed nor counted, and never to be read as "none found".
+    unattributed: audit.inaccuraciesDiscarded ?? 0,
   };
 }
 
