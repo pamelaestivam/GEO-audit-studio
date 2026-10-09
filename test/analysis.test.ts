@@ -49,6 +49,47 @@ check('capitalised "Stripe" accepted', findFirstMention('We recommend Stripe her
 
 const archer = buildBrandMatcher('Archer Aviation', 'archeraviation.com');
 check('multiword brand matches full phrase', findFirstMention('Archer Aviation leads', archer), 0);
+
+// Short acronym brands (HP, 3M, EY, BP): a two-character brand the answer names
+// in every sentence used to be measured at 0% because every token under three
+// characters was skipped. Acronyms match exactly as written, with word boundaries.
+for (const [name, domain] of [['HP', 'hp.com'], ['3M', '3m.com'], ['EY', 'ey.com'], ['BP', 'bp.com'], ['HP', ''], ['3M', ''], ['EY', 'ey-global.com'], ['HP Inc', 'hp.com'], ['3M Company', '3m.com']] as const) {
+  const m = buildBrandMatcher(name, domain);
+  const acronym = name.split(' ')[0];
+  check(`${name} (domain "${domain}"): found in an answer that names ${acronym}`, findFirstMention(`The best choice is ${acronym}, followed by others.`, m) > 0, true);
+  const row = analyseAnswer(evidence({ answerText: `Top picks: ${acronym} and Acme. ${acronym} is widely recommended.` }), [m])[0];
+  check(`${name} (domain "${domain}"): mentioned and ranked, not reported as omitted`, [row.mentioned, row.rank], [true, 1]);
+}
+check('"HP" is not found inside other words or codes (HPE, OHP, HP2, 2HP, EnvHP)', findFirstMention('HPE and OHP and HP2 and 2HP and EnvHP lead.', buildBrandMatcher('HP', 'hp.com')), -1);
+check('"HP" does not match lowercase "hp" in the answer', findFirstMention('the hp of this engine', buildBrandMatcher('HP', 'hp.com')), -1);
+// A longer name is matched on its full name only unless its first word is the domain's own acronym.
+for (const [name, domain, text] of [
+  ['US Bank', 'usbank.com', 'Many US companies and the US market.'],
+  ['LA Fitness', 'lafitness.com', 'Gyms in LA and the LA area.'],
+  ['UK Power Networks', 'ukpowernetworks.co.uk', 'Prices in the UK rose.'],
+  ['AI Dungeon', 'aidungeon.com', 'Use AI for stories.'],
+  ['HP Inc', '', 'HP leads the printer market.'],
+] as const) {
+  check(`"${name}" is not credited with the bare "${name.split(' ')[0]}" in an answer`, findFirstMention(text, buildBrandMatcher(name, domain)), -1);
+}
+// Ordinary words and lowercase typing are never promoted to acronyms, whatever the domain.
+for (const [name, domain, text] of [
+  ['On', 'on.com', 'On balance, shoes from Nike lead. ON and OFF.'],
+  ['Go', '', 'Go with Nike.'],
+  ['It', 'it.com', 'It is Nike. IT teams buy it.'],
+  ['Us', '', 'Us versus them.'],
+  ['ai', 'ai.com', 'Companies use AI in the UK.'],
+  ['hp', 'hp.com', 'HP leads the market.'],
+  ['Hp', 'hp.com', 'HP leads the market.'],
+] as const) {
+  check(`"${name}" (domain "${domain}") is not treated as an acronym`, findFirstMention(text, buildBrandMatcher(name, domain)), -1);
+}
+check('queryNamesBrand sees the acronym of a longer name ("HP Inc" in "best HP printers")', queryNamesBrand('best HP printers for office', buildBrandMatcher('HP Inc', 'hp.com')), true);
+check('queryNamesBrand: "3M Company" in "is 3M respirator good"', queryNamesBrand('is 3M respirator good', buildBrandMatcher('3M Company', '3m.com')), true);
+check('queryNamesBrand: "US Bank" without a domain is not named by "the US market"', queryNamesBrand('best banks in the US market', buildBrandMatcher('US Bank', '')), false);
+check('an all-digit name is not an acronym ("76" is not matched inside "In 76 cases")', findFirstMention('In 76 cases the fuel was good.', buildBrandMatcher('76', '76.com')), -1);
+check('a lowercase two-letter name without a matching domain is never matched', findFirstMention('we ge there', buildBrandMatcher('ge', 'general.com')), -1);
+check('a one-character brand is still not matched', findFirstMention('X marks the spot', buildBrandMatcher('X', 'x.com')), -1);
 check('non-common brand matches case-insensitively', findFirstMention('see archer aviation', archer), 4);
 
 // ---------------------------------------------------------------- ranking

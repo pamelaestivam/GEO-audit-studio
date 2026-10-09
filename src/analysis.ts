@@ -33,6 +33,12 @@ export interface BrandMatcher {
   /** Case-sensitive match required (brand name collides with a common word). */
   strictCase: boolean;
   tokens: string[];
+  /**
+   * Two-character ACRONYM spellings of the brand (HP, 3M, EY), matched exactly
+   * as written. Kept apart from `tokens` because every token under three
+   * characters is otherwise ignored ("it", "of", "on" would match everywhere).
+   */
+  acronyms: string[];
 }
 
 /**
@@ -110,7 +116,28 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
 
   const strictCase = tokens.some((t) => COMMON_WORD_BRANDS.has(t));
 
-  return { label, domain: cleanDomain, domainRoot, strictCase, tokens };
+  // Short acronym brands (HP, 3M, EY, BP). Skipping every token under three
+  // characters meant a brand the answer named in every sentence was measured at
+  // 0%, shown as "omitted" on every engine and given a remediation plan - a
+  // failure to measure reported as a finding about the client. Two narrow cases
+  // qualify, and nothing else does:
+  //  - the WHOLE name is a two-character acronym written in capitals/digits
+  //    ("HP", "3M", "EY", "BP"); or
+  //  - the name is longer ("HP Inc", "3M Company") and its first word is such an
+  //    acronym AND equals the root of the domain the user gave (hp.com). Without
+  //    the domain, "US Bank", "LA Fitness" or "UK Power Networks" would be credited
+  //    with every "US", "LA" and "UK" in every answer; a longer name stays matched
+  //    on its full name only, like every other multi-word brand.
+  // A name typed in lowercase or mixed case ("hp", "Hp") is NOT promoted: a
+  // domain equal to a dictionary word (ai.com, on.com) proves nothing. Limits:
+  // TECH_DEBT 2.6c.
+  const acronyms: string[] = [];
+  const isAcronym = (w: string) => w.length === 2 && /^[A-Z0-9]{2}$/.test(w) && /[A-Z]/.test(w);
+  const firstWord = label.split(/\s+/)[0] || '';
+  if (isAcronym(label)) acronyms.push(label);
+  else if (words.length > 1 && isAcronym(firstWord) && firstWord.toLowerCase() === domainRoot) acronyms.push(firstWord);
+
+  return { label, domain: cleanDomain, domainRoot, strictCase, tokens, acronyms };
 }
 
 /**
@@ -118,9 +145,15 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
  * Uses word boundaries so "striped" never counts as "Stripe".
  */
 export function findFirstMention(text: string, matcher: BrandMatcher): number {
-  if (!text || matcher.tokens.length === 0) return -1;
+  if (!text || (matcher.tokens.length === 0 && !matcher.acronyms?.length)) return -1;
 
   let earliest = -1;
+  // Acronyms are matched exactly as written (case-sensitive) with word
+  // boundaries: "HP" is not "HPE", "OHP", "HP2" or "hp".
+  for (const acronym of matcher.acronyms ?? []) {
+    const hit = new RegExp(`\\b${escapeRegex(acronym)}\\b`, 'g').exec(text);
+    if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
+  }
   for (const token of matcher.tokens) {
     if (token.length < 3) continue;
 
@@ -186,7 +219,7 @@ export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boole
   // warning about an inflated score rather than missing one.
   // The full domain counts too: "poke.house" is not among the matcher's tokens
   // (its root "poke" is just the category word), but typing it names the brand.
-  const candidates = matcher.domain ? [...matcher.tokens, matcher.domain] : matcher.tokens;
+  const candidates = [...matcher.tokens, ...(matcher.acronyms ?? []), ...(matcher.domain ? [matcher.domain] : [])];
   for (const token of candidates) {
     const t = token.trim();
     if (t.length < 2) continue;
