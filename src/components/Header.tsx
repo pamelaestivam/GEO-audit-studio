@@ -81,14 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
             </div>
-          ) : (
-            <button
-              onClick={onResetToFreshSearch}
-              className="bg-slate-800/80 text-slate-400 text-xs font-medium rounded-lg px-3 py-2 border border-slate-700/60"
-            >
-              Fresh Search Dashboard
-            </button>
-          )}
+          ) : null}
 
           {/* Quick Refresh / New Audit */}
           <button

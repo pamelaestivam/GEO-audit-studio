@@ -12,6 +12,7 @@ import {
   dedupeMatchers,
   extractCandidateVendors,
   extractDomain,
+  sourcesForBrand,
   type QueryEvidence,
 } from '../src/analysis';
 import { resolveCitationDomain, isPublisherDomain, dedupeCitations } from '../src/providers';
@@ -330,6 +331,27 @@ check(
   extractCandidateVendors(Array.from({ length: 40 }, (_, i) => `Vendor${i} Inc is an option.`).join(' '), []).length <= 15,
   true
 );
+
+
+// ---- Per-brand citation sources
+{
+  const mk = (id: string, text: string, cites: string[]): QueryEvidence => ({
+    queryId: id, queryText: id, answerText: text, engine: 'Gemini', capturedAt: '', searchQueries: [],
+    citations: cites.map((d) => ({ url: `https://${d}/x`, title: d, domain: d })),
+  });
+  const e1 = mk('q1', 'Adyen is fast. Stripe is popular.', ['g2.com', 'stripe.com', 'g2.com']);
+  const e2 = mk('q2', 'Only Adyen here.', ['reddit.com', 'g2.com']);
+  const e3 = mk('q3', 'Nobody relevant.', ['forbes.com']);
+  const ms = [buildBrandMatcher('Stripe', 'stripe.com'), buildBrandMatcher('Adyen', 'adyen.com')];
+  const an = new Map(([e1, e2, e3] as QueryEvidence[]).map((e) => [e, analyseAnswer(e, ms)]));
+  check('sources come only from answers that named the brand', sourcesForBrand([e1, e2, e3], an, 'Stripe', 'stripe.com'), ['g2.com']);
+  check('a different brand gets its own list, most-cited first', sourcesForBrand([e1, e2, e3], an, 'Adyen', 'adyen.com'), ['g2.com', 'reddit.com', 'stripe.com']);
+  check('a domain is counted once per answer even if cited twice', sourcesForBrand([e1], an, 'Adyen', 'adyen.com'), ['g2.com', 'stripe.com']);
+  check("the brand's own domain is excluded", sourcesForBrand([e1, e2], an, 'Stripe', 'stripe.com').includes('stripe.com'), false);
+  check('a brand named in no answer has no sources, not the audit-wide list', sourcesForBrand([e3], an, 'Stripe', 'stripe.com'), []);
+  check('the limit is honoured', sourcesForBrand([e1, e2], an, 'Adyen', 'adyen.com', 1).length, 1);
+  check('no evidence yields no sources', sourcesForBrand([], new Map(), 'Stripe', 'stripe.com'), []);
+}
 
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

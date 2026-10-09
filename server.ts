@@ -11,6 +11,7 @@ import {
   extractCandidateVendors,
   findFirstMention,
   normaliseDomain,
+  sourcesForBrand,
   type QueryEvidence,
 } from './src/analysis.js';
 import {
@@ -35,6 +36,7 @@ import {
 } from './src/auth.js';
 import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter } from './src/rateLimit.js';
+import { buildStandardQueries } from './src/queries.js';
 import {
   askEngine,
   configuredEngines,
@@ -614,29 +616,10 @@ Return a valid JSON object matching the requested schema.`;
     }
   };
 
-  const getFallbackQueries = (businessName: string, domain?: string, industry?: string, coreOfferings?: string, competitors?: any) => {
-    const compFirst = Array.isArray(competitors) && competitors.length > 0 ? competitors[0] : (competitors || 'leading competitors');
-    return [
-      {
-        id: 'q-gen-1',
-        intent: 'alternatives_search',
-        queryText: `Best ${industry || 'software'} alternatives to ${compFirst} for modern teams`,
-        targetPersona: 'Decision Maker / Buyer'
-      },
-      {
-        id: 'q-gen-2',
-        intent: 'commercial_comparison',
-        queryText: `${businessName} vs ${compFirst} comparison and features`,
-        targetPersona: 'Product Evaluator'
-      },
-      {
-        id: 'q-gen-3',
-        intent: 'pricing_roi',
-        queryText: `${businessName} pricing free tier limits and enterprise contract cost`,
-        targetPersona: 'CTO / Procurement'
-      }
-    ];
-  };
+  // The standard queries live in src/queries.ts (pure and tested). Kept under
+  // its old local name so every call site reads the same.
+  const getFallbackQueries = (businessName: string, _domain?: string, industry?: string, _coreOfferings?: string, competitors?: any) =>
+    buildStandardQueries(businessName, industry, competitors);
 
   // POST: Generate viewer-intent query matrix for a business (3 top real-world queries)
   /**
@@ -646,7 +629,7 @@ Return a valid JSON object matching the requested schema.`;
   async function generateAuditQueries(
     aiInstance: any,
     opts: { businessName: string; domain?: string; industry?: string; coreOfferings?: string; competitors?: any }
-  ): Promise<any[]> {
+  ): Promise<{ queries: any[]; source: 'generated' | 'standard' }> {
     const { businessName, domain, industry, coreOfferings, competitors } = opts;
     const competitorText = Array.isArray(competitors) && competitors.length > 0
       ? competitors.join(', ')
@@ -692,12 +675,14 @@ Return a JSON array of exactly 3 query objects.`;
         }
       });
       const parsed = parseJsonText(response.text);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed.slice(0, 3);
+      if (Array.isArray(parsed) && parsed.length > 0) return { queries: parsed.slice(0, 3), source: 'generated' };
     } catch (genErr: any) {
       console.log(`Query generation failed: ${describeProviderError(genErr, 'Gemini').message}`);
     }
 
-    return getFallbackQueries(businessName, domain, industry, coreOfferings, competitors);
+    // The model gave nothing usable (or failed): say these are the standard
+    // set, not something it wrote - the client labels them accordingly.
+    return { queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors), source: 'standard' };
   }
 
   app.post('/api/audit/generate-queries', async (req, res) => {
@@ -713,30 +698,33 @@ Return a JSON array of exactly 3 query objects.`;
       const competitors = cleanCompetitors(req.body?.competitors);
       const ai = getGeminiClient();
       if (!ai) {
-        return res.json({ queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors) });
+        return res.json({ queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors), source: 'standard' });
       }
       // One click on "Generate Query Matrix" costs one Gemini call, however
       // many connection attempts it took to deliver the request.
       const { value } = inFlightRequests.run(idempotencyKey, () =>
         generateAuditQueries(ai, { businessName, domain, industry, coreOfferings, competitors })
       );
-      let queries: any[];
+      let result: { queries: any[]; source: 'generated' | 'standard' };
       try {
-        queries = await value;
+        result = await value;
       } catch (workErr) {
         inFlightRequests.forget(idempotencyKey);
         throw workErr;
       }
-      res.json({ queries });
+      res.json(result);
     } catch (err: any) {
+      // Never invent a name for the business: a query about "Business" is a
+      // question nobody asked. Validation above already guaranteed a real one.
       res.json({
         queries: getFallbackQueries(
-          req.body?.businessName || 'Business',
+          cleanText(req.body?.businessName, MAX_NAME_LENGTH),
           req.body?.domain,
           req.body?.industry,
           req.body?.coreOfferings,
           req.body?.competitors
         ),
+        source: 'standard',
       });
     }
   });
@@ -1483,10 +1471,8 @@ Return valid JSON matching the schema.`;
             domain: s.domain || '',
             shareOfVoice: s.shareOfVoice,
             topRecommendedCount: s.timesFirst,
-            mainCitationSources: citationSources
-              .filter((src) => !src.isOwned)
-              .slice(0, 4)
-              .map((src) => src.domain),
+            // Sources cited where THIS brand was named - not the audit-wide list.
+            mainCitationSources: sourcesForBrand(usableEvidence, analysisByEvidence, s.brand, s.domain),
             discovered: discovered.some((d) => d.toLowerCase() === s.brand.toLowerCase()),
           })),
 

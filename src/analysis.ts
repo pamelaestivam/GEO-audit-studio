@@ -285,6 +285,39 @@ export function buildCitationSourceMap(
     .sort((a, b) => b.citationCount - a.citationCount || a.domain.localeCompare(b.domain));
 }
 
+/**
+ * The sources cited in the answers that actually NAMED this brand - most
+ * frequent first, each domain counted once per answer, the brand's own domain
+ * left out. Per-brand, because the Competitor Intelligence cards claim to show
+ * "the sources the AI trusts" for each brand, and they used to print the same
+ * audit-wide list under every one of them. A brand named in no answer has no
+ * sources of its own to show, and gets none.
+ */
+export function sourcesForBrand(
+  evidence: QueryEvidence[],
+  analysis: Map<QueryEvidence, BrandQueryResult[]>,
+  brand: string,
+  ownDomain = '',
+  limit = 4
+): string[] {
+  const counts = new Map<string, number>();
+  for (const ev of evidence) {
+    const row = analysis.get(ev)?.find((r) => r.brand === brand);
+    if (!row?.mentioned) continue;
+    const seen = new Set<string>();
+    for (const c of ev.citations) {
+      if (!c.domain || seen.has(c.domain)) continue;
+      seen.add(c.domain);
+      if (ownDomain && (c.domain === ownDomain || c.domain.endsWith(`.${ownDomain}`))) continue;
+      counts.set(c.domain, (counts.get(c.domain) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([domain]) => domain);
+}
+
 export interface BrandScorecard {
   brand: string;
   domain: string;

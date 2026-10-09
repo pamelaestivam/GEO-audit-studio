@@ -5,6 +5,7 @@ import { apiFetch } from '../apiClient';
 import { newIdempotencyKey } from '../idempotency';
 import { describeEngines, useAuditStatus } from '../useQuotaStatus';
 import { AuditReport, AuditQuery } from '../types';
+import { buildStandardQueries } from '../queries';
 
 interface RunAuditModalProps {
   isOpen: boolean;
@@ -30,6 +31,9 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
 
   // Step 2 State (Generated Queries)
   const [queries, setQueries] = useState<Partial<AuditQuery>[]>([]);
+  // Whether the model wrote these queries or they are the standard set - the
+  // wording of step 2 must not claim AI authorship it did not have.
+  const [queriesSource, setQueriesSource] = useState<'generated' | 'standard'>('standard');
   const [isGeneratingQueries, setIsGeneratingQueries] = useState(false);
   const [newQueryText, setNewQueryText] = useState('');
 
@@ -84,47 +88,19 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
       const data = await res.json();
       if (data.queries && Array.isArray(data.queries)) {
         setQueries(data.queries);
+        setQueriesSource(data.source === 'generated' ? 'generated' : 'standard');
       } else {
-        // Default fallback queries if API errors
-        setQueries([
-          {
-            id: 'q-custom-1',
-            intent: 'alternatives_search',
-            queryText: `Best ${industry || 'software'} alternatives to ${validCompetitors[0] || 'competitors'} for modern teams`,
-            targetPersona: 'Decision Maker',
-          },
-          {
-            id: 'q-custom-2',
-            intent: 'commercial_comparison',
-            queryText: `${businessName} vs ${validCompetitors[0] || 'leading competitor'} in-depth feature breakdown`,
-            targetPersona: 'Evaluator',
-          },
-          {
-            id: 'q-custom-3',
-            intent: 'pricing_roi',
-            queryText: `${businessName} pricing free tier limits and enterprise ROI`,
-            targetPersona: 'Procurement / CTO',
-          },
-        ]);
+        // The server always answers with queries; if it somehow did not, use
+        // the same standard set it would have.
+        setQueries(buildStandardQueries(businessName, industry, validCompetitors));
+        setQueriesSource('standard');
       }
       setStep(2);
     } catch (err: any) {
       console.error('Error generating queries:', err);
-      // Fallback
-      setQueries([
-        {
-          id: 'q-fallback-1',
-          intent: 'alternatives_search',
-          queryText: `Top recommended ${industry || 'business'} providers`,
-          targetPersona: 'Buyer',
-        },
-        {
-          id: 'q-fallback-2',
-          intent: 'commercial_comparison',
-          queryText: `${businessName} customer reviews, pros and cons, and pricing`,
-          targetPersona: 'Evaluator',
-        },
-      ]);
+      // The server could not be reached: offer the standard set rather than an empty step.
+      setQueries(buildStandardQueries(businessName, industry, validCompetitors));
+      setQueriesSource('standard');
       setStep(2);
     } finally {
       setIsGeneratingQueries(false);
@@ -362,7 +338,10 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
         {step === 2 && (
           <div className="space-y-4 text-xs">
             <p className="text-slate-300">
-              Review AI-suggested viewer-intent queries generated for <strong>{businessName}</strong>. You can add custom search terms or remove queries before starting the audit.
+              {queriesSource === 'generated'
+                ? <>Review the queries the model suggested for <strong>{businessName}</strong>.</>
+                : <>Review the standard buyer-intent queries for <strong>{businessName}</strong> (the model did not write these).</>}{' '}
+              You can add your own or remove any before starting the audit.
             </p>
 
             <div className="space-y-2 max-h-56 overflow-y-auto pr-1">

@@ -112,7 +112,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   return (
-    <aside className="w-full md:w-64 lg:w-72 bg-slate-900/90 border-r border-slate-800 flex-shrink-0 flex flex-col justify-between p-4 md:min-h-[calc(100vh-65px)]">
+    // With no audit there is nothing to navigate, so on a phone the audit form
+    // comes first and this panel (just the account) sits below it.
+    <aside
+      className={`w-full md:w-64 lg:w-72 bg-slate-900/90 border-r border-slate-800 flex-shrink-0 flex flex-col justify-between p-4 md:min-h-[calc(100vh-65px)] ${
+        audit ? '' : 'order-last md:order-first'
+      }`}
+    >
       <div className="space-y-6">
         {/* Active Entity Quick Snapshot */}
         {audit ? (
@@ -130,26 +136,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <div className="text-xs text-slate-400 truncate">{audit.domain}</div>
           </div>
-        ) : (
-          <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3.5 shadow-inner text-center space-y-2">
-            <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 flex items-center justify-center gap-1">
-              <Building2 className="h-3 w-3" /> Fresh Workspace
-            </span>
-            <p className="text-xs text-slate-400">
-              No brand audit active yet. Use the search bar to run a fresh audit.
-            </p>
-            {onResetToFreshSearch && (
-              <button
-                onClick={onResetToFreshSearch}
-                className="w-full py-1.5 px-3 rounded bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-xs font-semibold border border-indigo-500/30 transition"
-              >
-                + Start Fresh Audit
-              </button>
-            )}
-          </div>
-        )}
+        ) : null}
 
-        {/* Vertical Navigation Options */}
+        {/* Vertical Navigation Options. Shown only when there is an audit: every
+            module is empty without one, and tabs that do nothing when tapped
+            are exactly what this project's review checklist forbids. */}
+        {audit && (
         <div>
           <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
             Dashboard Modules
@@ -190,6 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             })}
           </nav>
         </div>
+        )}
       </div>
 
       {/* Sidebar Footer & User Profile UI Badge */}
@@ -219,9 +212,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
-              <span className="text-[10px] font-semibold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 truncate max-w-[100px]">
-                {user.role || 'GEO Auditor'}
-              </span>
+              {/* A role is shown only if the person has one; it used to default to an invented "GEO Auditor". */}
+              {user.role ? (
+                <span className="text-[10px] font-semibold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20 truncate max-w-[100px]">
+                  {user.role}
+                </span>
+              ) : (
+                <span />
+              )}
 
               {onSignOut && (
                 <button
