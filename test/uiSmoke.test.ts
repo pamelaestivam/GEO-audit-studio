@@ -92,6 +92,8 @@ async function main() {
         OPENAI_API_KEY: '',
         PERPLEXITY_API_KEY: '',
         ANTHROPIC_API_KEY: '',
+        // The model-stamp checks below need the default whatever the shell has set.
+        GEMINI_MODEL: '',
         ...TEST_AUTH_ENV,
       },
       stdio: 'ignore',
@@ -130,6 +132,18 @@ async function main() {
     const card = await page.locator('main').innerText();
     assert('visibility is shown with its arithmetic', /Named in 3 of 3 answers \(Gemini\)/.test(card), card.slice(0, 400));
     assert('a small sample carries a caution', /indicative, not a stable rate/.test(card));
+    assert('the score carries its rough 95% range, so 3 of 3 does not read as certainty', /Rough 95% range from this sample: 43%-100%/.test(card), card.slice(0, 600));
+    await page.click('summary:has-text("How this was measured")');
+    const how = await page.locator('details').first().innerText();
+    assert('the disclosure says it is the developer API, once, not the consumer apps', /not what people see in the ChatGPT, Gemini, Claude or Perplexity apps/.test(how) && /once/.test(how), how);
+    assert('...states what the range is and is not', /plausibly lie between 43%-100%/.test(how) && /not fully independent/.test(how), how);
+    assert('...names the model requested and when the answers were captured', /Models requested: Gemini \(gemini-3\.6-flash\)/.test(how) && /Answers captured .* GMT/.test(how), how);
+    await page.click('summary:has-text("How this was measured")'); // close it again so later steps see only their own <details>
+    const ringClass = (await page.locator('main .border-4').first().getAttribute('class')) || '';
+    assert('a 3-answer score has a neutral ring, no colour verdict', /text-slate-400/.test(ringClass) && !/emerald|amber|rose/.test(ringClass), ringClass);
+    const optionNow = (await page.locator('#audit-selector option').allInnerTexts())[0];
+    assert('the audit dropdown entry never shows the bare number', /GEO Score: 100% \(3 answers\)/.test(optionNow), optionNow);
+    assert('the header badge and the sidebar never show the bare number', /GEO Score: 100% \(3 answers\)/.test(await page.locator('#header-geo-score-badge').innerText()) && /GEO 100% \(3 answers\)/.test(await page.locator('aside').innerText()));
     assert('when every query names the brand, the card says the score mostly reflects reputation, not discovery', /All 3 questions name your brand/.test(card), card.slice(0, 500));
     assert('share of voice is 33%', /33%/.test(card));
     const rivals = await page.locator('text=Rivals the engines named that you did not list').locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]').innerText();
@@ -193,6 +207,8 @@ async function main() {
     assert('the export modal opens', await appears(page, 'text=Executive Audit Report Export'));
     const exportText = await page.locator('.fixed').innerText();
     assert('the export carries the same basis as the card', /Named in 3 of 3 answers/.test(exportText));
+    assert('the export (and so the printed PDF) shows the range, the model and when the answers were captured beside the score', /Rough 95% range: 43%-100%/.test(exportText) && /Models requested: Gemini \(gemini-3\.6-flash\)/.test(exportText) && /Answers captured .* GMT/.test(exportText), exportText.slice(0, 700));
+    assert('...and says it is not the consumer app', /not what people see/.test(exportText));
     await page.locator('.fixed button:has-text("✕")').click();
 
     // --- reload: the session and the saved audit survive
@@ -200,6 +216,8 @@ async function main() {
     assert('a reload keeps the user signed in', await appears(page, '#audit-selector'));
     assert('the saved audit is restored after a reload', await appears(page, 'text=Saved to your account'));
     const reloaded = await page.locator('main').innerText();
+    const optionAfterReload = (await page.locator('#audit-selector option').allInnerTexts())[0];
+    assert('after a reload the dropdown (built from the saved summary) still carries what the score rests on', /GEO Score: 100% \(3 answers\)/.test(optionAfterReload), optionAfterReload);
     assert('the saved audit comes back after a reload, in full', /Named in 3 of 3 answers/.test(reloaded) && /33%/.test(reloaded), reloaded.slice(0, 300));
 
     // --- Fresh search really leaves the audit

@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatPercent } from '../reportView';
+import { formatScoreBadge } from '../reportView';
 import {
   Layers,
   ShieldAlert,
@@ -128,7 +128,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Building2 className="h-3 w-3" /> Active Entity
               </span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
-                <TrendingUp className="h-2.5 w-2.5" /> GEO {formatPercent(audit, audit.geoVisibilityScore)}
+                <TrendingUp className="h-2.5 w-2.5" /> GEO {formatScoreBadge(audit)}
               </span>
             </div>
             <div className="font-bold text-sm text-slate-100 truncate" title={audit.businessName}>

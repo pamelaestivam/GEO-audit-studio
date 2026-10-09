@@ -601,6 +601,20 @@ is a labelled golden set of real answers with precision/recall asserted in CI,
 and an explicit decision on whether one *batched* extraction call per audit is
 worth its cost (roadmap item 6).
 
+### 2.13 The visibility range is a floor on the uncertainty (low-medium)
+
+`wilsonInterval` (95%, rounded outward) is a confidence interval for the underlying
+rate, not a prediction of a repeat run, and it assumes independent readings. Answers
+from several engines to one question are counted as ONE reading (so is the
+low-sample warning), but three different questions asked once are still treated as
+three independent draws of one rate, which they are not. The honest fix is repeated
+runs per query with paraphrased questions (MVP_AUDIT item 8); until then the card
+says "plausibly" and the disclosure says the real uncertainty is wider. The model
+ids shown are those REQUESTED, not necessarily the dated version a provider served.
+Saved summaries (the audit list) carry neither the question count nor the models, so
+the list badge shows the answer count only. Readings are the questions that produced a
+usable answer (`questionsAnswered`; older reports fall back to the number planned).
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer

@@ -44,6 +44,7 @@ import {
   askEngine,
   configuredEngines,
   dedupeCitations,
+  engineModelId,
   type EngineName,
 } from './src/providers.js';
 
@@ -77,7 +78,7 @@ if (process.env.NODE_ENV !== 'production') {
 const geminiBreaker = new QuotaBreaker();
 
 /** Single source of truth for the audit model, so it can be swapped in one place. */
-const AUDIT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const AUDIT_MODEL = engineModelId('Gemini');
 
 /** Bounds audit cost and runtime; each query fans out across every engine. */
 const MAX_AUDIT_QUERIES = Number(process.env.MAX_AUDIT_QUERIES || 8);
@@ -1669,8 +1670,18 @@ Return valid JSON matching the schema.`;
 
         citationSources,
         measuredEngines,
+        // The model id each measured engine was queried with, and when the answers
+        // were captured: a number from a model cannot be compared or reproduced
+        // without them.
+        engineModels: Object.fromEntries(measuredEngines.map((e) => [e, engineModelId(e as EngineName)])),
+        answersCapturedFrom: usableEvidence.map((e) => e.capturedAt).sort()[0],
+        answersCapturedTo: usableEvidence.map((e) => e.capturedAt).sort().slice(-1)[0],
         untrackedRivals,
         queriesAttempted: queryList.length,
+        // Questions that produced at least one usable answer: the independent readings behind
+        // the headline (a planned question that failed everywhere, or was never reached after
+        // the quota breaker tripped, is not a reading).
+        questionsAnswered: evidenceByQuery.filter((group) => group.some((ev) => !ev.error && ev.answerText.trim().length > 0)).length,
         queriesNamingBrand,
         observationsAttempted: allEvidence.length,
         observationsWithEvidence: usableEvidence.length,

@@ -10,7 +10,12 @@ import {
   formatScore,
   hasMeasurements,
   isLowSample,
+  lowSampleReason,
+  engineModelsLine,
+  MEASUREMENT_DISCLOSURE,
   visibilityBasis,
+  rangeExplanation,
+  visibilityRange,
   wasAssessed,
 } from '../reportView';
 
@@ -31,12 +36,15 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
   const accuracy = describeAccuracy(audit);
   const counts = findingCounts(audit);
   const basis = visibilityBasis(audit);
+  const range = visibilityRange(audit);
+  const rangeText = rangeExplanation(audit);
+  const modelsLine = engineModelsLine(audit);
   const brandedCaution = brandedQueryCaution(audit);
   const assessed = wasAssessed(audit);
   // A failed audit gets a neutral ring: red/amber/green is a verdict on the
   // brand, and there is no verdict to give.
   const scoreColor =
-    !measured
+    !measured || isLowSample(audit)
       ? 'text-slate-400 border-slate-600/50 bg-slate-800/40'
       : audit.geoVisibilityScore >= 80
       ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
@@ -185,13 +193,27 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <p className="text-xs text-slate-400 mt-1 max-w-[200px] leading-tight">
               Share of captured answers that name your brand.
               {basis && <span className="block text-slate-300 font-medium mt-0.5">{basis}</span>}
+              {range && (
+                <span className="block text-slate-400 mt-0.5">Rough 95% range from this sample: {range}.</span>
+              )}
             </p>
             {brandedCaution && (
               <p className="text-[11px] text-amber-300/90 mt-1 max-w-[220px] leading-tight">{brandedCaution}</p>
             )}
+            {measured && (
+              <details className="text-[11px] text-slate-400 mt-1 max-w-[260px] leading-snug">
+                <summary className="cursor-pointer text-slate-300 underline underline-offset-2">How this was measured</summary>
+                <p className="mt-1">{MEASUREMENT_DISCLOSURE}</p>
+                {rangeText && <p className="mt-1">{rangeText}</p>}
+                {modelsLine && <p className="mt-1">Models requested: {modelsLine}.</p>}
+                {audit.answersCapturedFrom && (
+                  <p className="mt-1">Answers captured {new Date(audit.answersCapturedFrom).toUTCString()}.</p>
+                )}
+              </details>
+            )}
             {isLowSample(audit) && (
               <p className="text-[11px] text-amber-300/90 mt-1 max-w-[200px] leading-tight">
-                Only {audit.observationsWithEvidence} {audit.observationsWithEvidence === 1 ? 'answer' : 'answers'}: indicative, not a stable rate. Add queries to firm it up.
+                {lowSampleReason(audit)}: indicative, not a stable rate. Add queries to firm it up.
               </p>
             )}
           </div>
