@@ -5,6 +5,39 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-10-09 - MVP audit: fix what needs no decision, queue the rest as owner decisions
+
+**Decision:** run an adversarial audit of the whole product against a real
+browser and the real built server (`docs/MVP_AUDIT.md`), fix every defect that
+needed no infrastructure or product decision in one branch, and turn the rest
+into a 20-item roadmap with four named decisions (D1 runtime, D2 datastore, D3
+auth, D4 engines/spend) for the owner.
+
+**Who weighed in:** CTO and UX Lead (one session); EVAL PM scored it (87,
+SHIP - see the doc).
+
+**Why this shape:** the owner's instruction was "basic things you can fix now;
+more significant, ask". The measured defects were mostly of two classes -
+*numbers that did not mean what their label said* and *failures presented as
+findings* - both squarely inside the product's own honesty rules, needing no
+new infrastructure. The structural problems (host/job-model mismatch, no real
+auth, no persistence) are each a decision with a cost, so they are queued, not
+guessed at.
+
+**What it corrected from an earlier decision:** the 2.6a round removed the
+vendor-extraction LLM call and reviewed the *recall* cost; the real cost was
+*precision* (13 of 15 discovered "vendors" were junk and share of voice read
+6% instead of 33%). Recorded in `TECH_DEBT.md` 2.6b. The lesson is the same
+one `CLAUDE.md` already states - "ask why a call exists" is half the question;
+the other half is "what does the replacement get wrong, measured on a real
+answer, not an imagined one".
+
+**Dissent / not done:** the Vercel job-model problem (`TECH_DEBT.md` 1.4c) is
+*inferred*, not measured; it is recorded as such and the confirming step is
+written down rather than asserted.
+
+---
+
 ## 2026-09-13 — Replace the [...path].ts catch-all with an explicit vercel.json rewrite
 
 **Decision:** immediately after confirming `/api/health` worked live

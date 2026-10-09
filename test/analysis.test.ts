@@ -204,24 +204,32 @@ check('an uppercase URL normalises', buildBrandMatcher('Acme', 'HTTPS://WWW.ACME
 // re-verified every name against the source text anyway - meaning the model
 // step never added information the text extraction below doesn't already
 // derive directly, at zero Gemini quota cost.
+// ---- Vendor discovery ----
+//
+// A capitalised word is not a vendor. These checks pin the rule that replaced
+// "any capitalised phrase": a name must be in a structural position (bold, list
+// head, heading, table cell) or be named at least twice.
 check(
-  'plain capitalised names are found',
-  extractCandidateVendors('The leading option is Adyen. PayPal is also popular, and Stripe is developer-focused.', []),
+  'bulleted, bolded vendor names are found',
+  extractCandidateVendors('* **Adyen** leads.\n* **PayPal** is popular.\n1. Stripe is developer-focused.', []),
   ['Adyen', 'PayPal', 'Stripe']
 );
 check(
   '"and" does not bridge two distinct entities into one wrong candidate',
-  extractCandidateVendors('Bank of America and Wells Fargo both offer this.', []),
+  extractCandidateVendors(
+    'Bank of America and Wells Fargo both offer this. Bank of America and Wells Fargo also lend.',
+    []
+  ),
   ['Bank of America', 'Wells Fargo']
 );
 check(
   '"&" within a single name is preserved',
-  extractCandidateVendors('Johnson & Johnson is a major player.', []),
+  extractCandidateVendors('Johnson & Johnson is a major player. Johnson & Johnson leads.', []),
   ['Johnson & Johnson']
 );
 check(
   'a sentence-starter word is not swept into the candidate',
-  extractCandidateVendors('However, Notion stands out from the rest.', []),
+  extractCandidateVendors('However, Notion stands out. However, Notion wins.', []),
   ['Notion']
 );
 check(
@@ -236,8 +244,85 @@ check(
 );
 check(
   'names repeated more often are ranked first',
-  extractCandidateVendors('Adyen is good. Adyen is fast. PayPal is ok.', []),
+  extractCandidateVendors('PayPal is ok. Adyen is good. Adyen is fast. PayPal is old. Adyen scales.', []),
   ['Adyen', 'PayPal']
+);
+
+// Regression: a realistic markdown answer about Austin poke restaurants used to
+// yield 15 "vendors" - 13 of them junk - so the client's 33% share of voice
+// read as 6% and "Pricing", "Key" and "Why" were reported as rivals.
+const POKE_ANSWER = `For poke in Austin, top picks are:
+
+* **Pokeworks** - consistently rated highest.
+* **Sweetfin** - great vegan bowls.
+* **Poke House** - solid fresh fish.
+
+According to Yelp and TripAdvisor, Pricing starts at $12. Key takeaways: Fresh fish matters. Why choose Pokeworks? Check Monday hours.`;
+const pokeClient = buildBrandMatcher('Poke House', 'poke.house');
+check(
+  'a realistic answer yields only the real rivals, not capitalised filler',
+  extractCandidateVendors(POKE_ANSWER, [pokeClient]),
+  ['Pokeworks', 'Sweetfin']
+);
+{
+  const found = extractCandidateVendors(POKE_ANSWER, [pokeClient]);
+  const matchers = dedupeMatchers([pokeClient, ...found.map((f) => buildBrandMatcher(f))]);
+  const ev: QueryEvidence = {
+    queryId: 'q', queryText: 'q', answerText: POKE_ANSWER, citations: [], searchQueries: [],
+    capturedAt: '', engine: 'Gemini',
+  };
+  const cards = buildScorecards([analyseAnswer(ev, matchers)], matchers);
+  check('the client\'s share of voice is 1 of 3 named vendors, not 1 of 16', cards[0].shareOfVoice, 33);
+}
+check(
+  'a capitalised word named once in plain prose is not a vendor',
+  extractCandidateVendors('Austin has many options. Hawaiian bowls are popular here.', []),
+  []
+);
+check(
+  'a capitalised word named twice is accepted as a vendor',
+  extractCandidateVendors('Sweetfin is nearby. Many reviewers praise Sweetfin.', []),
+  ['Sweetfin']
+);
+check(
+  'weekdays and months are never vendors, even bolded or repeated',
+  extractCandidateVendors('* **Monday** and Monday again, plus **January** and January.', []),
+  []
+);
+check(
+  'a bolded label word is not a vendor',
+  extractCandidateVendors('**Pricing:** from $12. **Key takeaways:** fish matters.', []),
+  []
+);
+check(
+  'review sites and search engines are sources, not rivals',
+  extractCandidateVendors('* **Yelp** lists it.\n* **Google Maps** shows hours.\n* **TripAdvisor** has reviews.', []),
+  []
+);
+check(
+  'Google Cloud is a vendor even though Google alone is a platform',
+  extractCandidateVendors('* **Google Cloud** hosts it.', []),
+  ['Google Cloud']
+);
+check(
+  'a possessive collapses into the same vendor',
+  extractCandidateVendors("* **Pokeworks** is great. Pokeworks's menu is wide.", []),
+  ['Pokeworks']
+);
+check(
+  'Monday.com is a vendor even though Monday is a weekday',
+  extractCandidateVendors('* **Monday.com** handles project tracking.', []),
+  ['Monday']
+);
+check(
+  'a brand that genuinely ends in \'s keeps that spelling',
+  extractCandidateVendors("* **Lowe's** stocks it. Lowe's is nearby.", []),
+  ["Lowe's"]
+);
+check(
+  'markdown table cells count as structural',
+  extractCandidateVendors('| Vendor | Rating |\n| Adyen | 4.5 |\n| Stripe | 4.7 |', []),
+  ['Adyen', 'Stripe']
 );
 check('empty text yields no candidates', extractCandidateVendors('', []), []);
 check(

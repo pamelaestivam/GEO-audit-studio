@@ -120,7 +120,7 @@ export interface AuditReport {
   targetAudience: string;
   competitors: string[];
   geoVisibilityScore: number; // 0 - 100 Generative Engine Optimization Score
-  shareOfVoice: number; // % of queries business appeared in
+  shareOfVoice: number; // % of ALL brand mentions across audited answers that belong to this business
   leaderShare: number; // % of queries where business was #1 recommended
   /** % of mentions free of inaccuracies. null when the brand was never mentioned. */
   accuracyRate: number | null;
@@ -135,11 +135,22 @@ export interface AuditReport {
   citationSources?: CitationSource[];
   /** Vendors the engines named that the client never asked us to track. */
   untrackedRivals?: string[];
+  /**
+   * False when evidence was collected but the qualitative analysis
+   * (inaccuracies, omissions, remediation) failed. Those arrays are then empty
+   * because nothing was assessed, NOT because nothing was found.
+   */
+  narrativeAvailable?: boolean;
+  /** Queries appended after the audit ran; shown in the matrix, not in the headline figures. */
+  queriesAddedAfterAudit?: number;
+  narrativeNote?: string;
   /** True when the audit could not collect evidence; metrics are not measurements. */
   degraded?: boolean;
   degradedReason?: string;
   observationsAttempted?: number;
   observationsWithEvidence?: number;
+  /** Of observationsWithEvidence, how many named the brand (numerator of geoVisibilityScore). */
+  observationsMentioned?: number;
   enginesRequested?: string[];
   /** Engines genuinely queried in this audit - never a claim about untested ones. */
   measuredEngines?: string[];

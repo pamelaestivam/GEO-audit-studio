@@ -1,6 +1,15 @@
 import React from 'react';
 import { Download, Printer, Copy, Check, Sparkles, ShieldCheck, Globe, Building2 } from 'lucide-react';
 import { AuditReport } from '../types';
+import {
+  describeAccuracy,
+  formatPercent,
+  formatScore,
+  hasMeasurements,
+  isLowSample,
+  visibilityBasis,
+  wasAssessed,
+} from '../reportView';
 
 interface ExportReportModalProps {
   isOpen: boolean;
@@ -14,6 +23,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   audit,
 }) => {
   const [copied, setCopied] = React.useState(false);
+  const [copyFailed, setCopyFailed] = React.useState(false);
 
   if (!isOpen) return null;
 
@@ -21,23 +31,53 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
     window.print();
   };
 
-  const handleCopyText = () => {
-    const summaryText = `GEO AI SEARCH AUDIT REPORT - ${audit.businessName} (${audit.domain})
+  const measured = hasMeasurements(audit);
+  const accuracy = describeAccuracy(audit);
+  const basis = visibilityBasis(audit);
+  const assessed = wasAssessed(audit);
+  const enginesLine = (audit.measuredEngines || []).length
+    ? (audit.measuredEngines || []).join(', ')
+    : 'none';
+
+  // Everything a reader needs to judge the numbers travels with them: whether
+  // the audit completed, which engines answered, and how many answers the
+  // percentages rest on. A pasted summary has no UI around it to carry that.
+  const caveats: string[] = [];
+  if (!measured) caveats.push(`AUDIT INCOMPLETE - the figures below are NOT measurements. ${audit.degradedReason || ''}`.trim());
+  if (measured && audit.narrativeAvailable === false) {
+    caveats.push('Accuracy, omissions and remediation were NOT assessed (the analysis step failed).');
+  }
+  if (isLowSample(audit)) {
+    caveats.push(`Small sample: only ${audit.observationsWithEvidence} captured answer(s). Indicative, not a stable rate.`);
+  }
+  if ((audit.queriesAddedAfterAudit || 0) > 0) {
+    caveats.push(`${audit.queriesAddedAfterAudit} query(ies) added after the audit are not included in these figures.`);
+  }
+
+  const handleCopyText = async () => {
+    const summaryText = `GEO AI SEARCH AUDIT REPORT - ${audit.businessName}${audit.domain ? ` (${audit.domain})` : ''}
 Date: ${new Date(audit.createdAt).toLocaleDateString()}
-GEO Visibility Index: ${audit.geoVisibilityScore}/100
-Share of Voice: ${audit.shareOfVoice}%
-Leader Recommendation Share: ${audit.leaderShare}%
-Fact Accuracy Rate: ${audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A (brand not mentioned)' : `${audit.accuracyRate}%`}
+Engines measured: ${enginesLine}${basis ? `\n${basis}` : ''}
+${caveats.length ? `\nCAVEATS:\n${caveats.map((c) => `- ${c}`).join('\n')}\n` : ''}
+Visibility (answers naming the brand): ${formatScore(audit)}${measured ? '/100' : ''}
+Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoice)}
+#1 Recommendation Rate: ${formatPercent(audit, audit.leaderShare)}
+Fact Accuracy Rate: ${accuracy.value} (${accuracy.caption})
 
 EXECUTIVE SUMMARY:
 ${audit.executiveSummary}
+${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.title} (${r.expectedGain})`).join('\n') || '(none proposed)'}` : '\nREMEDIATION: not generated for this audit.'}`;
 
-KEY REMEDIATION TASKS:
-${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.title} (${r.expectedGain})`).join('\n')}`;
-
-    navigator.clipboard.writeText(summaryText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(summaryText);
+      setCopied(true);
+      setCopyFailed(false);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access is denied outside secure contexts and by some
+      // browsers; saying "Copied" regardless would be a lie.
+      setCopyFailed(true);
+    }
   };
 
   return (
@@ -56,7 +96,7 @@ ${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.tit
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold transition text-slate-200"
             >
               {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              <span>{copied ? 'Copied' : 'Copy Summary'}</span>
+              <span>{copied ? 'Copied' : copyFailed ? 'Copy blocked - select text manually' : 'Copy Summary'}</span>
             </button>
 
             <button
@@ -90,31 +130,40 @@ ${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.tit
               <div className="flex items-center gap-3 text-slate-400 mt-1">
                 <span>{audit.domain}</span>
                 <span>•</span>
-                <span>{audit.industry}</span>
-                <span>•</span>
+                {audit.industry && <span>{audit.industry}</span>}
+                {audit.industry && <span>•</span>}
                 <span>Audit Date: {new Date(audit.createdAt).toLocaleDateString()}</span>
               </div>
             </div>
 
             <div className="text-right bg-slate-900 border border-slate-800 p-3 rounded-xl">
-              <span className="text-3xl font-black text-emerald-400 block">{audit.geoVisibilityScore}</span>
+              <span className={`text-3xl font-black block ${measured ? 'text-emerald-400' : 'text-slate-500'}`}>{formatScore(audit)}</span>
               <span className="text-[10px] font-semibold text-slate-400 uppercase">GEO Visibility Score</span>
+              {basis && <span className="block text-[10px] text-slate-400 mt-1">{basis}</span>}
             </div>
           </div>
+
+          {caveats.length > 0 && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-1">
+              {caveats.map((c, i) => (
+                <p key={i} className="text-[11px] text-amber-200 leading-relaxed">{c}</p>
+              ))}
+            </div>
+          )}
 
           {/* Key Audit KPI Grid */}
           <div className="grid grid-cols-3 gap-4 text-center bg-slate-900/60 p-4 rounded-xl border border-slate-800">
             <div>
               <span className="text-slate-400 block text-[11px]">Share of Voice</span>
-              <span className="text-xl font-bold text-white">{audit.shareOfVoice}%</span>
+              <span className="text-xl font-bold text-white">{formatPercent(audit, audit.shareOfVoice)}</span>
             </div>
             <div>
               <span className="text-slate-400 block text-[11px]">Top Recommendation Rate</span>
-              <span className="text-xl font-bold text-emerald-400">{audit.leaderShare}%</span>
+              <span className="text-xl font-bold text-emerald-400">{formatPercent(audit, audit.leaderShare)}</span>
             </div>
             <div>
               <span className="text-slate-400 block text-[11px]">Fact Accuracy Rate</span>
-              <span className="text-xl font-bold text-sky-400">{audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A' : `${audit.accuracyRate}%`}</span>
+              <span className="text-xl font-bold text-sky-400">{accuracy.value}</span>
             </div>
           </div>
 
@@ -134,6 +183,11 @@ ${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.tit
               Prioritized Remediation Roadmap
             </h4>
             <div className="space-y-2">
+              {(audit.remediationPlan || []).length === 0 && (
+                <p className="text-slate-500 text-[11px]">
+                  {assessed ? 'No remediation tasks were proposed.' : 'Not generated for this audit.'}
+                </p>
+              )}
               {(audit.remediationPlan || []).map((task, idx) => (
                 <div
                   key={task.id}

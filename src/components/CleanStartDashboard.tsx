@@ -16,10 +16,10 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { AuditReport } from '../types';
-import { runAuditJob } from '../auditClient';
+import { progressPercent, runAuditJob, type AuditProgress } from '../auditClient';
 import { apiFetch } from '../apiClient';
 import { newIdempotencyKey } from '../idempotency';
-import { useQuotaStatus } from '../useQuotaStatus';
+import { describeEngines, useAuditStatus } from '../useQuotaStatus';
 
 interface CleanStartDashboardProps {
   onAuditComplete: (newReport: AuditReport) => void;
@@ -37,11 +37,12 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
-  const [loadingStep, setLoadingStep] = useState<number>(0);
+  const [progress, setProgress] = useState<AuditProgress | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const quota = useQuotaStatus();
+  const { quota, engines } = useAuditStatus();
+  const engineNames = describeEngines(engines);
 
   const sampleBrands = [
     {
@@ -140,30 +141,18 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
   ) => {
     setIsLoading(true);
     setErrorMessage(null);
-    setLoadingStep(1);
-    setStatusMessage('Querying Gemini & live AI Search crawlers...');
-
-    // Progress simulation
-    const timer1 = setTimeout(() => {
-      setLoadingStep(2);
-      setStatusMessage('Testing commercial comparison & alternatives search queries...');
-    }, 1200);
-
-    const timer2 = setTimeout(() => {
-      setLoadingStep(3);
-      setStatusMessage('Analyzing AI hallucinations, inaccuracies, and citation sources...');
-    }, 2500);
-
-    const timer3 = setTimeout(() => {
-      setLoadingStep(4);
-      setStatusMessage('Calculating GEO Visibility Index and generating remediation plan...');
-    }, 3800);
+    setProgress(null);
+    // No scripted steps: the old timers announced "Calculating GEO Visibility
+    // Index" 3.8 seconds in, while the server was still waiting on the first
+    // answer. Everything shown below comes from what the server reports.
+    setStatusMessage('Starting the audit...');
 
     try {
-      // Only the user's own queries are sent; the audit job generates the rest
-      // so no slow request is held open by the browser.
+      // Only the user's own queries are sent; with none, the server runs its
+      // three standard buyer-intent queries. One query per line - a comma is
+      // ordinary punctuation inside a question and used to split it in two.
       const combinedQueries = manualQueriesInput
-        .split(',')
+        .split('\n')
         .map((q) => q.trim())
         .filter(Boolean)
         .map((qText, idx) => ({
@@ -183,12 +172,11 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           competitors: bCompetitors,
           queries: combinedQueries,
         },
-        setStatusMessage
+        (message, p) => {
+          setStatusMessage(message);
+          setProgress(p ?? null);
+        }
       );
-
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
 
       const reportObj = auditData.report || auditData;
 
@@ -200,9 +188,6 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
       }
     } catch (err: any) {
       console.error('Audit execution error:', err);
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
       setErrorMessage(err.message || 'Failed to complete live audit via API.');
     } finally {
       setIsLoading(false);
@@ -231,14 +216,15 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
     executeAudit(bName, bDomain, bIndustry, comps);
   };
 
+  // Fills the form only. It used to start the audit on click, spending real
+  // answer-engine quota on a chip the user may have tapped just to look.
   const handleSelectSample = (sample: typeof sampleBrands[0]) => {
     setBusinessName(sample.name);
     setDomain(sample.domain);
     setIndustry(sample.industry);
     setCompetitorsText(sample.competitors);
-
-    const comps = sample.competitors.split(',').map((c) => c.trim()).filter(Boolean);
-    executeAudit(sample.name, sample.domain, sample.industry, comps);
+    setManualQueriesInput('');
+    setErrorMessage(null);
   };
 
   return (
@@ -255,7 +241,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
         </h1>
 
         <p className="text-slate-300 text-sm max-w-2xl mx-auto leading-relaxed">
-          Test real buyer intent queries across top AI search models (Gemini, ChatGPT, Perplexity, Claude). Identify hallucinations, resolve omissions, and get an actionable remediation plan.
+          Ask real buyer-intent questions of {engineNames} and see whether, where and how your brand is named, which rivals are named instead, and which sources the answers lean on.
         </p>
       </div>
 
@@ -354,18 +340,19 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           {/* Optional Custom Target Search Queries */}
           <div className="pt-1">
             <label htmlFor="extra-queries-input" className="block text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Custom Target Search Queries (Optional)
+              <Sparkles className="h-3.5 w-3.5 text-indigo-400" /> Your Own Search Queries (Optional)
             </label>
-            <input
+            <textarea
               id="extra-queries-input"
-              type="text"
+              rows={3}
               value={manualQueriesInput}
               onChange={(e) => setManualQueriesInput(e.target.value)}
-              placeholder="e.g. Is Stripe SOC2 compliant?, Stripe vs Adyen enterprise pricing (comma-separated)"
-              className="w-full px-3.5 py-2.5 bg-slate-950 text-slate-200 text-xs rounded-lg border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-600"
+              placeholder={'One question per line, e.g.\nIs Stripe SOC2 compliant?\nStripe vs Adyen for enterprise pricing'}
+              className="w-full px-3.5 py-2.5 bg-slate-950 text-slate-200 text-xs rounded-lg border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-600 resize-y"
             />
             <p className="text-[11px] text-slate-500 mt-1">
-              Appended alongside the 3 LLM auto-generated queries grounded in live web search data.
+              Leave blank to run three standard buyer-intent queries built from the details above. If you enter
+              your own, only yours are run.
             </p>
           </div>
 
@@ -430,14 +417,14 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-indigo-400" />
                 {statusMessage}
               </span>
-              <span>Step {loadingStep} / 4</span>
+              <span>{progress ? `${progress.done}/${progress.total} queries` : ''}</span>
             </div>
 
             {/* Progress Bar */}
             <div className="w-full bg-slate-900 h-2 rounded-full overflow-hidden border border-slate-800">
               <div
                 className="bg-indigo-500 h-full rounded-full transition-all duration-500"
-                style={{ width: `${(loadingStep / 4) * 100}%` }}
+                style={{ width: `${progressPercent(progress)}%` }}
               />
             </div>
           </div>
@@ -448,7 +435,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           <div className="pt-2 border-t border-slate-800/80">
             <div className="flex items-center justify-between mb-2.5">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Or test a 1-click sample brand
+                Or fill the form with an example brand
               </span>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -477,7 +464,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           </div>
           <h3 className="text-sm font-bold text-white">Query Intent Matrix</h3>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Evaluates how Gemini, ChatGPT, Perplexity, and Claude respond across 6 key buyer intent query types.
+            Captures what {engineNames} actually say in response to buyer-intent questions, verbatim, with the sources each answer cites.
           </p>
         </div>
 
@@ -487,7 +474,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           </div>
           <h3 className="text-sm font-bold text-white">Inaccuracy & Omission Defense</h3>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Detects false claims, hallucinated pricing, and missing brand recommendations in commercial comparison queries.
+            Flags claims about your brand that look wrong or misleading, and explains why you were left out of answers where you were. Model-assisted; read it as indicative.
           </p>
         </div>
 
@@ -497,7 +484,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           </div>
           <h3 className="text-sm font-bold text-white">Prioritized Remediation</h3>
           <p className="text-xs text-slate-400 leading-relaxed">
-            Generates ready-to-deploy JSON-LD schema markup, FAQ matrices, and content fixes to boost AI search rankings.
+            Suggests concrete fixes tied to the gaps found in your audit. Suggestions only - the audit does not measure whether a fix works.
           </p>
         </div>
       </div>

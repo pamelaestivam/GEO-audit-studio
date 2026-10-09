@@ -14,7 +14,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [company, setCompany] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,32 +51,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
 
       if (response.ok && data.user) {
         onLoginSuccess(data.user);
-      } else if (data.error) {
-        throw new Error(data.error);
       } else {
-        // Fallback local session creation if backend returns non-standard payload
-        const fallbackUser: User = {
-          id: `usr-${Date.now()}`,
-          name: name || email.split('@')[0],
-          email: email,
-          company: company || 'Enterprise Org',
-          role: 'GEO Auditor',
-          createdAt: new Date().toISOString(),
-        };
-        onLoginSuccess(fallbackUser);
+        throw new Error(data.error || 'Sign-in did not succeed. Please try again.');
       }
     } catch (err: any) {
-      console.warn('Auth API fallback triggered:', err);
-      // Seamless mock login fallback for local state testing if backend endpoint fails
-      const fallbackUser: User = {
-        id: `usr-${Date.now()}`,
-        name: name || (email ? email.split('@')[0] : 'Demo User'),
-        email: email || 'auditor@company.com',
-        company: company || 'Enterprise Client',
-        role: 'Lead GEO Auditor',
-        createdAt: new Date().toISOString(),
-      };
-      onLoginSuccess(fallbackUser);
+      // A failed sign-in is a failed sign-in. This used to catch the error and
+      // log the person in anyway with a locally-invented user ("mock login
+      // fallback"), so a wrong password - or the server being down - landed
+      // straight in the dashboard.
+      setError(err?.message || 'Could not sign in. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -129,16 +111,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
               Audit Brand Visibility in AI Search Engines
             </h2>
             <p className="text-xs text-slate-300 leading-relaxed mb-6">
-              Monitor recommendations, detect inaccuracies, and optimize share of voice across Gemini, ChatGPT, Perplexity, and Claude.
+              Find out whether AI answer engines recommend your brand, who they recommend instead, and which sources they trust.
             </p>
 
             {/* Feature Highlights */}
             <div className="space-y-3.5 pt-2">
               {[
-                'Live web grounded audit pipeline on Gemini 3.6',
-                'AI search inaccuracy & hallucination detection',
-                'Automated competitor Share of Voice benchmarks',
-                'Prioritized Schema & JSON-LD remediation code',
+                'Live, web-grounded answers captured verbatim with their sources',
+                'Share of voice measured against the vendors the engines name',
+                'Suggested fixes tied to the gaps found in your audit',
+                'Failures are reported as failures, never as zeros',
               ].map((text, idx) => (
                 <div key={idx} className="flex items-start gap-2.5">
                   <div className="p-1 rounded bg-indigo-500/20 text-indigo-400 mt-0.5 shrink-0">
@@ -154,8 +136,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
           <div className="mt-8 pt-6 border-t border-slate-800/80 flex items-center gap-3">
             <ShieldCheck className="h-5 w-5 text-emerald-400 shrink-0" />
             <div className="text-[11px] text-slate-400">
-              <span className="text-slate-200 font-semibold block">Enterprise Workspace Security</span>
-              OAuth & encrypted persistent user sessions.
+              <span className="text-slate-200 font-semibold block">Early access</span>
+              Accounts are a placeholder while real sign-in is being built. Do not reuse a real password.
             </div>
           </div>
         </div>
@@ -171,7 +153,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
                   {isSignUp
-                    ? 'Get instant access to AI Search visibility audits'
+                    ? 'Create an account to run AI search visibility audits'
                     : 'Enter your work email and password to continue'}
                 </p>
               </div>
@@ -297,19 +279,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
               )}
 
               <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
-                  />
-                  <span>Remember me on this browser</span>
-                </label>
+                <span className="text-slate-500">Your session stays on this browser until you sign out.</span>
                 {!isSignUp && (
                   <button
                     type="button"
-                    onClick={() => setError('Password reset instructions sent to your email.')}
+                    onClick={() => setError('Password reset is not available yet, and no email was sent. Contact the person who invited you.')}
                     className="text-indigo-400 hover:text-indigo-300 font-medium transition"
                   >
                     Forgot password?

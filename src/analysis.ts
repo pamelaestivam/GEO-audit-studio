@@ -20,7 +20,10 @@ export interface QueryEvidence {
   searchQueries: string[];
   capturedAt: string;
   engine: string;
+  /** A readable sentence - never a raw provider payload. */
   error?: string;
+  /** Machine-readable cause of `error`, so failures can be summarised without re-parsing prose. */
+  errorKind?: string;
 }
 
 export interface BrandMatcher {
@@ -355,14 +358,79 @@ const SENTENCE_STARTER_WORDS = new Set([
 ]);
 
 /**
- * Vendor-name candidates found in answer text by capitalisation pattern
- * alone - no model call. Every candidate returned here still has to survive
- * the same verification every discovered name already goes through
- * (buildBrandMatcher + findFirstMention against the source text), so this
- * trades recall (it will miss a vendor named only in lowercase, or spelled
- * unusually) for using zero LLM budget on a step that was already being
- * fully re-verified against the literal text regardless of where the
- * candidate came from.
+ * Capitalised words that are real words in answer prose but never vendors:
+ * weekdays, months, and the label words engines put in bold ("**Key
+ * takeaways:**", "**Pricing:**"). Single-word candidates found here are
+ * dropped; they are matched as the whole candidate, so "Fresh Market" is
+ * unaffected.
+ */
+const NON_VENDOR_WORDS = new Set([
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+  'september', 'october', 'november', 'december',
+  'key', 'pricing', 'price', 'prices', 'cost', 'costs', 'summary', 'conclusion',
+  'note', 'notes', 'tip', 'tips', 'overview', 'features', 'feature', 'pros',
+  'cons', 'why', 'how', 'what', 'which', 'who', 'fresh', 'quick', 'final',
+  'bottom', 'verdict', 'recommendation', 'recommendations', 'example',
+  'examples', 'option', 'options', 'step', 'steps', 'rating', 'ratings',
+  'review', 'reviews', 'menu', 'hours', 'location', 'locations', 'contact',
+  'yes', 'no', 'also', 'finally', 'first', 'second', 'third', 'next', 'then',
+  'important', 'remember', 'ask', 'tell', 'get', 'find', 'make', 'take',
+  // Generic table/column headers ("| Vendor | Rating |").
+  'vendor', 'vendors', 'company', 'companies', 'provider', 'providers', 'name',
+  'tool', 'tools', 'product', 'products', 'service', 'services', 'platform',
+  'platforms', 'brand', 'brands', 'best', 'category', 'type', 'description',
+]);
+
+/**
+ * Places an answer cites rather than recommends: review sites, directories,
+ * search engines, and the answer engines themselves. Surfacing "Yelp" as a
+ * rival to a restaurant is wrong; it is a source (and appears in the Citation
+ * Source Map already). Whole-candidate match only - "Google Cloud" is a
+ * vendor, "Google" alone is not. Competitors the user typed are tracked
+ * explicitly and never pass through this filter.
+ */
+const NON_VENDOR_PLATFORMS = new Set([
+  'google', 'google maps', 'google search', 'bing', 'yelp', 'tripadvisor',
+  'reddit', 'quora', 'wikipedia', 'youtube', 'facebook', 'instagram', 'tiktok',
+  'linkedin', 'twitter', 'g2', 'capterra', 'trustpilot', 'gartner', 'forbes',
+  'chatgpt', 'gemini', 'perplexity', 'claude', 'openai', 'siri', 'alexa',
+]);
+
+/**
+ * Whether the text before a candidate marks it as a deliberate name rather
+ * than a capitalised word that merely begins a sentence: bold, a list-item
+ * head, a heading, or a table cell. Engines format the vendors they recommend
+ * this way; they do not format "Pricing" or "Monday" this way except as a
+ * label, which NON_VENDOR_WORDS covers.
+ */
+function isStructuralPosition(prefix: string): boolean {
+  return (
+    /(?:\*\*|__)$/.test(prefix) ||
+    /^\s*(?:[-*•+]|\d+[.)])\s+$/.test(prefix) ||
+    /^\s*#{1,6}\s+$/.test(prefix) ||
+    /\|\s*$/.test(prefix)
+  );
+}
+
+/**
+ * Vendor-name candidates found in answer text - no model call. Every
+ * candidate returned here still has to survive the same verification every
+ * discovered name already goes through (buildBrandMatcher + findFirstMention
+ * against the source text).
+ *
+ * A capitalised phrase is NOT enough on its own. When capitalisation alone
+ * was the rule, a realistic answer about Austin poke restaurants produced 15
+ * "vendors", 13 of them junk ("Monday", "Pricing", "Key", "Why", "Austin",
+ * "Yelp"): the client's share of voice was divided by 16 instead of 3, and the
+ * Executive Summary listed "Pricing" and "Key" as rivals the client should
+ * worry about. A fabricated rival is worse than a missed one, so a name now
+ * has to earn its place: it must appear in a structural position (bold, list
+ * head, heading, table cell) or be named at least twice.
+ *
+ * Cost: a vendor named exactly once, in unformatted prose, is not discovered.
+ * Understating the field slightly flatters the client; the user can add that
+ * rival by name and it is then tracked explicitly. See TECH_DEBT.md 2.6b.
  */
 export function extractCandidateVendors(text: string, excludeMatchers: BrandMatcher[]): string[] {
   if (!text) return [];
@@ -374,35 +442,53 @@ export function extractCandidateVendors(text: string, excludeMatchers: BrandMatc
   // Fargo"), so allowing it would bridge two distinct entities into one
   // wrong candidate spanning both.
   const pattern = /\b[A-Z][a-zA-Z0-9']*(?:\s+(?:of|&)\s+[A-Z][a-zA-Z0-9']*|\s+[A-Z][a-zA-Z0-9']*){0,2}\b/g;
-  const seen = new Map<string, number>();
 
-  for (const raw of text.match(pattern) || []) {
-    const candidate = raw.trim().replace(/\s+/g, ' ');
-    const firstWord = candidate.split(' ')[0].toLowerCase();
+  interface Seen {
+    /** Presentable form: the plain spelling if it was ever seen, else the possessive one. */
+    plain?: string;
+    possessive?: string;
+    count: number;
+    structural: boolean;
+  }
+  const seen = new Map<string, Seen>();
+
+  for (const hit of text.matchAll(pattern)) {
+    const raw = hit[0].trim().replace(/\s+/g, ' ');
+    // "Sweetfin's menu" names Sweetfin - count it with the plain spelling. A
+    // brand that genuinely ends in 's ("Lowe's") is only ever seen possessive,
+    // in which case that spelling is what gets displayed.
+    const isPossessive = /'s$/.test(raw);
+    const candidate = isPossessive ? raw.slice(0, -2) : raw;
+    const lowered = candidate.toLowerCase();
+    const firstWord = lowered.split(' ')[0];
     if (candidate.length < 3 || candidate.length > 50) continue;
     if (SENTENCE_STARTER_WORDS.has(firstWord)) continue;
+    if (NON_VENDOR_PLATFORMS.has(lowered)) continue;
+    // "Monday" is a weekday - but "Monday.com" is a vendor. A domain suffix
+    // right after the match is the tell.
+    const index = hit.index ?? 0;
+    const followedByDomainSuffix = /^\.(?:com|io|co|ai|app|net|org|dev)\b/i.test(
+      text.slice(index + hit[0].length, index + hit[0].length + 6)
+    );
+    if (NON_VENDOR_WORDS.has(lowered) && !followedByDomainSuffix) continue;
     // Don't rediscover the client's own name or an already-tracked
     // competitor as if it were a new find.
     if (excludeMatchers.some((m) => findFirstMention(candidate, m) >= 0)) continue;
 
-    const key = candidate.toLowerCase();
-    seen.set(key, (seen.get(key) || 0) + 1);
+    const lineStart = text.lastIndexOf('\n', index - 1) + 1;
+    const structural = isStructuralPosition(text.slice(lineStart, index));
+
+    const entry = seen.get(lowered) ?? { count: 0, structural: false };
+    entry.count += 1;
+    entry.structural = entry.structural || structural;
+    if (isPossessive) entry.possessive ??= raw;
+    else entry.plain ??= candidate;
+    seen.set(lowered, entry);
   }
 
-  // Names mentioned more than once are far more likely to be genuine
-  // vendors than one-off capitalisation noise; prefer them, then cap the
-  // list so a noisy answer cannot flood the scorecard with junk. The
-  // original casing is lost by lowercasing for dedupe, so re-derive a
-  // presentable form from the first match of each key.
-  const originalCasing = new Map<string, string>();
-  for (const raw of text.match(pattern) || []) {
-    const candidate = raw.trim().replace(/\s+/g, ' ');
-    const key = candidate.toLowerCase();
-    if (seen.has(key) && !originalCasing.has(key)) originalCasing.set(key, candidate);
-  }
-
-  return Array.from(seen.entries())
-    .sort((a, b) => b[1] - a[1])
+  return Array.from(seen.values())
+    .filter((c) => c.structural || c.count >= 2)
+    .sort((a, b) => b.count - a.count)
     .slice(0, 15)
-    .map(([key]) => originalCasing.get(key) || key);
+    .map((c) => (c.plain ?? c.possessive) as string);
 }

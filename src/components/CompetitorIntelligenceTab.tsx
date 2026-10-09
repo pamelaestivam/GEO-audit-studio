@@ -1,17 +1,34 @@
 import React from 'react';
 import { Award, ExternalLink, BarChart3, ShieldCheck } from 'lucide-react';
 import { CompetitorBenchmark } from '../types';
+import { AlertTriangle } from 'lucide-react';
 
 interface CompetitorIntelligenceTabProps {
   competitors: CompetitorBenchmark[];
   businessName: string;
+  /** False when the audit failed: the benchmark percentages are then placeholders, not measurements. */
+  measured?: boolean;
 }
 
 export const CompetitorIntelligenceTab: React.FC<CompetitorIntelligenceTabProps> = ({
   competitors = [],
   businessName,
+  measured = true,
 }) => {
   const safeCompetitors = competitors || [];
+
+  if (!measured) {
+    return (
+      <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-12 text-center text-amber-200/90 space-y-2">
+        <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto" />
+        <h4 className="text-base font-semibold text-amber-100">Not measured</h4>
+        <p className="text-xs text-amber-200/70">
+          This audit did not complete, so there is no share-of-voice data for {businessName} or its competitors.
+          Re-run the audit to measure it.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

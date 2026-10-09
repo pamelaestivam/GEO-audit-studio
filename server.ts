@@ -2,7 +2,6 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
-import { SAMPLE_AUDITS } from './src/data/sampleAudits.js';
 import {
   analyseAnswer,
   buildBrandMatcher,
@@ -19,9 +18,11 @@ import {
   describeProviderError,
   formatDuration,
   summariseFailures,
+  type ReadableError,
 } from './src/errors.js';
 import { QuotaBreaker } from './src/quotaBreaker.js';
 import { IdempotencyStore, readIdempotencyKey } from './src/idempotency.js';
+import { FixedWindowLimiter } from './src/rateLimit.js';
 import {
   askEngine,
   configuredEngines,
@@ -55,7 +56,52 @@ const MAX_AUDIT_QUERIES = Number(process.env.MAX_AUDIT_QUERIES || 8);
 async function buildApp() {
   const app = express();
 
-  app.use(express.json());
+  app.disable('x-powered-by');
+  // Render and Vercel both terminate TLS in front of the app; without this
+  // every request appears to come from the proxy's address and a per-IP limit
+  // would throttle all users as one.
+  app.set('trust proxy', 1);
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+  app.use(express.json({ limit: '100kb' }));
+
+  /**
+   * Every POST under /api/audit spends answer-engine quota and is currently
+   * open to anyone with the URL (TECH_DEBT.md 2.2). A per-IP window stops one
+   * client - a script, or a retry loop - from spending everyone's day.
+   * 0 disables it. Per-instance on serverless; see src/rateLimit.ts.
+   */
+  const RATE_LIMIT_PER_MIN = Number(process.env.RATE_LIMIT_PER_MIN ?? 30);
+  const spendLimiter = new FixedWindowLimiter(RATE_LIMIT_PER_MIN, 60_000);
+  app.use('/api/audit', (req, res, next) => {
+    if (req.method !== 'POST' || RATE_LIMIT_PER_MIN <= 0) return next();
+    const decision = spendLimiter.check(req.ip || 'unknown');
+    if (decision.allowed) return next();
+    res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+    return res.status(429).json({
+      error: `You are sending audit requests faster than this service allows. Please wait ${decision.retryAfterSeconds} seconds and try again.`,
+    });
+  });
+
+  /** Bounds on user input, so one request cannot exhaust quota or memory. */
+  const MAX_NAME_LENGTH = 120;
+  const MAX_COMPETITORS = 20;
+  const MAX_QUERY_LENGTH = 300;
+
+  /** Trim and cap a user-supplied string; anything that is not a string becomes ''. */
+  const cleanText = (value: unknown, max: number): string =>
+    typeof value === 'string' ? value.trim().slice(0, max) : '';
+
+  /** Competitors arrive as an array or a comma-separated string; always return a bounded string[]. */
+  const cleanCompetitors = (value: unknown): string[] =>
+    (Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [])
+      .map((c: unknown) => cleanText(c, MAX_NAME_LENGTH))
+      .filter((c: string) => c.length > 0)
+      .slice(0, MAX_COMPETITORS);
 
   // Initialize Gemini Client server-side
   const getGeminiClient = () => {
@@ -261,7 +307,15 @@ async function buildApp() {
 
   // Health check API
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', environment: process.env.NODE_ENV || 'development' });
+    res.json({
+      status: 'ok',
+      environment: process.env.NODE_ENV || 'development',
+      // Be explicit about what this deployment cannot promise, so a monitor or
+      // a person reading /api/health is not left to assume durability exists.
+      storage: 'in-memory',
+      uptimeSeconds: Math.round(process.uptime()),
+      commit: process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT || undefined,
+    });
   });
 
   /**
@@ -363,18 +417,16 @@ async function buildApp() {
     return res.json({ user: userWithoutPass, token: `token-${Date.now()}` });
   });
 
-  // Get sample prebuilt audit benchmarks
-  app.get('/api/audit/samples', (req, res) => {
-    res.json({ samples: SAMPLE_AUDITS });
-  });
-
   // POST: Live URL & Brand Name parser using Gemini Grounded Web Search
   app.post('/api/audit/parse-url', async (req, res) => {
     const idempotencyKey = scopedKey('parse-url', readIdempotencyKey(req.headers as any));
     try {
-      const { input } = req.body;
-      if (!input || typeof input !== 'string') {
-        return res.status(400).json({ error: 'Input query string or URL is required' });
+      const { input } = req.body ?? {};
+      if (!input || typeof input !== 'string' || !input.trim()) {
+        return res.status(400).json({ error: 'Enter a brand name or website address to look up.' });
+      }
+      if (input.length > 300) {
+        return res.status(400).json({ error: 'That is too long to look up. Enter just the brand name or website address.' });
       }
 
       // One click on "Auto-Detect" costs one Gemini call however many times
@@ -591,10 +643,14 @@ Return a JSON array of exactly 3 query objects.`;
   app.post('/api/audit/generate-queries', async (req, res) => {
     const idempotencyKey = scopedKey('generate-queries', readIdempotencyKey(req.headers as any));
     try {
-      const { businessName, domain, industry, coreOfferings, competitors } = req.body;
+      const businessName = cleanText(req.body?.businessName, MAX_NAME_LENGTH);
       if (!businessName) {
         return res.status(400).json({ error: 'A business or brand name is required.' });
       }
+      const domain = cleanText(req.body?.domain, 200);
+      const industry = cleanText(req.body?.industry, 200);
+      const coreOfferings = cleanText(req.body?.coreOfferings, 300);
+      const competitors = cleanCompetitors(req.body?.competitors);
       const ai = getGeminiClient();
       if (!ai) {
         return res.json({ queries: getFallbackQueries(businessName, domain, industry, coreOfferings, competitors) });
@@ -635,10 +691,13 @@ Return a JSON array of exactly 3 query objects.`;
    */
   app.post('/api/audit/evaluate-query', async (req, res) => {
     try {
-      const { businessName, domain, competitors, queryText } = req.body;
+      const businessName = cleanText(req.body?.businessName, MAX_NAME_LENGTH);
+      const domain = cleanText(req.body?.domain, 200);
+      const queryText = cleanText(req.body?.queryText, MAX_QUERY_LENGTH);
+      const competitors = cleanCompetitors(req.body?.competitors);
 
       if (!businessName || !queryText) {
-        return res.status(400).json({ error: 'businessName and queryText are required' });
+        return res.status(400).json({ error: 'Enter a search query to evaluate.' });
       }
 
       const ai = getGeminiClient();
@@ -668,9 +727,7 @@ Return a JSON array of exactly 3 query objects.`;
         });
       }
 
-      const competitorList = (Array.isArray(competitors) ? competitors : [competitors])
-        .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
-        .map((c: string) => c.trim());
+      const competitorList = competitors;
 
       // One click on "Add & Audit Query" costs one round of engine calls,
       // however many connection attempts it took to deliver the request.
@@ -688,10 +745,7 @@ Return a JSON array of exactly 3 query objects.`;
       const usable = evidence.filter((e) => !e.error && e.answerText.trim().length > 0);
 
       if (usable.length === 0) {
-        const readable = summariseFailures(
-          evidence.map((e) => e.error).filter(Boolean),
-          'The answer engine'
-        );
+        const readable = summariseFailures(evidenceFailures(evidence), 'The answer engine');
         return res.status(502).json({ error: readable.message });
       }
 
@@ -767,7 +821,7 @@ Return a JSON array of exactly 3 query objects.`;
       res.json({ evaluatedQuery });
     } catch (err: any) {
       console.log(`evaluate-query failed: ${err?.message || err}`);
-      res.status(500).json({ error: err?.message || 'Failed to evaluate query' });
+      res.status(500).json({ error: describeProviderError(err, 'The answer engine').message });
     }
   });
 
@@ -820,9 +874,20 @@ Return a JSON array of exactly 3 query objects.`;
         searchQueries: metadata?.webSearchQueries || [],
       };
     } catch (err: any) {
+      // The raw provider text stays in the server log; the report only ever
+      // carries a sentence (CLAUDE.md: no user-visible message contains raw
+      // provider JSON).
       console.log(`[Gemini] evidence failed for "${query.queryText}": ${err?.message || err}`);
-      return { ...base, error: err?.message || 'grounded search failed' };
+      const readable = describeProviderError(err, 'Gemini');
+      return { ...base, error: readable.message, errorKind: readable.kind };
     }
+  }
+
+  /** The failures in a set of evidence, as readable errors ready for summariseFailures. */
+  function evidenceFailures(evidence: QueryEvidence[]): ReadableError[] {
+    return evidence
+      .filter((e) => e.error)
+      .map((e) => ({ kind: (e.errorKind as ReadableError['kind']) || 'unknown', message: e.error as string }));
   }
 
   /** Collect evidence for one query across every configured engine. */
@@ -835,6 +900,8 @@ Return a JSON array of exactly 3 query objects.`;
       if (engine === 'Gemini') return collectGeminiEvidence(aiInstance, query);
 
       const answer = await askEngine(engine, query.queryText);
+      const readable = answer.error ? describeProviderError(answer.error, engine) : null;
+      if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.error}`);
       return {
         queryId: query.id,
         queryText: query.queryText,
@@ -843,7 +910,8 @@ Return a JSON array of exactly 3 query objects.`;
         searchQueries: answer.searchQueries,
         capturedAt: new Date().toISOString(),
         engine,
-        error: answer.error,
+        error: readable?.message,
+        errorKind: readable?.kind,
       };
     });
 
@@ -1026,7 +1094,18 @@ Return valid JSON matching the schema.`;
    * Safari especially) aborts a request that long. The endpoint starts this as
    * a background job and the client polls for the result.
    */
-  async function performAudit(req: { body: any }): Promise<any> {
+  /** What an in-flight audit is doing, for the client to display truthfully. */
+  interface AuditProgress {
+    phase: 'querying' | 'analysing';
+    /** Queries fully collected so far. */
+    done: number;
+    total: number;
+  }
+
+  async function performAudit(
+    req: { body: any },
+    onProgress: (p: AuditProgress) => void = () => {}
+  ): Promise<any> {
     try {
       const {
         businessName,
@@ -1074,7 +1153,7 @@ Return valid JSON matching the schema.`;
           : 'No answer engine is configured, so nothing could be measured. Add an engine API key and re-run.';
         return {
           report: {
-            ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList),
+            ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),
             degraded: true,
             degradedReason: reason,
           },
@@ -1093,8 +1172,10 @@ Return valid JSON matching the schema.`;
           break;
         }
         if (i > 0) await delay(1200);
+        onProgress({ phase: 'querying', done: i, total: queryList.length });
         evidenceByQuery.push(await collectQueryEvidence(ai, queryList[i], engines));
       }
+      onProgress({ phase: 'analysing', done: queryList.length, total: queryList.length });
 
       const allEvidence = evidenceByQuery.flat();
       const usableEvidence = allEvidence.filter((e) => !e.error && e.answerText.trim().length > 0);
@@ -1107,12 +1188,11 @@ Return valid JSON matching the schema.`;
         // a generic "returned no answers" that loses the actual reason. The
         // breaker's own status is the source of truth whenever it is tripped.
         const breakerStatus = geminiBreaker.status();
-        const failures = allEvidence.map((e) => e.error).filter(Boolean);
         const readable = breakerStatus.tripped
           ? { message: breakerStatus.reason || 'The answer engine quota is exhausted.' }
-          : summariseFailures(failures, 'The answer engine');
+          : summariseFailures(evidenceFailures(allEvidence), 'The answer engine');
         const degraded = generateSynthesizedAudit(
-          businessName, cleanDomain, industry, coreOfferings, competitorList, queryList
+          businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines, evidenceByQuery
         );
         degraded.executiveSummary =
           `Audit could not complete: ${readable.message} No evidence was collected, so nothing below is a finding about ${businessName}.`;
@@ -1155,6 +1235,11 @@ Return valid JSON matching the schema.`;
 
       // ---------- Layer 3: narrative ----------
       let narrative: any = null;
+      // Why the qualitative analysis is missing, when it is. An empty
+      // `inaccuracies` array from a model that never answered is NOT a finding
+      // of zero inaccuracies - it used to be reported as a 100% accuracy rate,
+      // the exact failure-counted-as-success pattern CLAUDE.md forbids.
+      let narrativeFailure: string | null = null;
       try {
         await delay(600);
         narrative = await generateNarrative(ai, {
@@ -1174,7 +1259,12 @@ Return valid JSON matching the schema.`;
         });
       } catch (narrativeErr: any) {
         console.log(`Narrative synthesis failed: ${narrativeErr?.message || narrativeErr}`);
+        narrativeFailure = describeProviderError(narrativeErr, 'Gemini').message;
       }
+      if (!narrative && !narrativeFailure) {
+        narrativeFailure = 'The analysis step returned nothing usable.';
+      }
+      const narrativeAvailable = narrativeFailure === null;
 
       // ---------- Layer 4: assemble an honest report ----------
       const queriesTested = queryList.map((q: any, idx: number) => {
@@ -1252,9 +1342,11 @@ Return valid JSON matching the schema.`;
       }));
 
       // Accuracy is only meaningful where the brand was actually discussed.
+      // It is also only meaningful where the qualitative analysis actually ran:
+      // with no analysis there is nothing to count inaccuracies from.
       const mentionCount = clientScore.timesMentioned;
       const accuracyRate =
-        mentionCount > 0
+        narrativeAvailable && mentionCount > 0
           ? Math.max(0, Math.round(((mentionCount - inaccuracies.length) / mentionCount) * 100))
           : null;
 
@@ -1271,8 +1363,11 @@ Return valid JSON matching the schema.`;
         businessName,
         domain: cleanDomain,
         industry: industry || '',
-        coreOfferings: coreOfferings || 'Products and services',
-        targetAudience: targetAudience || 'Buyers and decision makers',
+        // Blank stays blank. These used to default to "Products and services" /
+        // "Buyers and decision makers" - a guess rendered in the report as if
+        // it were something the client said about themselves.
+        coreOfferings: coreOfferings || '',
+        targetAudience: targetAudience || '',
         competitors: competitorList,
 
         // Metrics computed in code from captured evidence.
@@ -1284,7 +1379,18 @@ Return valid JSON matching the schema.`;
 
         executiveSummary:
           narrative?.executiveSummary ||
-          `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.`,
+          `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.${
+            narrativeAvailable
+              ? ''
+              : ' The qualitative analysis (inaccuracies, omissions, remediation plan) could not be generated, so none of it is reported here.'
+          }`,
+
+        // Whether the qualitative analysis ran. The three arrays below are
+        // empty when it did not, and an empty array must not read as "none found".
+        narrativeAvailable,
+        narrativeNote: narrativeAvailable
+          ? undefined
+          : `${narrativeFailure} Visibility, share of voice and the evidence below are measured; accuracy, omissions and the remediation plan were not assessed. Re-run the audit to try again.`,
 
         queriesTested,
         inaccuracies,
@@ -1330,6 +1436,8 @@ Return valid JSON matching the schema.`;
         queriesAttempted: queryList.length,
         observationsAttempted: allEvidence.length,
         observationsWithEvidence: usableEvidence.length,
+        // Numerator behind geoVisibilityScore, so the UI can show "1 of 3".
+        observationsMentioned: clientScore.timesMentioned,
         enginesRequested: engines,
       };
 
@@ -1343,9 +1451,10 @@ Return valid JSON matching the schema.`;
         req.body?.industry,
         req.body?.coreOfferings,
         req.body?.competitors,
-        req.body?.queries
+        req.body?.queries,
+        configuredEngines()
       );
-      fallback.executiveSummary = `Audit failed to complete: ${readableFailure.message} No findings were generated; these are placeholder values, not measurements.`;
+      fallback.executiveSummary = `Audit failed to complete: ${readableFailure.message} No findings were generated, so none of the figures are measurements.`;
       return {
         report: { ...fallback, degraded: true, degradedReason: readableFailure.message },
         degraded: true,
@@ -1358,11 +1467,32 @@ Return valid JSON matching the schema.`;
     id: string;
     status: 'running' | 'done' | 'error';
     startedAt: number;
+    progress?: AuditProgress;
     result?: any;
     error?: string;
   }
   const auditJobs = new Map<string, AuditJob>();
   const JOB_TTL_MS = 30 * 60 * 1000;
+  /**
+   * An audit still "running" after this long is stuck (a provider call that
+   * never returned). Left alone it would hold a concurrency slot forever.
+   */
+  const JOB_MAX_RUN_MS = 15 * 60 * 1000;
+  /**
+   * Audits share one answer-engine quota and one serialised Gemini queue
+   * (scheduleGeminiCall), so running many at once does not make any of them
+   * faster - it makes every one of them slower and spends the quota sooner.
+   */
+  const MAX_CONCURRENT_AUDITS = Number(process.env.MAX_CONCURRENT_AUDITS || 2);
+
+  class AuditBusyError extends Error {
+    constructor() {
+      super(
+        `This service is already running ${MAX_CONCURRENT_AUDITS} audits, which is as many as the shared answer-engine quota supports at once. Please try again in a minute or two.`
+      );
+      this.name = 'AuditBusyError';
+    }
+  }
 
   /**
    * Maps a client's idempotency key to the job it already started, so a
@@ -1375,16 +1505,17 @@ Return valid JSON matching the schema.`;
   function pruneJobs() {
     const now = Date.now();
     for (const [id, job] of auditJobs) {
+      if (job.status === 'running' && now - job.startedAt > JOB_MAX_RUN_MS) {
+        job.status = 'error';
+        job.error = 'The audit took too long and was stopped. Please run it again.';
+      }
       if (now - job.startedAt > JOB_TTL_MS) auditJobs.delete(id);
     }
   }
 
-  /** Bounds on user input, so one request cannot exhaust quota or memory. */
-  const MAX_NAME_LENGTH = 120;
-  const MAX_COMPETITORS = 20;
-
   app.post('/api/audit/run', async (req, res) => {
     const rawName = typeof req.body?.businessName === 'string' ? req.body.businessName.trim() : '';
+    // (req.body can be undefined for an empty POST; every read below is optional-chained.)
     if (!rawName) {
       return res.status(400).json({ error: 'A business or brand name is required to run an audit.' });
     }
@@ -1396,25 +1527,20 @@ Return valid JSON matching the schema.`;
 
     // Normalise the shape once so the pipeline never sees ragged input.
     req.body.businessName = rawName;
-    const rawCompetitors = req.body?.competitors;
-    req.body.competitors = (
-      Array.isArray(rawCompetitors)
-        ? rawCompetitors
-        : typeof rawCompetitors === 'string'
-          ? rawCompetitors.split(',')
-          : []
-    )
-      .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
-      .map((c: string) => c.trim().slice(0, MAX_NAME_LENGTH))
-      .slice(0, MAX_COMPETITORS);
+    req.body.domain = cleanText(req.body?.domain, 200);
+    req.body.industry = cleanText(req.body?.industry, 200);
+    req.body.coreOfferings = cleanText(req.body?.coreOfferings, 300);
+    req.body.targetAudience = cleanText(req.body?.targetAudience, 300);
+    req.body.competitors = cleanCompetitors(req.body?.competitors);
 
     req.body.queries = (Array.isArray(req.body?.queries) ? req.body.queries : [])
       .filter((q: any) => q && typeof q.queryText === 'string' && q.queryText.trim().length > 0)
+      .slice(0, MAX_AUDIT_QUERIES)
       .map((q: any, i: number) => ({
-        id: typeof q.id === 'string' && q.id ? q.id : `q-user-${i + 1}`,
-        intent: typeof q.intent === 'string' ? q.intent : 'feature_specific',
-        queryText: q.queryText.trim().slice(0, 300),
-        targetPersona: typeof q.targetPersona === 'string' ? q.targetPersona : 'Target Customer',
+        id: typeof q.id === 'string' && q.id ? q.id.slice(0, 60) : `q-user-${i + 1}`,
+        intent: typeof q.intent === 'string' ? q.intent.slice(0, 40) : 'feature_specific',
+        queryText: q.queryText.trim().slice(0, MAX_QUERY_LENGTH),
+        targetPersona: typeof q.targetPersona === 'string' ? q.targetPersona.slice(0, 80) : 'Target Customer',
       }));
 
     pruneJobs();
@@ -1428,25 +1554,45 @@ Return valid JSON matching the schema.`;
     // requests per minute. First use of the day is exactly when the instance
     // is asleep, so it is the run most likely to be multiplied.
     const idempotencyKey = readIdempotencyKey(req.headers as any);
-    const { value: id, replayed } = auditJobsByKey.run(idempotencyKey, () => {
+    let id: string;
+    let replayed: boolean;
+    try {
+      ({ value: id, replayed } = auditJobsByKey.run(idempotencyKey, () => {
+      // A replayed submit (the same click, retried) returns before reaching
+      // this factory, so the cap only ever refuses genuinely new audits.
+      const running = Array.from(auditJobs.values()).filter((j) => j.status === 'running').length;
+      if (running >= MAX_CONCURRENT_AUDITS) throw new AuditBusyError();
+
       const newId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const job: AuditJob = { id: newId, status: 'running', startedAt: Date.now() };
       auditJobs.set(newId, job);
 
       // Kick the work off and answer immediately; the client polls for the result.
-      performAudit({ body: req.body })
+      performAudit({ body: req.body }, (progress) => {
+        job.progress = progress;
+      })
         .then((payload) => {
+          // The reaper may already have timed this job out; its answer is stale.
+          if (job.status !== 'running') return;
           job.status = 'done';
           job.result = payload;
         })
         .catch((err: any) => {
+          if (job.status !== 'running') return;
           job.status = 'error';
           job.error = describeProviderError(err, 'The audit service').message;
           console.log(`Audit job ${newId} failed: ${err?.message || err}`);
         });
 
       return newId;
-    });
+      }));
+    } catch (err) {
+      if (err instanceof AuditBusyError) {
+        res.setHeader('Retry-After', '60');
+        return res.status(429).json({ error: err.message });
+      }
+      throw err;
+    }
 
     if (replayed) {
       // The key outlives the job's own TTL prune, so confirm the job is still
@@ -1464,6 +1610,7 @@ Return valid JSON matching the schema.`;
   });
 
   app.get('/api/audit/job/:id', (req, res) => {
+    pruneJobs();
     const job = auditJobs.get(req.params.id);
     if (!job) {
       return res.status(404).json({
@@ -1471,12 +1618,18 @@ Return valid JSON matching the schema.`;
       });
     }
     if (job.status === 'running') {
-      return res.json({ status: 'running', elapsedMs: Date.now() - job.startedAt });
+      return res.json({ status: 'running', elapsedMs: Date.now() - job.startedAt, progress: job.progress ?? null });
     }
     if (job.status === 'error') {
       return res.status(500).json({ status: 'error', error: job.error });
     }
     return res.json({ status: 'done', ...job.result });
+  });
+
+  // An unknown /api route is a JSON sentence, never an HTML error page - the
+  // client parses every API response as JSON.
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'That API route does not exist.' });
   });
 
   // Vite dev middleware or production static files - neither applies on
@@ -1500,6 +1653,22 @@ Return valid JSON matching the schema.`;
     });
   }
 
+  // Last: anything thrown by a route or by body parsing. Express' default
+  // handler answers with an HTML page that includes a stack trace outside
+  // production; every user-visible error here is a sentence (CLAUDE.md).
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'That request was too large. Please shorten what you entered and try again.' });
+    }
+    if (err?.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+      return res.status(400).json({ error: 'The request could not be read. Please reload the page and try again.' });
+    }
+    console.error('Unhandled server error:', err);
+    return res.status(500).json({
+      error: 'Something went wrong on the server. Please try again; if it keeps happening, the server logs have the detail.',
+    });
+  });
+
   return app;
 }
 
@@ -1511,111 +1680,76 @@ async function startServer() {
   });
 }
 
-// Fallback audit generator for offline/resilient audit execution
+/**
+ * The report returned when an audit could not collect evidence.
+ *
+ * Every field that would be a *finding* is empty or null, because nothing was
+ * found - nothing was measured. This used to ship a placeholder Schema.org
+ * remediation task (with an invented `"price": "0"` offer), a made-up
+ * "no indexed web entities" omission, an `accuracyRate` of 0, and every engine
+ * marked `omitted` - which the matrix renders as "the engine left you out", a
+ * finding about the client. The UI also withholds the numbers (see
+ * `src/reportView.ts`), but the payload must not carry fabrications either:
+ * the Export modal, "Copy Summary" and any API consumer read it directly.
+ */
 function generateSynthesizedAudit(
   businessName: string,
   domain: string = '',
-  industry: string = 'Software',
-  coreOfferings: string = 'Products',
+  industry: string = '',
+  coreOfferings: string = '',
   competitors: any = [],
-  queries: any[] = []
+  queries: any[] = [],
+  engines: string[] = [],
+  /** Evidence attempted per query (same order as `queries`), for the per-engine failure reason. */
+  attempted: QueryEvidence[][] = []
 ) {
-  const compList = Array.isArray(competitors) ? competitors : [competitors];
-  const queryList = queries.length > 0 ? queries : [
-    { id: 'q-1', intent: 'alternatives_search', queryText: `Best alternatives to ${businessName} for ${industry}`, targetPersona: 'Decision Maker' },
-    { id: 'q-2', intent: 'commercial_comparison', queryText: `${businessName} feature breakdown and comparison`, targetPersona: 'Evaluator' },
-    { id: 'q-3', intent: 'pricing_roi', queryText: `${businessName} pricing, enterprise licensing costs and free trial`, targetPersona: 'Procurement Manager' }
-  ];
+  const compList = (Array.isArray(competitors) ? competitors : [competitors]).filter(
+    (c: any) => typeof c === 'string' && c.trim().length > 0
+  );
+  const queryList = queries.length > 0 ? queries : [];
 
   return {
-    id: `audit-syn-${Date.now()}`,
+    id: `audit-failed-${Date.now()}`,
     createdAt: new Date().toISOString(),
     businessName,
     domain,
     industry,
     coreOfferings,
-    targetAudience: 'Decision makers & buyers',
+    targetAudience: '',
     competitors: compList,
+    // Zeros so the shape is stable; `degraded: true` (set by every caller) is
+    // what tells the UI and any consumer that these are not measurements.
     geoVisibilityScore: 0,
     shareOfVoice: 0,
     leaderShare: 0,
-    accuracyRate: 0,
-    executiveSummary: `Insufficient Data - Live search grounding returned no citation results for ${businessName} (${domain}). Execute a live search audit to index real-world search citations.`,
-    queriesTested: queryList.map((q) => ({
+    accuracyRate: null,
+    executiveSummary: `This audit did not complete, so there are no findings about ${businessName}.`,
+    queriesTested: queryList.map((q: any, idx: number) => ({
       ...q,
-      engines: {
-        Gemini: {
-          engine: 'Gemini',
-          status: 'omitted',
-          position: null,
-          excerpt: 'Insufficient Data - Live search grounding returned no citation results.',
-          citations: []
-        },
-        ChatGPT: {
-          engine: 'ChatGPT',
-          status: 'omitted',
-          position: null,
-          excerpt: 'Insufficient Data - Live search grounding returned no citation results.',
-          citations: []
-        },
-        Perplexity: {
-          engine: 'Perplexity',
-          status: 'omitted',
-          position: null,
-          excerpt: 'Insufficient Data - Live search grounding returned no citation results.',
-          citations: []
-        },
-        Claude: {
-          engine: 'Claude',
-          status: 'omitted',
-          position: null,
-          excerpt: 'Insufficient Data - Live search grounding returned no citation results.',
-          citations: []
-        },
-      }
+      // Only engines that were configured - and for those, "no data", never
+      // "omitted", which would be a claim that the engine left the brand out.
+      engines: Object.fromEntries(
+        engines.map((engine) => {
+          const reason = attempted[idx]?.find((ev) => ev.engine === engine)?.error;
+          return [
+            engine,
+            {
+              engine,
+              status: 'retrieval_failed',
+              position: null,
+              excerpt: reason
+                ? `No answer was captured from ${engine}: ${reason}`
+                : `No answer was captured from ${engine}.`,
+              citations: [],
+            },
+          ];
+        })
+      ),
     })),
     inaccuracies: [],
-    omissions: [
-      {
-        id: 'om-syn-1',
-        category: 'Live Search Visibility',
-        description: 'Brand or domain has no verified citations in live search grounding',
-        affectedQueriesCount: queryList.length,
-        rootCause: 'Lack of indexed web entities and structured schema markup',
-        recommendation: 'Publish structured Schema.org JSON-LD and submit site to indexers'
-      }
-    ],
-    remediationPlan: [
-      {
-        id: 'rem-syn-1',
-        title: 'Deploy Schema.org Product & Pricing JSON-LD',
-        category: 'Schema Markup',
-        priority: 'P0 Critical',
-        effort: 'Quick Win (< 2h)',
-        expectedGain: 'Establish initial AI search indexation',
-        description: `Add structured JSON-LD schema to https://${domain} describing exact core offerings and brand entity metadata.`,
-        stepByStepInstructions: [
-          'Add application/ld+json script tag to head of homepage and pricing page.',
-          'Verify with Google Rich Results Test.',
-          'Request re-indexing in Google Search Console.'
-        ],
-        codeSnippet: `{
-  "@context": "https://schema.org",
-  "@type": "Product",
-  "name": "${businessName}",
-  "offers": [
-    {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD",
-      "name": "Core Offering"
-    }
-  ]
-}`,
-        targetUrls: [`https://${domain}`],
-        completed: false
-      }
-    ],
+    omissions: [],
+    remediationPlan: [],
+    narrativeAvailable: false,
     // Only brands the user actually named. Inventing "Competitor A" would put a
     // fictional rival in a report about a real business.
     competitorBenchmarks: [
@@ -1624,16 +1758,18 @@ function generateSynthesizedAudit(
         domain: domain,
         shareOfVoice: 0,
         topRecommendedCount: 0,
-        mainCitationSources: []
+        mainCitationSources: [],
       },
-      ...compList.filter(Boolean).map((c: string) => ({
+      ...compList.map((c: string) => ({
         name: c,
         domain: '',
         shareOfVoice: 0,
         topRecommendedCount: 0,
-        mainCitationSources: []
-      }))
-    ]
+        mainCitationSources: [],
+      })),
+    ],
+    enginesRequested: engines,
+    measuredEngines: [] as string[],
   };
 }
 

@@ -1,0 +1,32 @@
+name: CI
+
+# Every push and PR runs the same gate the owner's working notes require before
+# a merge: typecheck, then `npm test` (build + unit + real-server E2E + contract
+# checks). main auto-deploys, so a red run here is a red release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+        env:
+          CI: 'true'

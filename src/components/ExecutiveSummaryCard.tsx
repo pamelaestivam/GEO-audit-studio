@@ -2,6 +2,16 @@ import React from 'react';
 import { ShieldCheck, AlertTriangle, HelpCircle, TrendingUp, CheckCircle2, Globe, Building2, ExternalLink, Award } from 'lucide-react';
 import { AuditReport } from '../types';
 import { TabType } from './Sidebar';
+import {
+  describeAccuracy,
+  findingCounts,
+  formatPercent,
+  formatScore,
+  hasMeasurements,
+  isLowSample,
+  visibilityBasis,
+  wasAssessed,
+} from '../reportView';
 
 interface ExecutiveSummaryCardProps {
   audit: AuditReport;
@@ -14,8 +24,17 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
   // divs, so tapping the number a user cared about did nothing at all.
   const tileClass =
     'text-left w-full bg-slate-950/60 border border-slate-800/80 rounded-xl p-4 transition hover:border-indigo-500/50 hover:bg-slate-900/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 active:scale-[0.99] cursor-pointer';
+  const measured = hasMeasurements(audit);
+  const accuracy = describeAccuracy(audit);
+  const counts = findingCounts(audit);
+  const basis = visibilityBasis(audit);
+  const assessed = wasAssessed(audit);
+  // A failed audit gets a neutral ring: red/amber/green is a verdict on the
+  // brand, and there is no verdict to give.
   const scoreColor =
-    audit.geoVisibilityScore >= 80
+    !measured
+      ? 'text-slate-400 border-slate-600/50 bg-slate-800/40'
+      : audit.geoVisibilityScore >= 80
       ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
       : audit.geoVisibilityScore >= 60
       ? 'text-amber-400 border-amber-500/30 bg-amber-500/10'
@@ -44,6 +63,36 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
         </div>
       )}
 
+      {/*
+        Evidence was collected but the qualitative analysis failed. The
+        inaccuracy / omission / remediation lists are empty because nothing was
+        assessed - not because nothing was found.
+      */}
+      {!audit.degraded && audit.narrativeAvailable === false && (
+        <div className="mb-6 flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+          <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <div className="text-sm font-bold text-amber-200">Qualitative analysis unavailable</div>
+            <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
+              {audit.narrativeNote ||
+                'Accuracy, omissions and the remediation plan were not assessed. Visibility figures below are still measured.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {(audit.queriesAddedAfterAudit || 0) > 0 && (
+        <div className="mb-6 flex items-start gap-3 bg-slate-800/50 border border-slate-700 rounded-xl p-3">
+          <HelpCircle className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-slate-300 leading-relaxed">
+            {audit.queriesAddedAfterAudit} {audit.queriesAddedAfterAudit === 1 ? 'query was' : 'queries were'} added after
+            this audit ran. {audit.queriesAddedAfterAudit === 1 ? 'It appears' : 'They appear'} in the Query Matrix with
+            {audit.queriesAddedAfterAudit === 1 ? ' its' : ' their'} own result, but the figures on this card cover the
+            original audit only. Run a new audit to include {audit.queriesAddedAfterAudit === 1 ? 'it' : 'them'}.
+          </p>
+        </div>
+      )}
+
       {/* Top Banner: Company Metadata + GEO Score Radial Badge */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-slate-800">
         <div className="space-y-2">
@@ -61,26 +110,34 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
                 <ExternalLink className="h-2.5 w-2.5 opacity-70" />
               </a>
             )}
-            <span className="inline-flex items-center gap-1 text-xs text-slate-300 bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700/60">
-              <Building2 className="h-3 w-3 text-slate-400" />
-              <span>{audit.industry}</span>
-            </span>
+            {audit.industry && (
+              <span className="inline-flex items-center gap-1 text-xs text-slate-300 bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700/60">
+                <Building2 className="h-3 w-3 text-slate-400" />
+                <span>{audit.industry}</span>
+              </span>
+            )}
           </div>
 
-          <p className="text-sm text-slate-300 max-w-3xl leading-relaxed">
-            <strong className="text-slate-200">Core Offerings:</strong> {audit.coreOfferings}
-          </p>
+          {audit.coreOfferings && (
+            <p className="text-sm text-slate-300 max-w-3xl leading-relaxed">
+              <strong className="text-slate-200">Core Offerings:</strong> {audit.coreOfferings}
+            </p>
+          )}
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 pt-1">
             <span className="font-semibold text-slate-300">Audited Competitors:</span>
-            {(audit.competitors || []).map((comp) => (
-              <span
-                key={comp}
-                className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/50 text-slate-300"
-              >
-                {comp}
-              </span>
-            ))}
+            {(audit.competitors || []).length === 0 ? (
+              <span className="text-slate-500">none listed - rivals are discovered from the answers</span>
+            ) : (
+              (audit.competitors || []).map((comp) => (
+                <span
+                  key={comp}
+                  className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/50 text-slate-300"
+                >
+                  {comp}
+                </span>
+              ))
+            )}
           </div>
         </div>
 
@@ -89,7 +146,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
           <div className="relative flex items-center justify-center">
             <div className={`w-20 h-20 rounded-full border-4 flex items-center justify-center ${scoreColor}`}>
               <div className="text-center">
-                <span className="text-2xl font-black tracking-tight">{audit.geoVisibilityScore}</span>
+                <span className="text-2xl font-black tracking-tight">{formatScore(audit)}</span>
                 <span className="text-[10px] block font-semibold text-slate-400 uppercase -mt-1">/ 100</span>
               </div>
             </div>
@@ -99,9 +156,15 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
               <Award className="h-3.5 w-3.5 text-indigo-400" />
               <span>GEO Visibility Index</span>
             </div>
-            <p className="text-xs text-slate-400 mt-1 max-w-[160px] leading-tight">
-              Generative Engine Optimization index based on recommendation frequency & accuracy.
+            <p className="text-xs text-slate-400 mt-1 max-w-[200px] leading-tight">
+              Share of captured answers that name your brand.
+              {basis && <span className="block text-slate-300 font-medium mt-0.5">{basis}</span>}
             </p>
+            {isLowSample(audit) && (
+              <p className="text-[11px] text-amber-300/90 mt-1 max-w-[200px] leading-tight">
+                Only {audit.observationsWithEvidence} {audit.observationsWithEvidence === 1 ? 'answer' : 'answers'}: indicative, not a stable rate. Add queries to firm it up.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -145,8 +208,8 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <span>Share of Voice (SOV)</span>
             <TrendingUp className="h-3.5 w-3.5 text-indigo-400" />
           </div>
-          <div className="text-2xl font-bold text-white">{audit.shareOfVoice}%</div>
-          <p className="text-[11px] text-slate-400 mt-1">Appeared in {audit.shareOfVoice}% of tested search prompts</p>
+          <div className="text-2xl font-bold text-white">{formatPercent(audit, audit.shareOfVoice)}</div>
+          <p className="text-[11px] text-slate-400 mt-1">Your share of all brand mentions across the captured answers</p>
         </button>
 
         <button type="button" onClick={() => onNavigate?.('queries')} className={tileClass}>
@@ -154,8 +217,8 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <span>#1 Recommendation Rate</span>
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
           </div>
-          <div className="text-2xl font-bold text-emerald-400">{audit.leaderShare}%</div>
-          <p className="text-[11px] text-slate-400 mt-1">Ranked as top recommended solution</p>
+          <div className="text-2xl font-bold text-emerald-400">{formatPercent(audit, audit.leaderShare)}</div>
+          <p className="text-[11px] text-slate-400 mt-1">Answers that name you first</p>
         </button>
 
         <button type="button" onClick={() => onNavigate?.('inaccuracies')} className={tileClass}>
@@ -163,8 +226,8 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <span>Fact Accuracy Rate</span>
             <CheckCircle2 className="h-3.5 w-3.5 text-sky-400" />
           </div>
-          <div className="text-2xl font-bold text-sky-400">{audit.accuracyRate === null || audit.accuracyRate === undefined ? 'N/A' : `${audit.accuracyRate}%`}</div>
-          <p className="text-[11px] text-slate-400 mt-1">Mentions free of false claims or hallucinations</p>
+          <div className="text-2xl font-bold text-sky-400">{accuracy.value}</div>
+          <p className="text-[11px] text-slate-400 mt-1">{accuracy.caption}</p>
         </button>
 
         <button type="button" onClick={() => onNavigate?.('inaccuracies')} className={tileClass}>
@@ -173,10 +236,12 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
           </div>
           <div className="text-2xl font-bold text-amber-400">
-            {(audit.inaccuracies || []).length + (audit.omissions || []).length}
+            {counts ? counts.inaccuracies + counts.omissions : '—'}
           </div>
           <p className="text-[11px] text-slate-400 mt-1">
-            {(audit.inaccuracies || []).length} inaccuracies & {(audit.omissions || []).length} intent omissions
+            {counts
+              ? `${counts.inaccuracies} inaccuracies & ${counts.omissions} intent omissions`
+              : 'Not assessed'}
           </p>
         </button>
       </div>
@@ -197,7 +262,9 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             Marketing Remediation Target
           </h4>
           <p className="text-xs text-slate-300 mb-3">
-            {pendingRemediationsCount} actionable tasks identified to improve AI search recommendation rates.
+            {assessed
+              ? `${pendingRemediationsCount} actionable tasks identified to improve AI search recommendation rates.`
+              : 'No remediation plan was generated for this audit.'}
           </p>
           <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
             <div

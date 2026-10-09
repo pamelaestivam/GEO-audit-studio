@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Sparkles, Globe, Building2, Users, Plus, Trash2, ArrowRight, RefreshCw, CheckCircle2, ShieldAlert } from 'lucide-react';
-import { runAuditJob } from '../auditClient';
+import { progressPercent, runAuditJob, type AuditProgress } from '../auditClient';
 import { apiFetch } from '../apiClient';
 import { newIdempotencyKey } from '../idempotency';
-import { useQuotaStatus } from '../useQuotaStatus';
+import { describeEngines, useAuditStatus } from '../useQuotaStatus';
 import { AuditReport, AuditQuery } from '../types';
 
 interface RunAuditModalProps {
@@ -18,7 +18,8 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
   onAuditComplete,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const quota = useQuotaStatus();
+  const { quota, engines } = useAuditStatus();
+  const engineNames = describeEngines(engines);
 
   // Step 1 State
   const [businessName, setBusinessName] = useState('');
@@ -33,7 +34,8 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
   const [newQueryText, setNewQueryText] = useState('');
 
   // Step 3 State (Running Audit)
-  const [auditProgressMessage, setAuditProgressMessage] = useState('Initializing AI search crawlers...');
+  const [auditProgressMessage, setAuditProgressMessage] = useState('Starting the audit...');
+  const [auditProgress, setAuditProgress] = useState<AuditProgress | null>(null);
   const [isSubmittingAudit, setIsSubmittingAudit] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -113,7 +115,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
         {
           id: 'q-fallback-1',
           intent: 'alternatives_search',
-          queryText: `Top recommended solutions for ${industry || 'business'} in 2026`,
+          queryText: `Top recommended ${industry || 'business'} providers`,
           targetPersona: 'Buyer',
         },
         {
@@ -152,12 +154,13 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
     setStep(3);
     setIsSubmittingAudit(true);
     setErrorMessage(null);
+    setAuditProgress(null);
 
     const validCompetitors = competitors.map((c) => c.trim()).filter(Boolean);
 
     try {
-      setAuditProgressMessage('Querying Gemini, ChatGPT, Perplexity & Claude...');
-      
+      setAuditProgressMessage('Starting the audit...');
+
       // No invented inputs: a blank field stays blank rather than becoming a
       // guessed domain, industry or a fictional "Industry Leaders" competitor.
       const data = await runAuditJob(
@@ -168,11 +171,14 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
           competitors: validCompetitors,
           queries,
         },
-        setAuditProgressMessage
+        (message, p) => {
+          setAuditProgressMessage(message);
+          setAuditProgress(p ?? null);
+        }
       );
 
       if (data.report) {
-        setAuditProgressMessage('Audit completed. Indexing results...');
+        setAuditProgressMessage('Audit complete.');
         setTimeout(() => {
           onAuditComplete(data.report);
           onClose();
@@ -429,15 +435,17 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
         {step === 3 && (
           <div className="py-8 text-center space-y-6">
             <div className="relative inline-flex items-center justify-center">
-              <div className="w-16 h-16 rounded-full border-4 border-indigo-500/30 border-t-indigo-500 animate-spin" />
-              <Sparkles className="h-6 w-6 text-indigo-400 absolute animate-pulse" />
+              <div className={`w-16 h-16 rounded-full border-4 border-indigo-500/30 border-t-indigo-500 ${errorMessage ? '' : 'animate-spin'}`} />
+              <Sparkles className={`h-6 w-6 text-indigo-400 absolute ${errorMessage ? '' : 'animate-pulse'}`} />
             </div>
 
             <div className="space-y-2">
-              <h4 className="text-base font-bold text-white">Auditing AI Search Engine Recommendations</h4>
-              <p className="text-xs text-indigo-300 animate-pulse font-medium max-w-md mx-auto">
-                {auditProgressMessage}
-              </p>
+              <h4 className="text-base font-bold text-white">{errorMessage ? 'The audit did not finish' : 'Auditing AI Search Engine Recommendations'}</h4>
+              {!errorMessage && (
+                <p className="text-xs text-indigo-300 animate-pulse font-medium max-w-md mx-auto">
+                  {auditProgressMessage}
+                </p>
+              )}
             </div>
 
             <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-left max-w-md mx-auto space-y-2 text-[11px] text-slate-400">
@@ -447,11 +455,13 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
               </div>
               <div className="flex items-center gap-2 text-indigo-400 font-medium">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                <span>Querying Perplexity, ChatGPT, Gemini & Claude</span>
+                <span>Querying {engineNames}</span>
               </div>
-              <div className="flex items-center gap-2 text-slate-500">
-                <span className="w-3.5 h-3.5 rounded-full border border-slate-600 inline-block" />
-                <span>Calculating GEO Visibility Score & Prioritizing Remediation Plan</span>
+              <div className="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-slate-800">
+                <div
+                  className="bg-indigo-500 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${progressPercent(auditProgress)}%` }}
+                />
               </div>
             </div>
 
@@ -460,6 +470,17 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
                 <ShieldAlert className="h-4 w-4 text-rose-400" />
                 <span>{errorMessage}</span>
               </div>
+            )}
+
+            {/* A failed run used to leave the spinner turning with no way out but the X. */}
+            {errorMessage && !isSubmittingAudit && (
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-lg text-xs"
+              >
+                Back to queries
+              </button>
             )}
           </div>
         )}

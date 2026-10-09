@@ -15,6 +15,7 @@ import { CleanStartDashboard } from './components/CleanStartDashboard';
 import { AuthPage } from './components/AuthPage';
 import { DEFAULT_MONITORING_CONFIG } from './data/sampleAudits';
 import { AuditReport, MonitoringConfig, User } from './types';
+import { hasMeasurements, wasAssessed } from './reportView';
 
 const AUTH_STORAGE_KEY = 'geo_radar_user_session';
 
@@ -61,6 +62,19 @@ export default function App() {
 
   const activeAudit = audits.find((a) => a.id === activeAuditId) || (audits.length > 0 ? audits[0] : null);
 
+  // Audits exist only in this tab's memory (TECH_DEBT.md 2.1). Until they are
+  // persisted, a refresh silently destroys a finished - and paid-for - audit,
+  // so ask before the page goes away.
+  useEffect(() => {
+    if (audits.length === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [audits.length]);
+
   /**
    * On phones the navigation sits above the dashboard, so changing module
    * swapped content the user could not see and read as a dead button. Bring the
@@ -77,34 +91,24 @@ export default function App() {
     setActiveAuditId(null);
   };
 
-  // Handle task completion toggle with live score calculation adjustment
+  // Mark a remediation task done. This only tracks the user's own progress.
+  // It used to also raise `geoVisibilityScore` by a made-up share of the
+  // remaining gap, so ticking a checkbox moved a number presented as a
+  // measurement. Visibility only changes when answer engines are re-queried.
   const handleToggleTaskComplete = (taskId: string) => {
     if (!activeAuditId) return;
 
     setAudits((prevAudits) =>
-      prevAudits.map((a) => {
-        if (a.id !== activeAuditId) return a;
-
-        const updatedTasks = (a.remediationPlan || []).map((task) =>
-          task.id === taskId ? { ...task, completed: !task.completed } : task
-        );
-
-        // Calculate score gain based on completed tasks
-        const completedCount = updatedTasks.filter((t) => t.completed).length;
-        const totalCount = updatedTasks.length;
-        const baseScore = a.geoVisibilityScore;
-        const potentialGain = 100 - baseScore;
-        const adjustedScore = Math.min(
-          100,
-          Math.round(baseScore + (completedCount / (totalCount || 1)) * (potentialGain * 0.6))
-        );
-
-        return {
-          ...a,
-          remediationPlan: updatedTasks,
-          geoVisibilityScore: adjustedScore,
-        };
-      })
+      prevAudits.map((a) =>
+        a.id !== activeAuditId
+          ? a
+          : {
+              ...a,
+              remediationPlan: (a.remediationPlan || []).map((task) =>
+                task.id === taskId ? { ...task, completed: !task.completed } : task
+              ),
+            }
+      )
     );
   };
 
@@ -114,60 +118,30 @@ export default function App() {
     setActiveTab('queries');
   };
 
+  // A query added after the audit is shown in the Query Matrix with its own
+  // measured result, but it does NOT move the headline metrics.
+  //
+  // This used to recompute visibility, share of voice and leader share in the
+  // browser with different definitions from the server's: it counted a
+  // "no data" (retrieval_failed) engine result as the brand appearing, divided
+  // by a hardcoded engine list of just Gemini, and reported the appearance rate
+  // as "share of voice". Share of voice needs every vendor named in every
+  // answer, which only the server computes, so the honest options are a
+  // server-side recompute or leaving the figures alone and saying so. This is
+  // the latter; the card tells the reader how many queries are not included.
   const handleAppendQueryToAudit = (newQuery: import('./types').AuditQuery) => {
     if (!activeAuditId) return;
 
     setAudits((prevAudits) =>
-      prevAudits.map((a) => {
-        if (a.id !== activeAuditId) return a;
-
-        const existingQueries = a.queriesTested || [];
-        const updatedQueries = [...existingQueries, newQuery];
-
-        // Recalculate GEO Visibility Index = (Number of queries where brand is cited / Total queries) * 100
-        const citedQueriesCount = updatedQueries.filter((q) => {
-          if (!q.engines) return false;
-          return Object.values(q.engines).some((engRes) => {
-            const res = engRes as import('./types').EngineResult;
-            return (
-              (res?.citations && res.citations.length > 0) ||
-              (res?.status && res.status !== 'omitted')
-            );
-          });
-        }).length;
-
-        const totalQueries = updatedQueries.length;
-        const newGeoScore = totalQueries > 0 ? Math.round((citedQueriesCount / totalQueries) * 100) : 0;
-
-        // Only engines the backend actually queries count toward measured metrics.
-        const ENGINES = ['Gemini'] as const;
-        let appearedCount = 0;
-        let leaderCount = 0;
-        const totalPairs = updatedQueries.length * ENGINES.length;
-
-        updatedQueries.forEach((q) => {
-          ENGINES.forEach((eng) => {
-            const res = q.engines ? q.engines[eng] : undefined;
-            if (res && res.status !== 'omitted') {
-              appearedCount++;
+      prevAudits.map((a) =>
+        a.id !== activeAuditId
+          ? a
+          : {
+              ...a,
+              queriesTested: [...(a.queriesTested || []), newQuery],
+              queriesAddedAfterAudit: (a.queriesAddedAfterAudit || 0) + 1,
             }
-            if (res && (res.status === 'recommended_leader' || res.position === 1)) {
-              leaderCount++;
-            }
-          });
-        });
-
-        const newSov = totalPairs > 0 ? Math.round((appearedCount / totalPairs) * 100) : 0;
-        const newLeader = totalPairs > 0 ? Math.round((leaderCount / totalPairs) * 100) : 0;
-
-        return {
-          ...a,
-          queriesTested: updatedQueries,
-          shareOfVoice: newSov,
-          leaderShare: newLeader,
-          geoVisibilityScore: newGeoScore,
-        };
-      })
+      )
     );
   };
 
@@ -234,11 +208,12 @@ export default function App() {
                   <InaccuraciesTab
                     inaccuracies={activeAudit.inaccuracies}
                     onSelectRemediationTask={handleJumpToRemediationTask}
+                    assessed={wasAssessed(activeAudit)}
                   />
                 )}
 
                 {activeTab === 'omissions' && (
-                  <OmissionAnalysisTab omissions={activeAudit.omissions} />
+                  <OmissionAnalysisTab omissions={activeAudit.omissions} assessed={wasAssessed(activeAudit)} />
                 )}
 
                 {activeTab === 'remediation' && (
@@ -246,6 +221,7 @@ export default function App() {
                     remediationPlan={activeAudit.remediationPlan}
                     onToggleTaskComplete={handleToggleTaskComplete}
                     highlightedTaskId={highlightedTaskId}
+                    assessed={wasAssessed(activeAudit)}
                   />
                 )}
 
@@ -253,6 +229,7 @@ export default function App() {
                   <CompetitorIntelligenceTab
                     competitors={activeAudit.competitorBenchmarks}
                     businessName={activeAudit.businessName}
+                    measured={hasMeasurements(activeAudit)}
                   />
                 )}
 
