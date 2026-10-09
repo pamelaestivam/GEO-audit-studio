@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ShieldAlert, ArrowRight, ExternalLink, CheckCircle2, XCircle } from 'lucide-react';
 import { InaccuracyItem } from '../types';
+import { EmptyFindings } from './EmptyFindings';
 
 interface InaccuraciesTabProps {
   inaccuracies: InaccuracyItem[];
   onSelectRemediationTask?: (taskId: string) => void;
+  /** False when the qualitative analysis failed; an empty list is then not a finding. */
+  assessed?: boolean;
 }
 
-export const InaccuraciesTab: React.FC<InaccuraciesTabProps> = ({ inaccuracies = [], onSelectRemediationTask }) => {
+export const InaccuraciesTab: React.FC<InaccuraciesTabProps> = ({ inaccuracies = [], onSelectRemediationTask, assessed = true }) => {
   const [severityFilter, setSeverityFilter] = useState<string>('all');
 
   const safeInaccuracies = inaccuracies || [];
@@ -68,13 +71,12 @@ export const InaccuraciesTab: React.FC<InaccuraciesTabProps> = ({ inaccuracies =
 
       {/* Inaccuracies List */}
       {filtered.length === 0 ? (
-        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-12 text-center text-slate-400 space-y-2">
-          <CheckCircle2 className="h-10 w-10 text-emerald-400 mx-auto" />
-          <h4 className="text-base font-semibold text-white">No Inaccuracies Found</h4>
-          <p className="text-xs text-slate-500">
-            All AI search mentions for the selected filter were factually accurate.
-          </p>
-        </div>
+        <EmptyFindings
+          assessed={assessed}
+          subject="inaccuracies"
+          noneFoundTitle="No inaccuracies flagged"
+          noneFoundDetail="The analysis found no wrong or misleading claims about your brand in the captured answers. This is a model judgement without a client fact sheet to check against, so treat it as indicative."
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {filtered.map((item) => (

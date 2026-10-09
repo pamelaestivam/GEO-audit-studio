@@ -1,6 +1,7 @@
 import React from 'react';
 import { Search, Sparkles, Plus, Download, Bell, Activity, RefreshCw, Award } from 'lucide-react';
 import { AuditReport } from '../types';
+import { formatPercent } from '../reportView';
 
 interface HeaderProps {
   audits: AuditReport[];
@@ -39,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold tracking-tight text-white hover:text-indigo-300 transition">GEO Audit Studio</h1>
               <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                AI Search Monitor
+                AI Search Audit
               </span>
             </div>
             <p className="text-xs text-slate-400">
@@ -63,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <optgroup label="Active Audit Benchmarks">
                     {audits.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.businessName} ({a.domain}) — GEO Score: {a.geoVisibilityScore}%
+                        {a.businessName} ({a.domain}) — GEO Score: {formatPercent(a, a.geoVisibilityScore)}
                       </option>
                     ))}
                   </optgroup>
@@ -76,7 +77,7 @@ export const Header: React.FC<HeaderProps> = ({
                   id="header-geo-score-badge"
                 >
                   <Award className="h-3.5 w-3.5 text-indigo-400" />
-                  <span>GEO Score: {activeAudit.geoVisibilityScore}%</span>
+                  <span>GEO Score: {formatPercent(activeAudit, activeAudit.geoVisibilityScore)}</span>
                 </div>
               )}
             </div>
@@ -109,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onOpenMonitoringModal}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700/70 transition"
             id="monitoring-modal-btn"
-            title="Configure Weekly AI Search Sweeps & Alerts"
+            title="Monitoring preview - scheduled sweeps are not active yet"
           >
             <Bell className="h-3.5 w-3.5 text-amber-400" />
             <span className="hidden sm:inline">Monitoring</span>
@@ -118,9 +119,11 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Export Report */}
           <button
             onClick={onExportReport}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700/70 transition"
+            // Nothing to export before the first audit; the click used to do nothing.
+            disabled={audits.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700/70 transition disabled:opacity-40 disabled:cursor-not-allowed"
             id="export-report-btn"
-            title="Download Executive PDF Audit Report"
+            title={audits.length === 0 ? 'Run an audit first' : 'Open the printable audit report'}
           >
             <Download className="h-3.5 w-3.5 text-emerald-400" />
             <span className="hidden sm:inline">Export Audit</span>

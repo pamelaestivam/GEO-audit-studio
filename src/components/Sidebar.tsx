@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatPercent } from '../reportView';
 import {
   Layers,
   ShieldAlert,
@@ -102,9 +103,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'monitoring' as TabType,
       label: 'Continuous Sweeps',
       icon: Bell,
-      badge: audit ? 'Active' : null,
-      badgeStyle: 'bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold border border-emerald-500/30',
-      activeColor: 'border-l-4 border-emerald-500 bg-emerald-500/10 text-emerald-400',
+      // Nothing is scheduled anywhere yet (TECH_DEBT.md 2.1a); an "Active"
+      // badge here claimed a sweep that does not exist.
+      badge: audit ? 'Preview' : null,
+      badgeStyle: 'bg-slate-800 text-slate-300 text-[10px] font-semibold border border-slate-700',
+      activeColor: 'border-l-4 border-slate-500 bg-slate-500/10 text-slate-300',
     },
   ];
 
@@ -119,7 +122,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Building2 className="h-3 w-3" /> Active Entity
               </span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
-                <TrendingUp className="h-2.5 w-2.5" /> GEO {audit.geoVisibilityScore}%
+                <TrendingUp className="h-2.5 w-2.5" /> GEO {formatPercent(audit, audit.geoVisibilityScore)}
               </span>
             </div>
             <div className="font-bold text-sm text-slate-100 truncate" title={audit.businessName}>
@@ -235,12 +238,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         )}
 
-        <div className="text-[11px] text-slate-500 flex items-center justify-between px-1">
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            Live Engine Sweeps
-          </span>
-          <span className="text-[10px] text-slate-500 font-mono">v2.4</span>
+        {/* What is true today: audits live in this tab only. */}
+        <div className="text-[11px] text-slate-500 px-1 leading-snug">
+          Early access. Audits are not saved - export or copy a report before you refresh or close this tab.
         </div>
       </div>
     </aside>

@@ -237,7 +237,14 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
     };
   }
 
-  if (lower.includes('api key not valid') || lower.includes('api_key_invalid') || lower.includes('unauthorized') || lower.includes('401') || lower.includes('403')) {
+  // 401/403 must stand alone, like 429 above: a bare `includes('401')` also
+  // matched request ids and token counts and relabelled them auth failures.
+  if (
+    lower.includes('api key not valid') ||
+    lower.includes('api_key_invalid') ||
+    lower.includes('unauthorized') ||
+    /(^|[^\d])40[13]([^\d]|$)/.test(lower)
+  ) {
     return {
       kind: 'auth',
       message: `${provider} rejected the API key. Check the key configured in the server environment.`,
@@ -272,7 +279,14 @@ export function summariseFailures(errors: unknown[], provider = 'The answer engi
   if (errors.length === 0) {
     return { kind: 'unknown', message: `${provider} returned no answers.` };
   }
-  const described = errors.map((e) => describeProviderError(e, provider));
+  // Evidence carries failures that were already turned into sentences at the
+  // point of collection. Re-running prose through the raw-payload sniffer would
+  // flatten an actionable "key rejected" into "unexpected error".
+  const described = errors.map((e) =>
+    e && typeof e === 'object' && 'kind' in (e as object) && 'message' in (e as object)
+      ? (e as ReadableError)
+      : describeProviderError(e, provider)
+  );
   const priority: ReadableError['kind'][] = ['auth', 'quota', 'rate_limit', 'network', 'timeout', 'unknown'];
   for (const kind of priority) {
     const hit = described.find((d) => d.kind === kind);

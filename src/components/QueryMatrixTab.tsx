@@ -133,14 +133,19 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (data.evaluatedQuery) {
         if (onAppendQueryToAudit) {
           onAppendQueryToAudit(data.evaluatedQuery);
         }
         setNewQueryText('');
       } else {
-        throw new Error('Failed to evaluate query search visibility.');
+        // The server already wrote a sentence that says what went wrong and
+        // what to do (quota, key, no engine configured). Show that one - a
+        // generic "failed" here threw it away.
+        throw new Error(
+          data.error || 'The query could not be evaluated. Please try again in a moment.'
+        );
       }
     } catch (err: any) {
       console.error('Error adding and auditing query:', err);
@@ -184,7 +189,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
                 </span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                Type any target buyer query to append it to the audit list and test live search visibility across Gemini, ChatGPT, Perplexity, and Claude.
+                Type any target buyer query to add it to this audit and see how {ENGINES.join(', ')} answer it. Added queries get their own result but do not change the headline figures.
               </p>
             </div>
           </div>
@@ -229,7 +234,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
 
         {/* Quick Suggestion Chips */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-[11px] text-slate-400 font-medium">Quick Suggestions:</span>
+          <span className="text-[11px] text-slate-400 font-medium">Suggestions (click to fill, then review and add):</span>
           {[
             `Is ${businessName} enterprise SOC2 and HIPAA compliant?`,
             `${businessName} pricing vs enterprise plans and contract limits`,
@@ -239,7 +244,7 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
             <button
               key={i}
               type="button"
-              onClick={() => handleAddAndAuditQuery(chipText)}
+              onClick={() => setNewQueryText(chipText)}
               disabled={isEvaluating}
               className="text-[11px] bg-slate-800/80 hover:bg-indigo-500/20 text-slate-300 hover:text-indigo-300 border border-slate-700/80 hover:border-indigo-500/40 px-2.5 py-1 rounded-lg transition disabled:opacity-50 text-left truncate max-w-xs"
             >

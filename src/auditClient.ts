@@ -29,12 +29,35 @@ export interface StartAuditResult {
   degraded?: boolean;
 }
 
+/** Mirrors the server's job progress: what the audit is genuinely doing now. */
+export interface AuditProgress {
+  phase: 'querying' | 'analysing';
+  done: number;
+  total: number;
+}
+
+/** A sentence for what the server is doing, built only from what it reported. */
+export function describeProgress(progress: AuditProgress | null | undefined, elapsedSeconds: number): string {
+  if (!progress) return `Starting the audit... (${elapsedSeconds}s)`;
+  if (progress.phase === 'querying') {
+    return `Asking the answer engines: query ${Math.min(progress.done + 1, progress.total)} of ${progress.total}... (${elapsedSeconds}s)`;
+  }
+  return `Answers captured. Writing the analysis... (${elapsedSeconds}s)`;
+}
+
+/** 0-100 for a progress bar, derived from reported progress only. */
+export function progressPercent(progress: AuditProgress | null | undefined): number {
+  if (!progress) return 3;
+  if (progress.phase === 'analysing') return 90;
+  return Math.max(3, Math.round((progress.done / Math.max(progress.total, 1)) * 85));
+}
+
 const POLL_INTERVAL_MS = 2500;
 const MAX_CONSECUTIVE_POLL_FAILURES = 4;
 
 export async function runAuditJob(
   payload: AuditRequest,
-  onProgress?: (message: string) => void,
+  onProgress?: (message: string, progress?: AuditProgress | null) => void,
   timeoutMs = 8 * 60 * 1000
 ): Promise<StartAuditResult> {
   // Full retry budget: this is the request that hits a sleeping instance.
@@ -90,7 +113,7 @@ export async function runAuditJob(
     }
     if (data.status === 'running') {
       const seconds = Math.round((data.elapsedMs || 0) / 1000);
-      onProgress?.(`Querying answer engines and capturing citations... (${seconds}s)`);
+      onProgress?.(describeProgress(data.progress, seconds), data.progress ?? null);
       continue;
     }
     if (!res.ok || data.status === 'error') {

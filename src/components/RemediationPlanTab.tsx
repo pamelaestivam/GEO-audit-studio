@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { CheckSquare, Square, Code, Copy, Check, Sparkles, Filter, ChevronDown, ChevronUp, ExternalLink, Zap, AlertCircle } from 'lucide-react';
 import { RemediationTask } from '../types';
+import { EmptyFindings } from './EmptyFindings';
 
 interface RemediationPlanTabProps {
   remediationPlan: RemediationTask[];
   onToggleTaskComplete: (taskId: string) => void;
   highlightedTaskId?: string | null;
+  /** False when the qualitative analysis failed; an empty plan is then not a finding. */
+  assessed?: boolean;
 }
 
 const PRIORITY_BADGES: Record<string, { bg: string; text: string }> = {
@@ -19,6 +22,7 @@ export const RemediationPlanTab: React.FC<RemediationPlanTabProps> = ({
   remediationPlan = [],
   onToggleTaskComplete,
   highlightedTaskId,
+  assessed = true,
 }) => {
   const safeRemediationPlan = remediationPlan || [];
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -85,6 +89,14 @@ export const RemediationPlanTab: React.FC<RemediationPlanTabProps> = ({
       </div>
 
       {/* Task List */}
+      {safeRemediationPlan.length === 0 && (
+        <EmptyFindings
+          assessed={assessed}
+          subject="the remediation plan"
+          noneFoundTitle="No remediation tasks"
+          noneFoundDetail="The analysis did not propose any tasks for the captured answers."
+        />
+      )}
       <div className="space-y-4">
         {filteredTasks.map((task) => {
           const isExpanded = expandedTaskIds.has(task.id);

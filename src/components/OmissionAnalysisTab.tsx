@@ -1,9 +1,12 @@
 import React from 'react';
 import { HelpCircle, Code, Star, MessageSquare, DollarSign, Layers, ArrowUpRight } from 'lucide-react';
 import { OmissionReason } from '../types';
+import { EmptyFindings } from './EmptyFindings';
 
 interface OmissionAnalysisTabProps {
   omissions: OmissionReason[];
+  /** False when the qualitative analysis failed; an empty list is then not a finding. */
+  assessed?: boolean;
 }
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
@@ -14,7 +17,7 @@ const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   'Pricing & Feature Clarity': <DollarSign className="h-4 w-4 text-pink-400" />,
 };
 
-export const OmissionAnalysisTab: React.FC<OmissionAnalysisTabProps> = ({ omissions = [] }) => {
+export const OmissionAnalysisTab: React.FC<OmissionAnalysisTabProps> = ({ omissions = [], assessed = true }) => {
   const safeOmissions = omissions || [];
 
   return (
@@ -33,6 +36,14 @@ export const OmissionAnalysisTab: React.FC<OmissionAnalysisTabProps> = ({ omissi
       </div>
 
       {/* Omissions List */}
+      {safeOmissions.length === 0 && (
+        <EmptyFindings
+          assessed={assessed}
+          subject="omission diagnoses"
+          noneFoundTitle="No omission diagnoses"
+          noneFoundDetail="The analysis did not identify structural reasons for the brand being left out of the captured answers."
+        />
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {safeOmissions.map((om) => (
           <div
