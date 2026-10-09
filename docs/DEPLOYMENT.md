@@ -88,10 +88,12 @@ The image defaults `DATA_DIR=/data`; **the volume is what makes audits survive**
 trusts one proxy hop for client IPs.
 
 CI builds this image, runs it with a volume, smoke-tests it, restarts it on the
-same volume and smoke-tests again. **That job exists in this repository but its
-first run is the first time the Dockerfile has ever been built** - it could not
-be built where it was written (Docker CLI present, no daemon). Trust the image
-once that job is green on your repository.
+same volume and smoke-tests again. The Dockerfile could not be built where it
+was written (Docker CLI present, no daemon), so its only evidence is that CI job:
+it built and passed on GitHub's runner for this repository, including the
+restart on the same volume. That is a build-and-smoke check against a fake
+Gemini endpoint, not a test of your host - run `scripts/smoke.mjs` against your
+own deployment (section 6).
 
 ## 5. Environment variables
 
@@ -208,7 +210,8 @@ environment:**
 - **The ChatGPT, Perplexity and Claude adapters** have never seen a live
   response (`TECH_DEBT.md` 2.8). Enable one, run an audit, and read the evidence
   before relying on it.
-- **`render.yaml` on Render**, and the **Dockerfile** until CI has run it once.
+- **`render.yaml` on Render**, and the **Dockerfile on your own host** (CI built
+  and smoke-tested it on GitHub's runner only).
 - **Prices, free-tier limits and Render plan names** - they change; check the
   providers' pages.
 
