@@ -49,6 +49,39 @@ check('capitalised "Stripe" accepted', findFirstMention('We recommend Stripe her
 
 const archer = buildBrandMatcher('Archer Aviation', 'archeraviation.com');
 check('multiword brand matches full phrase', findFirstMention('Archer Aviation leads', archer), 0);
+
+// Accented vendor names are discovered whole (they used to be truncated at the
+// first non-ASCII letter: "Caf", "Nestl", and "Zoë Group" vanished).
+const accented = extractCandidateVendors(
+  'Top options:\n- **Café Lumière** is great.\n- **Nestlé Waters** too.\n- **Citroën Rental** and **Zoë Group**.\n',
+  []
+);
+check('accented vendor names are returned whole', accented.sort(), ['Café Lumière', 'Citroën Rental', 'Nestlé Waters', 'Zoë Group']);
+check('a Latin name with umlauts is discovered whole', extractCandidateVendors('- **Ünal Müller GmbH** liefert.', []), ['Ünal Müller GmbH']);
+check('a Cyrillic vendor name is discovered whole', extractCandidateVendors('- **Яндекс Маркет** и **Озон** лучшие.', []).sort(), ['Озон', 'Яндекс Маркет']);
+// Languages written without spaces: a Latin brand sits directly against CJK text
+// or a Korean particle and must still be found, and must not absorb them.
+check('Chinese: unspaced Latin brands are found', extractCandidateVendors('推荐Stripe和Adyen。Stripe适合开发者，Adyen适合大型企业。', []).sort(), ['Adyen', 'Stripe']);
+check('Japanese: unspaced Latin brands are found', extractCandidateVendors('決済ならStripeとAdyenがおすすめ。Stripeは開発者向け、Adyenは大企業向け。', []).sort(), ['Adyen', 'Stripe']);
+check('Korean: the particle is not glued onto the name', extractCandidateVendors('Stripe는 개발자에게 좋고 Adyen은 대기업에 좋습니다. Stripe는 빠릅니다. Adyen은 안정적입니다.', []).sort(), ['Adyen', 'Stripe']);
+check('a quoted name does not keep its closing quote', extractCandidateVendors("Popular: 'Stripe' and 'Adyen'. Many like 'Stripe' and 'Adyen' too.", []).sort(), ['Adyen', 'Stripe']);
+check('a possessive still counts as the plain name', extractCandidateVendors("Sweetfin's menu is big. Sweetfin is cheap. Try Sweetfin's bowls.", []), ['Sweetfin']);
+check('a name written with combining accents (NFD) is one whole name', extractCandidateVendors('- **Cafe\u0301 Lumie\u0300re** a\n- **Zoe\u0308 Group** c\n', []).sort(), ['Café Lumière', 'Zoë Group']);
+// Word boundaries are script-aware (same class as discovery), not ASCII \b.
+check('"iPhone" and "eBay" are not discovered as "Phone" and "Bay" (a lowercase letter before a capital is part of the word)', extractCandidateVendors('iPhone sales rose and the iPhone leads. eBay lists them and eBay sells them.', []), []);
+check('snake_case code is not a mention: "adyen_token" does not name Adyen, "acme_corp_id" does not name Acme', [findFirstMention('see acme_corp_id and adyen_token', buildBrandMatcher('Acme')), findFirstMention('use adyen_token here', buildBrandMatcher('Adyen'))], [-1, -1]);
+check('snake_case identifiers are not split into vendors ("Stripe_Billing", "Foo_Bar")', extractCandidateVendors('Stripe_Billing handles it. Foo_Bar and Foo_Bar again. API_Key rotation. API_Key too.', []), []);
+check('two labels typed identically but decomposed are one brand (dedupe)', dedupeMatchers([buildBrandMatcher('Nestle\u0301'), buildBrandMatcher('Nestle\u0301')]).length, 1);
+check('a name with digits is discovered whole', extractCandidateVendors('- **Ab3 Labs** and **B2B Hub** lead.', []).sort(), ['Ab3 Labs', 'B2B Hub']);
+check('"Nestlé" does not match inside "Nestléx"', findFirstMention('Try Nestléx today.', buildBrandMatcher('Nestlé')), -1);
+check('an accent-led brand ("Écoute") does not match inside "Réécoute"', findFirstMention('Le Réécoute Café', buildBrandMatcher('Écoute')), -1);
+check('...but is found on its own, and next to CJK text', [findFirstMention('Essayez Écoute ici.', buildBrandMatcher('Écoute')) > 0, findFirstMention('推荐Stripe和Adyen', buildBrandMatcher('Stripe')) > 0], [true, true]);
+const typedNfd = 'Cafe\u0301 Lumie\u0300re';
+check('a brand typed decomposed keeps its label exactly as typed (user input is never rewritten)', buildBrandMatcher(typedNfd).label, typedNfd);
+check('...and is still found in a composed answer', analyseAnswer(evidence({ answerText: 'Try Café Lumière today. Café Lumière wins.' }), [buildBrandMatcher(typedNfd)])[0].mentioned, true);
+check('...and a query typed with it counts as naming the brand', queryNamesBrand(`How much does ${typedNfd} cost?`, buildBrandMatcher(typedNfd)), true);
+const nfd = analyseAnswer(evidence({ answerText: 'Try Nestle\u0301 Waters today. Nestle\u0301 Waters leads.' }), [buildBrandMatcher('Nestlé Waters')])[0];
+check('a brand typed composed (Nestlé) is found in an answer written decomposed', [nfd.mentioned, nfd.rank], [true, 1]);
 check('non-common brand matches case-insensitively', findFirstMention('see archer aviation', archer), 4);
 
 // ---------------------------------------------------------------- ranking

@@ -46,6 +46,18 @@ const COMMON_WORD_BRANDS = new Set([
   'ramp', 'brex', 'plaid', 'lattice', 'front', 'linear', 'vercel', 'render',
 ]);
 
+/**
+ * Characters that make up a word in scripts that separate words with spaces:
+ * Latin, Cyrillic and Greek letters, digits and combining marks. Deliberately NOT
+ * every \p{L}: Chinese, Japanese and Korean are written without spaces, so a Latin
+ * brand sits directly against them ("推荐Stripe和Adyen") and must still be found.
+ * The underscore is a word character too, as it is for \\b: `adyen_token` is code, not a
+ * mention of Adyen.
+ */
+const WORD_CLASS = '\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}\\p{N}\\p{M}_';
+const startsWithWordChar = (value: string) => new RegExp(`^[${WORD_CLASS}]`, 'u').test(value);
+const endsWithWordChar = (value: string) => new RegExp(`[${WORD_CLASS}]$`, 'u').test(value);
+
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -75,11 +87,13 @@ export function extractDomain(url: string): string {
 }
 
 export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
+  // The label stays exactly as typed (it is shown back to the person and compared
+  // with other copies of what they typed); matching uses its composed (NFC) form.
   const label = (name || '').trim();
   const cleanDomain = normaliseDomain(domain || '');
   const domainRoot = cleanDomain.split('.')[0] || '';
 
-  const lower = label.toLowerCase();
+  const lower = label.normalize('NFC').toLowerCase();
   const words = lower.split(/\s+/).filter(Boolean);
   const tokens: string[] = [];
   if (lower) tokens.push(lower);
@@ -117,7 +131,9 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
  * Character index of the first brand mention in `text`, or -1.
  * Uses word boundaries so "striped" never counts as "Stripe".
  */
-export function findFirstMention(text: string, matcher: BrandMatcher): number {
+export function findFirstMention(rawText: string, matcher: BrandMatcher): number {
+  // Composed form, so a label typed decomposed and the same label typed composed are one brand.
+  const text = (rawText || '').normalize('NFC');
   if (!text || matcher.tokens.length === 0) return -1;
 
   let earliest = -1;
@@ -129,12 +145,13 @@ export function findFirstMention(text: string, matcher: BrandMatcher): number {
     const needle = matcher.strictCase
       ? token.charAt(0).toUpperCase() + token.slice(1)
       : token;
-    // \b only works between a word and a non-word character. Brands ending or
-    // starting in punctuation ("Yahoo!", "(Parens) Co") would never match if we
-    // demanded a boundary on that side.
-    const leading = /^\w/.test(needle) ? '\\b' : '';
-    const trailing = /\w$/.test(needle) ? '\\b' : '';
-    const pattern = new RegExp(`${leading}${escapeRegex(needle)}${trailing}`, matcher.strictCase ? 'g' : 'gi');
+    // A boundary is demanded only on a side that starts/ends with a word character
+    // (Yahoo! and "(Parens) Co" have punctuation edges), and it is the same
+    // script-aware class discovery uses - \b is ASCII-only, so it treated "é" as a
+    // boundary ("Nestléx" matched "Nestlé") yet matched nothing next to CJK text.
+    const leading = startsWithWordChar(needle) ? `(?<![${WORD_CLASS}])` : '';
+    const trailing = endsWithWordChar(needle) ? `(?![${WORD_CLASS}])` : '';
+    const pattern = new RegExp(`${leading}${escapeRegex(needle)}${trailing}`, matcher.strictCase ? 'gu' : 'giu');
 
     const hit = pattern.exec(text);
     if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
@@ -175,8 +192,9 @@ export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
  * the brand are pointed to it. The report surfaces this instead of letting a
  * perfect score pass for a finding.
  */
-export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boolean {
-  if (!queryText) return false;
+export function queryNamesBrand(rawQueryText: string, matcher: BrandMatcher): boolean {
+  if (!rawQueryText) return false;
+  const queryText = rawQueryText.normalize('NFC');
   // Deliberately more permissive than findFirstMention, which is built to avoid
   // false MENTIONS in answers: here the question is only "was the brand put in
   // the query", so a short name ("3M", "HP"), a lowercase typing ("notion") and
@@ -235,7 +253,9 @@ export function analyseAnswer(
   evidence: QueryEvidence,
   matchers: BrandMatcher[]
 ): BrandQueryResult[] {
-  const text = evidence.answerText || '';
+  // Composed (NFC) form, so a name written with combining accents still matches
+  // the matcher's label; the excerpt is cut from the same string.
+  const text = (evidence.answerText || '').normalize('NFC');
   const raw = matchers.map((m) => {
     const idx = findFirstMention(text, m);
     const citedAsSource = isCitedAsSource(evidence.citations, m);
@@ -496,8 +516,10 @@ function isStructuralPosition(prefix: string): boolean {
  * Understating the field slightly flatters the client; the user can add that
  * rival by name and it is then tracked explicitly. See TECH_DEBT.md 2.6b.
  */
-export function extractCandidateVendors(text: string, excludeMatchers: BrandMatcher[]): string[] {
-  if (!text) return [];
+export function extractCandidateVendors(rawText: string, excludeMatchers: BrandMatcher[]): string[] {
+  if (!rawText) return [];
+  // Composed form, so "Café" typed as e + combining accent is one name, not "Cafe".
+  const text = rawText.normalize('NFC');
 
   // 1-3 consecutive capitalised words: "Adyen", "Archer Aviation", "Bank of
   // America", "Johnson & Johnson". "of" and "&" are the only mid-phrase
@@ -505,7 +527,25 @@ export function extractCandidateVendors(text: string, excludeMatchers: BrandMatc
   // name, but "and" lists separate names ("Bank of America and Wells
   // Fargo"), so allowing it would bridge two distinct entities into one
   // wrong candidate spanning both.
-  const pattern = /\b[A-Z][a-zA-Z0-9']*(?:\s+(?:of|&)\s+[A-Z][a-zA-Z0-9']*|\s+[A-Z][a-zA-Z0-9']*){0,2}\b/g;
+  // Unicode-aware, for scripts that separate words with spaces. With [A-Za-z]
+  // and \b (both ASCII-only) "Café Lumière" was cut to "Caf", "Nestlé" to
+  // "Nestl" and "Zoë Group" lost entirely. The name and boundary classes are
+  // Latin, Cyrillic and Greek letters, digits and combining marks - NOT every
+  // \p{L}: Chinese, Japanese and Korean are written without spaces, so a Latin
+  // brand sits directly against CJK characters ("推荐Stripe和Adyen") or a Korean
+  // particle ("Stripe는") and must still be found, without absorbing them. An
+  // apostrophe belongs to a name only between letters ("Sweetfin's"), never at
+  // its end ("'Stripe'").
+  // Name characters exclude the underscore (an identifier like Foo_Bar is code, not
+  // a vendor) while the boundary class includes it, so "Foo_Bar" yields nothing.
+  const W = WORD_CLASS;
+  const N = WORD_CLASS.replace('_', '');
+  const CAP = '(?=[\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}])\\p{Lu}';
+  const pattern = new RegExp(
+    `(?<![${W}])${CAP}[${N}]*(?:'[${N}]+)*` +
+      `(?:\\s+(?:of|&)\\s+${CAP}[${N}]*(?:'[${N}]+)*|\\s+${CAP}[${N}]*(?:'[${N}]+)*){0,2}(?![${W}])`,
+    'gu'
+  );
 
   interface Seen {
     /** Presentable form: the plain spelling if it was ever seen, else the possessive one. */
