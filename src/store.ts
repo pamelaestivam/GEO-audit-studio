@@ -127,6 +127,8 @@ export interface Incident {
 
 /** Set on a job the reaper stopped for running too long; see `decideClaim`. */
 export const STUCK_FAIL_CODE = 'stuck';
+/** Set on a job failed at boot because the process that held it is gone (it is not finished by anyone). */
+export const RESTARTED_FAIL_CODE = 'restarted';
 
 /**
  * The one definition of "may this step be claimed now" (both stores call it, so they cannot drift).
@@ -232,6 +234,11 @@ export interface Store {
   /** Create a job and its ordered steps in one atomic write; the same idempotency rule as createJob. */
   createPlannedJob(job: StoredJob, steps: PlannedStep[]): Promise<void>;
   getJobSteps(jobId: string): Promise<JobStep[]>;
+  /**
+   * Drop the stored answers of a job's finished steps (keep the rows: state, attempts, timings). Called once the
+   * job has its result, so raw answer text is not kept twice and no longer than the result is.
+   */
+  compactJobSteps(jobId: string): Promise<void>;
   /** Claim the next step under a lease. See `decideClaim` for the rules. */
   claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number): Promise<ClaimResult>;
   /**
@@ -407,6 +414,9 @@ export class MemoryStore implements Store {
   async getJobSteps(jobId: string) {
     return (this.steps.get(jobId) || []).map((st) => ({ ...st, result: jsonCopy(st.result) }));
   }
+  async compactJobSteps(jobId: string) {
+    for (const st of this.steps.get(jobId) || []) if (st.state === 'done' || st.state === 'skipped') st.result = undefined;
+  }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
     const list = this.steps.get(jobId) || [];
     const d = decideClaim(this.jobs.get(jobId), list, holder, leaseMs, now, maxAttempts);
@@ -490,6 +500,7 @@ export class MemoryStore implements Store {
         j.error = reason;
         j.finishedAt = now;
         j.billable = false;
+        j.failCode = RESTARTED_FAIL_CODE;
         n++;
       }
     }
@@ -790,6 +801,9 @@ export class SqliteStore implements Store {
   async getJobSteps(jobId: string) {
     return this.db.prepare('SELECT * FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId).map(rowToStep);
   }
+  async compactJobSteps(jobId: string) {
+    this.db.prepare("UPDATE job_steps SET result = NULL WHERE job_id = ? AND state IN ('done', 'skipped')").run(jobId);
+  }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
     return this.immediate(() => {
       const jr = this.db.prepare('SELECT status, fail_code FROM jobs WHERE id = ?').get(jobId);
@@ -865,8 +879,8 @@ export class SqliteStore implements Store {
   async failAllRunning(reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0 WHERE status = 'running'")
-        .run(reason, now).changes
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running'")
+        .run(reason, now, RESTARTED_FAIL_CODE).changes
     );
   }
   async pruneJobs(beforeMs: number) {

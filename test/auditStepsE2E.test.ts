@@ -69,19 +69,22 @@ async function main() {
   const broken = start(APP_PORT + 1, { AUDIT_FORCE_STEP_EXCEPTION: 'narrative' });
   // Its own server: a tripped quota breaker lasts until the provider's daily reset and would taint every later audit.
   const quota = start(APP_PORT + 2);
+  const quotaLater = start(APP_PORT + 3);
 
-  async function runAudit(base: string, queries: any[]): Promise<{ jobId: string; job: any }> {
+  async function runAudit(base: string, queries: any[]): Promise<{ jobId: string; job: any; progress: any[] }> {
     const started = await fetch(`${base}/api/audit/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ businessName: 'Poke House', domain: 'poke.house', queries }),
     });
     const { jobId } = await started.json();
+    const progress: any[] = [];
     for (let i = 0; i < 480; i++) {
       await new Promise((r) => setTimeout(r, 250));
       const res = await fetch(`${base}/api/audit/job/${jobId}`);
       const body = await res.json();
-      if (body.status !== 'running') return { jobId, job: body };
+      if (body.status === 'running' && body.progress) progress.push(body.progress);
+      if (body.status !== 'running') return { jobId, job: body, progress };
     }
     throw new Error('the audit did not finish');
   }
@@ -89,7 +92,7 @@ async function main() {
     const db = new DatabaseSync(dbPath);
     try {
       return {
-        steps: db.prepare('SELECT key, state, attempt, skip_reason, error_code, repeated_calls, call_started_at, lease_holder FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId) as any[],
+        steps: db.prepare('SELECT key, state, attempt, skip_reason, error_code, repeated_calls, call_started_at, lease_holder, result FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId) as any[],
         job: db.prepare('SELECT status, billable, phase, heartbeat_at, instance_id, fail_code FROM jobs WHERE id = ?').get(jobId) as any,
         incidents: db.prepare('SELECT kind, detail FROM incidents WHERE job_id = ?').all(jobId) as any[],
       };
@@ -99,14 +102,16 @@ async function main() {
   };
 
   try {
-    for (let i = 0; i < 80; i++) {
+    let up = false;
+    for (let i = 0; i < 80 && !up; i++) {
       try {
-        if ((await fetch(`${normal.base}/api/health`)).ok && (await fetch(`${broken.base}/api/health`)).ok && (await fetch(`${quota.base}/api/health`)).ok) break;
+        up = (await fetch(`${normal.base}/api/health`)).ok && (await fetch(`${broken.base}/api/health`)).ok && (await fetch(`${quota.base}/api/health`)).ok && (await fetch(`${quotaLater.base}/api/health`)).ok;
       } catch {
         /* not up yet */
       }
-      await new Promise((r) => setTimeout(r, 250));
+      if (!up) await new Promise((r) => setTimeout(r, 250));
     }
+    if (!up) throw new Error('the test servers did not come up');
 
     // ---- one question, one engine: two real calls, three recorded steps
     let before = fake.hits();
@@ -116,6 +121,7 @@ async function main() {
     check('...and records three steps, each done on its first attempt', r.steps.map((s) => [s.key, s.state, s.attempt]), [['collect:0:Gemini', 'done', 1], ['narrative', 'done', 1], ['finalize', 'done', 1]]);
     check('...no step was ever repeated or left holding a lease', r.steps.map((s) => [s.repeated_calls, s.lease_holder]), [[0, null], [0, null], [0, null]]);
     check('...the two steps that call out recorded that the call started', r.steps.map((s) => s.call_started_at !== null), [true, true, false]);
+    check('...a finished audit keeps no raw answers in its step rows (the result holds what the person gets)', r.steps.map((s) => s.result), [null, null, null]);
     check('...the job is done, billable, and carries a heartbeat and the instance that ran it', [r.job.status, r.job.billable, r.job.heartbeat_at !== null, typeof r.job.instance_id], ['done', 1, true, 'string']);
     check('...the person got a real report', [job.status, job.report?.degraded !== true, job.report?.narrativeAvailable], ['done', true, true]);
 
@@ -125,6 +131,18 @@ async function main() {
     check('two questions make 3 real calls', fake.hits() - before, 3);
     r = rows(normal.db, jobId);
     check('...and 4 steps in plan order', r.steps.map((s) => s.key), ['collect:0:Gemini', 'collect:1:Gemini', 'narrative', 'finalize']);
+
+    // ---- the pauses and the progress a person sees are kept: three questions
+    const three0 = [...QUERIES, { id: 'q3', intent: 'direct_recommendation', queryText: 'poke house prices', targetPersona: 'Buyer' }];
+    before = fake.hits();
+    const timesBefore = fake.hitTimes().length;
+    let paced: Awaited<ReturnType<typeof runAudit>>;
+    paced = await runAudit(normal.base, three0);
+    const t = fake.hitTimes().slice(timesBefore);
+    check('three questions make 4 real calls (three answers and the analysis)', fake.hits() - before, 4);
+    check('...at least 1.1 s apart between questions, and at least 0.55 s before the analysis call', [t[1] - t[0] >= 1100, t[2] - t[1] >= 1100, t[3] - t[2] >= 550], [true, true, true]);
+    const querying = paced.progress.filter((p) => p.phase === 'querying').map((p) => p.done);
+    check('...the page is told which question it is on (0 done, then 1 done; the last question is over in an instant), then that the analysis is being written', [[0, 1].every((n) => querying.includes(n)), querying.every((n, i) => i === 0 || n >= querying[i - 1]), paced.progress.some((p) => p.phase === 'analysing' && p.done === 3 && p.total === 3)], [true, true, true]);
 
     // ---- every engine fails: the analysis step is skipped (nothing to analyse), and no analysis call is made
     mode = 'unauthorized';
@@ -160,6 +178,22 @@ async function main() {
       ['finalize', 'done', null],
     ]);
     check('...and the person gets a failed audit that names the quota, not a result', [job.report?.degraded, /quota/i.test(job.report?.degradedReason || ''), r.job.billable], [true, true, 0]);
+    mode = 'ok';
+
+    // ---- the daily quota runs out on the SECOND call: the question already answered is kept, the rest skipped
+    mode = 'daily_quota_after_first';
+    before = fake.hits();
+    ({ jobId, job } = await runAudit(quotaLater.base, three));
+    r = rows(quotaLater.db, jobId);
+    check('when the quota runs out on the second call, only two calls are made (the analysis is refused without a call)', fake.hits() - before, 2);
+    check('...the question that hit the quota is recorded, the one after it is skipped for the breaker, and the answered one is kept', r.steps.map((s) => [s.key, s.state, s.skip_reason]), [
+      ['collect:0:Gemini', 'done', null],
+      ['collect:1:Gemini', 'done', null],
+      ['collect:2:Gemini', 'skipped', 'breaker'],
+      ['narrative', 'done', null],
+      ['finalize', 'done', null],
+    ]);
+    check('...the person gets a measured report from the one answer, which says the written analysis was not produced', [job.report?.degraded !== true, job.report?.narrativeAvailable, job.report?.observationsWithEvidence], [true, false, 1]);
     mode = 'ok';
   } finally {
     for (const p of procs) p.kill();
