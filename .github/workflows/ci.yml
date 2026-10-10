@@ -21,6 +21,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: No tracked symlinks
+        # A symlink named node_modules (pointing at a path outside the checkout) was
+        # committed once by `git add -A` and CI stayed green because npm ci replaced it.
+        # Nothing here needs a tracked symlink; one is always a mistake.
+        run: |
+          links=$(git ls-files -s | awk '$1 == "120000" {print $4}')
+          if [ -n "$links" ]; then
+            echo "Tracked symlinks are not allowed in this repository:"
+            echo "$links"
+            exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
