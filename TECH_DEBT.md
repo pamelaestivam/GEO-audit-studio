@@ -787,6 +787,12 @@ fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <
   (counts, kind labels and one incident sentence; no ids, names or provider payloads); an incident sentence is built
   from step keys and describeProviderError text only. The page that shows the owner the list is not built. It reads the newest 200 incidents; above that a burst of
   minor ones could push a serious one out of the window (the failure counts, read separately, still show it).
+- **A hung audit nobody reads is not surfaced (found 2026-10-10 in the S6 scoping review):** the reaper runs on submit,
+  on `GET /api/audit/job/:id` and on `advance`, so a hung audit ends with a sentence the next time anyone touches it, but
+  `/api/audits` does not reap and the readiness `recent trouble` check reads only audits that have ended. Until someone
+  reads or submits, the audit sits as `running` and the owner health view stays green. Cheap fix, no S6 needed: a
+  readiness check that counts running jobs older than `JOB_MAX_RUN_MS` and reports them (not ok), with a test that
+  seeds an over-age running job and expects the check to name it.
 - **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper, so a job whose
   holder dies without the whole process dying (not a case the server has today) is not picked up until the next
   restart or, for a page-driven job, until the page asks again. The supported topology is ONE server process per

@@ -135,10 +135,17 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    runs on every submit, every `GET /api/audit/job/:id` (the page polls it) and every `advance`, so the audit ends
    with a sentence the next time anyone looks; (b) a periodic sweeper would only change WHEN that sentence appears
    for an audit nobody is watching, and an unwatched audit is not a silent failure to anyone; (c) a shared pacer,
-   breaker and counter cannot be tested honestly without a second process on the same file, which the boot release
-   of other holders' claims forbids, so building them now would add a topology we then have to forbid. Build S6
+   breaker and counter would be used only by a second server on the same file, which the boot release of other
+   holders' claims forbids (a store-level version could be tested with spawned processes, as `test/store.test.ts`
+   already races real processes, but an end-to-end test of it needs two servers on one file), so building it now would
+   add a topology we then have to forbid. On Vercel with the memory store the pacer, breaker and counter stay per
+   instance whatever is built here. Build S6
    together with step f (a hosted database with a transactional claim), or when a two-process topology is wanted.
-   Until then S7 is the next slice that changes what a person sees.
+   Residual exposure, said plainly: an audit that hangs and that NOBODY reads or submits after stays `running` in the
+   store until someone does, and the owner health view stays green meanwhile (`/api/audits` does not reap, the readiness
+   `recent trouble` check reads only audits that have ended). The person who started it sees the sentence when they
+   return. A cheap check that closes this without S6 is recorded in TECH_DEBT (readiness reports a job running past the
+   maximum). Until then S7 is the next slice that changes what a person sees.
 7. **S7 stalled / Resume / Discard in the UI, visible retries.** Also adds the GET job-view fields S4 did not deliver (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). Boundary tests as well as browser ones:
    discard on a leased or running step makes 0 provider hits and is owner-scoped (another user's job gives
    404); resume never auto-resubmits (0 new POST `/api/audit/run`). Persist `{jobId, startedAt}` in
