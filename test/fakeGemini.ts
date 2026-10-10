@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -37,8 +37,11 @@ export const MANY_VENDORS_ANSWER = `For poke in Austin the leading options are:
 
 Pokeworks Inc. is also popular with students. POKEWORKS has the longest queue.`;
 
-export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 2500): Promise<http.Server & { hits: () => number; narrativeRequests: () => any[] }> {
+export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 2500): Promise<http.Server & { hits: () => number; hitTimes: () => number[]; narrativeRequests: () => any[] }> {
   let hits = 0;
+  // When each request arrived (ms), so a test can assert the pauses between calls.
+  const times: number[] = [];
+  let answered = 0;
   // Request bodies of the structured (narrative / lookup) calls, so a test can assert what the server ASKED, not only what it did with the answer.
   const structured: any[] = [];
   const server = http.createServer((req, res) => {
@@ -46,6 +49,7 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
     req.on('data', (c) => (body += c));
     req.on('end', async () => {
       hits++;
+      times.push(Date.now());
       const mode = getMode();
       const wantsJson = body.includes('responseSchema');
       if (wantsJson) {
@@ -73,6 +77,12 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
         return;
       }
       // 'daily_quota': every call is refused with the provider's daily-quota error (the breaker trips on the first).
+      // 'daily_quota_after_first': the first request is answered, every later one hits the daily quota.
+      if (mode === 'daily_quota_after_first' && answered++ >= 1) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 429, message: 'Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 50, GenerateRequestsPerDayPerProjectPerModel-FreeTier', status: 'RESOURCE_EXHAUSTED' } }));
+        return;
+      }
       if (mode === 'daily_quota') {
         res.writeHead(429, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { code: 429, message: 'Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 50, GenerateRequestsPerDayPerProjectPerModel-FreeTier', status: 'RESOURCE_EXHAUSTED' } }));
@@ -150,6 +160,6 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
     });
   });
   return new Promise((resolve) =>
-    server.listen(port, () => resolve(Object.assign(server, { hits: () => hits, narrativeRequests: () => structured })))
+    server.listen(port, () => resolve(Object.assign(server, { hits: () => hits, hitTimes: () => times, narrativeRequests: () => structured })))
   );
 }

@@ -376,6 +376,17 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   check(t('the reaper marks a stuck job with a code'), [(await s.getJob('p10'))?.status, (await s.getJob('p10'))?.failCode], ['error', 'stuck']);
   check(t('...and its steps can still be claimed (a late finish is kept), unlike those of a job that failed another way'), [(await s.claimStep('p10', 'A', LEASE, NOW, 3)).outcome, (await s.claimStep('p5', 'A', LEASE, NOW, 3)).outcome], ['claimed', 'none']);
 
+  // --- compacting a finished job drops the stored answers but keeps the rows
+  await s.createPlannedJob(job({ id: 'cp1' }), PLAN);
+  const cc = await s.claimStep('cp1', 'A', LEASE, NOW, 3);
+  await s.completeStep('cp1', 0, (cc as any).step.attempt, { state: 'done', result: { answer: 'raw text' } }, NOW + 1);
+  await s.compactJobSteps('cp1');
+  const compact = (await s.getJobSteps('cp1'))[0];
+  check(t('compacting a job drops its steps\' stored answers and keeps their state and attempts'), [compact.result, compact.state, compact.attempt], [undefined, 'done', 1]);
+  await s.createPlannedJob(job({ id: 'rs1' }), PLAN);
+  await s.failAllRunning('The server restarted.', NOW);
+  check(t('a job failed at boot says so with a code, and is not finishable by anyone'), [(await s.getJob('rs1'))?.failCode, (await s.claimStep('rs1', 'A', LEASE, NOW, 3)).outcome], ['restarted', 'none']);
+
   // --- pruning removes a pruned job's steps and old incidents
   const before = NOW + 1000;
   await s.createPlannedJob(job({ id: 'old1', startedAt: NOW - 10 * DAY }), PLAN);

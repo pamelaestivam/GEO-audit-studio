@@ -44,6 +44,7 @@ import {
   queryingProgress,
   skipForBreaker,
   startsQuestion,
+  type AuditProgress,
   type StoredAuditPlan,
 } from './src/auditSteps.js';
 import { CallCounter, dailyCallCap, capProblem, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
@@ -120,7 +121,12 @@ async function buildApp() {
     console.warn('[config] AUDIT_FORCE_INVARIANT_VIOLATION=1 is set: every audit will fail its consistency check. This is a test-only switch; unset it.');
   }
   if (process.env.AUDIT_FORCE_STEP_EXCEPTION) {
-    console.warn(`[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(process.env.AUDIT_FORCE_STEP_EXCEPTION)} is set: every audit will break at that step. This is a test-only switch; unset it.`);
+    const kind = process.env.AUDIT_FORCE_STEP_EXCEPTION;
+    console.warn(
+      ['collect', 'narrative', 'finalize'].includes(kind)
+        ? `[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(kind)} is set: every audit will break at its ${kind} step. This is a test-only switch; unset it.`
+        : `[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(kind)} matches no step (use collect, narrative or finalize) and does nothing. It is a test-only switch; unset it.`
+    );
   }
   const app = express();
 
@@ -1565,7 +1571,7 @@ Return valid JSON matching the schema.`;
    * How long one claim on a step lasts. It must be longer than the longest a single step can take (a paced call,
    * a rate-limit wait and the retries) or a live step would be taken over while it works.
    */
-  const AUDIT_LEASE_MS = Number(process.env.AUDIT_LEASE_MS || 10 * 60 * 1000);
+  const AUDIT_LEASE_MS = Number(process.env.AUDIT_LEASE_MS) > 0 ? Number(process.env.AUDIT_LEASE_MS) : 10 * 60 * 1000;
 
   /** A pause the driver chooses how to spend: the inline driver sleeps, a client driver would hand it to the page. */
   type Pace = (ms: number) => Promise<void>;
@@ -1601,6 +1607,8 @@ Return valid JSON matching the schema.`;
       billable: !!report && !report.degraded,
       failCode: null,
     });
+    // The result now holds what the person gets; the steps' raw answers are not kept a second time.
+    await store.compactJobSteps(job.id).catch((err) => log('could not compact the steps')(err));
   }
 
   /** End a job whose step failed or ran out of tries, with a sentence, a code and an incident. Not billable. */
@@ -1642,8 +1650,26 @@ Return valid JSON matching the schema.`;
     return stored;
   }
 
+  /** Tell the page how far the audit has got. A failed write is logged, never fatal: progress is only for display. */
+  async function setProgress(job: StoredJob, progress: AuditProgress) {
+    await store.updateJob(job.id, { progress }).catch((err) => console.error(`[job ${job.id}] progress update failed: ${err?.message || err}`));
+  }
+
+  /**
+   * Record that the outside call of this step is about to start. False means this holder no longer owns the step
+   * (its lease ran out and another worker took it over): the call must NOT be made, and that is an incident.
+   */
+  async function startCall(job: StoredJob, step: JobStep, holder: string): Promise<boolean> {
+    if (await store.markCallStarted(job.id, step.seq, holder, step.attempt, Date.now())) return true;
+    console.warn(`[job ${job.id}] step ${step.key} was taken over before its call started; this worker makes no call.`);
+    await store
+      .recordIncident({ jobId: job.id, at: Date.now(), kind: 'lease_expired_midcall', detail: `Step ${step.key} was taken over by another worker before its call started, so this worker made no call.` })
+      .catch(() => undefined);
+    return false;
+  }
+
   /** Do the work of one claimed step and store its outcome. Throws only for something unexpected. */
-  async function runStep(job: StoredJob, plan: StoredAuditPlan, step: JobStep, holder: string, pace: Pace) {
+  async function runStep(job: StoredJob, plan: StoredAuditPlan, step: JobStep, holder: string, pace: Pace): Promise<'ran' | 'lost'> {
     const steps = await store.getJobSteps(job.id);
     const total = plan.queryList.length;
     // A test-only switch (like AUDIT_FORCE_INVARIANT_VIOLATION): break a step of this kind, to prove the failure is visible.
@@ -1656,38 +1682,39 @@ Return valid JSON matching the schema.`;
       // rather than pacing through the remaining queries only to have each
       // one fail the same way a moment later.
       if (skipForBreaker(steps, step, geminiBreaker.isTripped(), geminiPlanned)) {
-        if (startsQuestion(steps, step)) console.log(`Stopping after ${queryIndex}/${total} queries: Gemini quota breaker is tripped.`);
+        // Said once per audit, at the first question that is skipped.
+        if (startsQuestion(steps, step) && !steps.some((s) => s.skipReason === 'breaker')) console.log(`Stopping after ${queryIndex}/${total} queries: Gemini quota breaker is tripped.`);
         await completeOrNote(job, step, { state: 'skipped', skipReason: 'breaker' }, Date.now());
-        return;
+        return 'ran';
       }
       if (startsQuestion(steps, step)) {
         if (queryIndex > 0) await pace(1200);
-        await store.updateJob(job.id, { progress: queryingProgress(queryIndex, total) });
+        await setProgress(job, queryingProgress(queryIndex, total));
       }
-      await store.markCallStarted(job.id, step.seq, holder, step.attempt, Date.now());
+      if (!(await startCall(job, step, holder))) return 'lost';
       const evidence = await collectEngineEvidence(getGeminiClient(), plan.queryList[queryIndex], step.engine as EngineName);
       await completeOrNote(job, step, { state: 'done', result: evidence }, Date.now());
-      return;
+      return 'ran';
     }
 
     const evidenceByQuery = evidenceByQueryFromSteps(steps, total);
     const hasUsable = evidenceByQuery.flat().some(isUsableEvidence);
 
     if (step.kind === 'narrative') {
-      await store.updateJob(job.id, { progress: analysingProgress(total) });
+      await setProgress(job, analysingProgress(total));
       if (!hasUsable) {
         await completeOrNote(job, step, { state: 'skipped', skipReason: 'no_evidence' }, Date.now());
-        return;
+        return 'ran';
       }
       await pace(600);
-      await store.markCallStarted(job.id, step.seq, holder, step.attempt, Date.now());
+      if (!(await startCall(job, step, holder))) return 'lost';
       const result = await runNarrative(plan, evidenceByQuery);
       await completeOrNote(job, step, { state: 'done', result }, Date.now());
-      return;
+      return 'ran';
     }
 
     // finalize
-    await store.updateJob(job.id, { progress: analysingProgress(total) });
+    await setProgress(job, analysingProgress(total));
     const narrativeResult = steps.find((st) => st.kind === 'narrative' && st.state === 'done')?.result;
     const payload = plan.unconfigured
       ? unconfiguredPayload(plan)
@@ -1696,6 +1723,7 @@ Return valid JSON matching the schema.`;
         : assemblePayload(plan, evidenceByQuery, narrativeResult?.narrative ?? null, narrativeResult ? narrativeResult.narrativeFailure : 'The analysis step returned nothing usable.');
     await recordFinished(job, payload);
     await completeOrNote(job, step, { state: 'done' }, Date.now());
+    return 'ran';
   }
 
   /**
@@ -1716,10 +1744,10 @@ Return valid JSON matching the schema.`;
     }
 
     const step = claim.step;
-    // Heartbeat: something is working on this job right now, and this is what it is doing.
-    await store.touchJob(jobId, Date.now(), { phase: step.kind === 'collect' ? 'collecting' : step.kind === 'narrative' ? 'analysing' : 'finishing' });
     try {
-      await runStep(job, plan, step, holder, pace);
+      // Heartbeat: something is working on this job right now, and this is what it is doing.
+      await store.touchJob(jobId, Date.now(), { phase: step.kind === 'collect' ? 'collecting' : step.kind === 'narrative' ? 'analysing' : 'finishing' });
+      if ((await runStep(job, plan, step, holder, pace)) === 'lost') return 'busy';
     } catch (err: any) {
       // Something unexpected broke the step. The audit ends as a failed audit that says so (as it always did),
       // the step is marked failed and the incident is recorded, so it is never a silent stop.
@@ -1751,11 +1779,15 @@ Return valid JSON matching the schema.`;
       const latest = await store.getJob(jobId).catch(() => null);
       if (latest && latest.status !== 'running') return; // already ended (e.g. reaped); do not overwrite
       await store
+        .recordIncident({ jobId, at: Date.now(), kind: 'step_exception', detail: `The audit driver stopped: ${describeProviderError(err, 'The audit service').message}` })
+        .catch(() => undefined);
+      await store
         .updateJob(jobId, {
           status: 'error',
           error: describeProviderError(err, 'The audit service').message,
           finishedAt: Date.now(),
           billable: false,
+          failCode: 'driver_error',
         })
         .catch(log('could not record the failure'));
     }

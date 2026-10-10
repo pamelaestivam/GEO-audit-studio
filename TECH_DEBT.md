@@ -750,6 +750,11 @@ those files is a re-run, not a regression, but it must be recorded here.
   tests (`test/auditSteps.test.ts`). `closeJobAfterFailedStep` (a claim reporting an exhausted or failed step) cannot
   be reached by the inline driver, whose own exceptions end the audit in `advanceJob`; it is covered when the
   client driver or the sweeper can re-claim (S4, S5).
+- **Step e engine (slice S3), review notes:** deleting a saved audit does not delete the job record that produced it,
+  which keeps the report for up to `JOB_RETENTION_MS` (seven days; this predates the steps). The raw answers in
+  the step rows are dropped when the job finishes (`compactJobSteps`). A job failed at boot (`failCode:
+  restarted`) is not finished by anyone, unlike one the reaper stopped (`stuck`); two processes on one
+  `DATA_DIR` are not supported. Closing a failed step on a job the reaper already stopped returns silently.
 - **Step e engine (slice S3) limits:** engines now run one after another within a question (one step each),
   where they used to run in parallel; with only Gemini (the free engine) nothing changes, and with several paid
   engines a question takes longer. A crash between saving the audit and marking the job done can, on resume,
