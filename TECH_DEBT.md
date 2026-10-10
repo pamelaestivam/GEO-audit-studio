@@ -713,6 +713,34 @@ did not reproduce locally in three runs. A port collision is the suspected cause
 port back, and fail loudly on a bind error. Until then a single unexplained red in
 those files is a re-run, not a regression, but it must be recorded here.
 
+### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
+
+- **The number guard covers the executive summary, model forecasts (`expectedGain`) and the
+  "questions affected" count only.** Claimed and actual facts, omission descriptions, root causes,
+  recommendations and remediation descriptions are model free text and are not guarded; a figure
+  there is not measured, and the summary note says only what was checked. Saved audits written
+  before the guard keep their old summaries.
+- **The guard works on extraction.** It removes any sentence in which it finds a figure. It can miss
+  a figure written in a way it does not know (a script or phrase not in its lists); a hand-written
+  corpus of bad and good phrasings in `test/reportGuard.test.ts` is the only recall evidence, and
+  real model phrasing has not been sampled. It removes more than strictly needed (a sentence
+  repeating a measured figure, "named twice" as prose), which is the safe direction.
+- **Known extraction misses and over-removals:** a bare 4-digit number is read as a year only after a preposition or month, or when it closes a clause or a list of years, so "in 2000 visitors" style phrasings are treated as figures (safe direction) and a year in an unusual position is removed; quantity words not in the lists ("several", "a handful", "most") are deliberately not figures, and others may be missing.
+- **Claims without a figure are not checked.** "Acme never appears", "in every answer", "ranked first" pass the guard even when the measured sentence beside them says otherwise (visibility 33%). The guard is about figures; a check of absolute claims against the measured rates needs its own design.
+- **Removing a sentence can orphan its neighbours** ("Despite this, the brand is well positioned" after the sentence it answered was removed). The measured sentence comes first and the note says sentences were removed; nothing repairs the prose.
+- **Non-English number words and CJK numerals are not recognised** ("trois sur quatre", "五"); this matters only if a summary comes back in another language.
+- **The invariants check relations between the report's own figures, not the figures against the raw
+  answers.** It cannot catch a wrong brand match, and on realistic reports it holds by construction
+  today; it is a tripwire for future code changes, not evidence of correctness. A violation costs
+  the audit's collected evidence and the quota behind it (it is not billable to the person), and has
+  no incident id: only a server log line.
+- **"Not counted" strip and panel, and cited-only as its own number** (RELIABILITY step c, second
+  half) are not built. Until they are, discarded items are only a count (`inaccuraciesDiscarded`).
+- **Browser coverage:** the summary-note line on screen and in the export has no browser test.
+- **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
+  no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and
+  slice) has no test that fails if removed; three components each poll the status endpoint.
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer

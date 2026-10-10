@@ -50,30 +50,49 @@ queued -> collecting(query_i, engine) -> analysing -> narrating -> done
 
 ## 3. Invariants, machine-checked
 
-One pure function, `assertReportInvariants(report, evidence)`, runs when a job is
-finalised and again when a saved report is read:
+One pure function, `assertReportInvariants(report)` (`src/reportGuard.ts`), runs when a job
+is finalised. **Built:** it checks relations between the report's own figures, not figures
+against raw evidence:
 
-1. `evidence_total = used + discarded`, and every discarded item has a reason code.
-2. Headline denominators equal the usable observations (planned = answered + failed).
-3. A failed or invalid report carries no metric fields (a failure is never a zero).
-4. Every inaccuracy claim ties to a captured answer (query and engine) or is listed
-   as not counted.
-5. Every number in written text is in the computed set (see section 4).
-6. Status is one of the enumerated values.
+1. Percentages are in range; counts are non-negative integers; usable answers do not exceed
+   attempted, and named-in does not exceed usable.
+2. Headline visibility equals its own numerator over its denominator (within 1 point).
+3. Engines reported as measured were requested; every inaccuracy ties to a question in the audit
+   and a measured engine; no findings or accuracy rate when the qualitative analysis did not run.
+4. Shares of voice do not add up to more than about 100 (a sum far below 100 is not flagged); omission counts do not exceed the questions asked.
 
-A violation sets status `invalid`, writes an incident, and the report is never shown
-as done.
+A violation returns the existing failed-audit shape (not billable, not saved) with a sentence that
+says the figures failed a consistency check, cells that say the answers were collected but no result
+is shown, and a line in the server log. The path is proved end to end with a test-only switch
+(`AUDIT_FORCE_INVARIANT_VIOLATION=1`, like `GEMINI_BASE_URL`; unset everywhere real).
+
+**Not built:** re-running the check when a saved report is read; status `invalid` as its own
+state; an incident record (only the log line exists); checking inaccuracy claims against the raw
+answer text; a fuzz test against random evidence.
 
 ## 4. Numbers in written text
 
-The summary's figures come from a deterministic sentence built from the computed
-metrics. The model writes qualitative prose only. A guard extracts every number from
-the model's text, **including spelled-out numbers** ("three of four"), and drops any
-sentence containing one that is not in the computed set. A dropped sentence is
-recorded as an incident and the user sees a footnote ("1 sentence from the written
-summary was removed because it contained a figure we could not verify. All figures
-on this page are measured."). If every sentence is dropped, the template-only
-summary is shown with the same footnote. No second model call.
+The server states the measured figures itself, in the first sentence of the executive summary.
+The model writes qualitative prose only, and **the prose may contain no figure at all**: a
+sentence with a digit, a spelled-out number ("three of four"), a size-of-change word ("double",
+"threefold", "twice as many"), a fraction word from a fixed list (half, third, quarter, fifth to tenth),
+a loose quantity word ("hundreds", "a pair", "billion"), a count like "only one answer" or "named once",
+or a suffixed figure ("10k") is removed. The lists are finite: a phrasing not in them is not caught
+(`TECH_DEBT.md` 2.15). Ordinary words that contain one ("third-party", "zero-click", "double down")
+are kept.
+Digits inside names (the business, rivals, a typed query, identifiers such as "B2B" or "GPT-5") and
+calendar years are not figures. Matching a figure against the computed set was rejected: a wrong
+figure that happens to equal some count (0 to 6 nearly always do) would pass as verified. A removal
+is counted into `summaryNote` ("N sentences from the written summary were removed because they
+appeared to state a figure we could not verify. Only the figures in the first sentence are measured.") on
+the page and in the export. No second model call.
+
+Also guarded: a model-supplied "questions affected" count is bounded by the questions asked, and
+a remediation forecast ("expectedGain") that states a figure is replaced by a plain default.
+
+**Not guarded:** the other written fields (claimed and actual facts, omission and remediation
+descriptions); saved audits written before this guard existed. The summary note therefore says
+what was checked, and nothing wider.
 
 ## 5. What the user and the owner see
 
@@ -105,9 +124,9 @@ what is still valid, what to do next. A failure is never a zero and never a blan
 
 | Step | Size | Built? |
 |---|---|---|
-| a. Honest first visit: a visible storage-mode line, "no engine configured", default 2 questions. (The status endpoint already reports storage and the engines, and the app already asks before leaving a page with an unsaved audit; no visible line existed.) | S | in progress |
+| a. Honest first visit: a visible storage-mode line, "no engine configured", default 2 questions. (The status endpoint already reports storage and the engines, and the app already asks before leaving a page with an unsaved audit; no visible line existed.) | S | yes (PR #30, 19005fc) |
 | b. Docker removed from the required checks; CI smoke runs `dist/server.cjs` | S | no |
-| c. `assertReportInvariants`, number guard, "Not counted" strip and panel; cited-only as its own number | M | no |
+| c. `assertReportInvariants`, number guard, "Not counted" strip and panel; cited-only as its own number | M | partly: invariants and the number guard on the executive summary are built and tested (`src/reportGuard.ts`; a violation becomes a visible failed audit, not billable, not saved). Not built: the "Not counted" strip and panel, the cited-only number, an incidents table (see `TECH_DEBT.md` 2.15) |
 | d. Paid-engine refusal and per-instance call counters (labelled "this instance" until the durable store exists) | S | no |
 | e. Step-wise state machine on the memory and SQLite stores, leases, incidents; default returns to 3 | L | no |
 | f. PostgresStore for Supabase against the same `Store` contract; the store tests run against both | M-L | blocked on the owner (`docs/PROGRAM.md`, owner actions) |
