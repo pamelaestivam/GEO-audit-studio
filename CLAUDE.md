@@ -88,8 +88,9 @@ mandatory, not a reason to skip the merge.
 
 **CI must be green before any merge** (`.github/workflows/ci.yml`, the one check
 named `test`: tracked-symlink guard, audit, lint, `npm test`, and the
-production-install check, which also boots the built server, restarts it, and
-proves state and a backup survive). The Docker image build is a separate,
+production-install check, which also boots the built server, restarts it on the same
+data directory, and proves the data file kept the state, the restarted server writes to
+the same file, and a backup holds the state). The Docker image build is a separate,
 non-gating workflow (`docker.yml`, runs when image files change and weekly) and
 `live-check.yml` tests the deployed site daily and after each push to `main`,
 opening one tracking issue when it fails. Read their results; a red one is a

@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # same pin as the confidenceHigh repository
       - name: No tracked symlinks
         # A symlink named node_modules (pointing at a path outside the checkout) was
         # committed once by `git add -A` and CI stayed green because npm ci replaced it.
@@ -38,7 +38,7 @@ jobs:
             echo "$links"
             exit 1
           fi
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # same pin as the confidenceHigh repository
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -52,7 +52,8 @@ jobs:
           CI: 'true'
       # The built server must run from a clean directory with ONLY production
       # dependencies - what a Docker/Render/VPS build actually has. It also boots the
-      # server, runs the smoke test, restarts it on the same data directory and proves
-      # the stored state survived, and takes and checks a backup - everything the
-      # Docker job used to prove, without needing a container runtime.
+      # server, runs the smoke test, restarts it on the same data directory, proves the
+      # database file kept the data and that the restarted server writes to that same file,
+      # and takes and checks a backup. It does NOT prove the Docker image builds: that is
+      # docker.yml, which is not a merge gate.
       - run: bash scripts/prod-install-check.sh

@@ -3,31 +3,35 @@ name: Live site check
 # Does the DEPLOYED site work? ci.yml proves the code; nothing else looks at the running
 # site, and every past deployment incident (API 404s, a crash on a missing import
 # extension, nested routes 404ing at the platform edge) passed the tests and was found
-# by a person in production. This runs scripts/smoke.mjs against the live URL every day
-# and after every push to main (a few minutes after the deploy has had time to finish).
+# by a person in production. This runs scripts/smoke.mjs against the live URL once a day,
+# when Vercel reports a finished production deployment, and on demand.
 #
-# A failure is never only a red run nobody opens: it opens ONE issue (reused, never a
-# new one per run) with the failing checks, and a later green run closes it. The alert
-# path itself is watched by the run summary, which records when the check last ran.
+# A failure is never only a red run nobody opens: it opens ONE tracking issue (a closed one is
+# reopened rather than a new one created), and a later passing run closes it.
 #
-# Set the repository variable LIVE_URL (Settings, Secrets and variables, Actions,
-# Variables) to point at a different deployment; it defaults to the production URL
-# recorded in TECH_DEBT.md.
+# Known limit, reported as a warning on every run rather than failing it: while the site runs
+# on Vercel without the durable database (docs/PROGRAM.md item 8, owner action O-4), its
+# storage is memory only. The check passes `--warn-non-durable` for that reason; remove the
+# flag in the pull request that ships the durable store. Everything else the smoke test checks
+# (an engine key present, sign-in configured, API reachable at every depth, strangers refused)
+# is a failure, and until the owner has set those variables on Vercel (O-2, O-3) the first run
+# is EXPECTED to fail and say which one.
 #
-# Note: GitHub pauses scheduled workflows in a repository with no activity for 60 days.
-# Any push re-enables them, and the push-triggered run covers the gap.
+# The repository variable LIVE_URL overrides the URL, which defaults to the production URL
+# recorded in TECH_DEBT.md. A manual run with a different `url` input only reports in its own
+# log: it never opens or closes the tracking issue, which belongs to production.
+#
+# What this does NOT watch: itself. GitHub pauses scheduled workflows in a repository with no
+# activity for 60 days, and re-enabling is done in the Actions tab. If the daily run stops
+# appearing in the Actions tab, the check is not running.
 on:
   schedule:
     - cron: '23 7 * * *'
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
+  deployment_status:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Base URL to check (default: the LIVE_URL variable or production)'
+        description: 'Base URL to check instead of production (does not touch the tracking issue)'
         required: false
 
 permissions:
@@ -40,29 +44,34 @@ concurrency:
 
 jobs:
   live:
+    # For a deployment event, only a finished PRODUCTION deployment counts (a preview says nothing
+    # about the live site, and a failed deployment is Vercel's to report).
+    if: >-
+      github.event_name != 'deployment_status' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       LIVE_URL: ${{ inputs.url || vars.LIVE_URL || 'https://geo-audit-studio-five.vercel.app' }}
+      TRACK_ISSUE: ${{ inputs.url == '' && 'yes' || 'no' }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # same pin as the confidenceHigh repository
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # same pin as the confidenceHigh repository
         with:
           node-version-file: .nvmrc
-      - name: Wait for a fresh deploy to settle
-        if: github.event_name == 'push'
-        run: sleep 240
       - name: Smoke test the live site
         id: smoke
-        # Up to three tries, a minute apart: a cold or just-deployed serverless site can
-        # answer slowly once. Three failures in a row is a real failure.
+        timeout-minutes: 12
+        # Up to three tries, a minute apart: a cold or just-deployed serverless site can answer
+        # slowly once. Every request inside the smoke test is bounded (20 s), so a hung site fails
+        # the attempt instead of hanging the job.
         run: |
           set +e
           code=1
           for attempt in 1 2 3; do
             echo "::group::attempt $attempt against $LIVE_URL"
-            node scripts/smoke.mjs "$LIVE_URL" 2>&1 | tee live.log
+            node scripts/smoke.mjs "$LIVE_URL" --warn-non-durable 2>&1 | tee live.log
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             [ "$code" = 0 ] && break
@@ -79,35 +88,41 @@ jobs:
             tail -n 60 live.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Open, update or close the one tracking issue
+      - name: Open, reopen, update or close the one tracking issue
+        # Runs even if the smoke step was killed (a missing result counts as a failure).
+        if: always() && env.TRACK_ISSUE == 'yes'
         run: |
           set +e
+          code="${{ steps.smoke.outputs.code }}"
           title="Live site check failing"
           gh label create live-check --color B60205 --description "Opened by the live-check workflow" 2>/dev/null
-          number=$(gh issue list --state open --label live-check --json number --jq '.[0].number')
+          number=$(gh issue list --state all --label live-check --limit 1 --json number,state --jq '.[0].number')
+          state=$(gh issue list --state all --label live-check --limit 1 --json number,state --jq '.[0].state')
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          if [ "${{ steps.smoke.outputs.code }}" = 0 ]; then
-            if [ -n "$number" ]; then
+          if [ "$code" = 0 ]; then
+            if [ -n "$number" ] && [ "$state" = "OPEN" ]; then
               gh issue close "$number" --comment "The live site check passed again at $(date -u +%Y-%m-%dT%H:%MZ). Run: $run_url"
             fi
             exit 0
           fi
           {
-            echo "The live check of $LIVE_URL failed three times in a row."
+            echo "The live check of $LIVE_URL failed (three attempts, or it did not finish)."
             echo
             echo "Run: $run_url"
             echo
             echo '```'
-            grep -E '^(FAIL|[0-9]+ check|Smoke)|could not reach' live.log | head -40
+            if [ -f live.log ]; then grep -A1 -E '^(FAIL)|could not reach|check\(s\) failed' live.log | head -60; else echo "no smoke output: the check did not run to the end"; fi
             echo '```'
             echo
-            echo "This issue is reused: later failures comment here, and a passing run closes it."
+            echo "This issue is reused: later failures comment here, a passing run closes it, a later failure reopens it."
           } > body.md
-          if [ -n "$number" ]; then
+          if [ -n "$number" ] && [ "$state" = "OPEN" ]; then
             gh issue comment "$number" --body-file body.md
+          elif [ -n "$number" ]; then
+            gh issue reopen "$number" --comment "$(cat body.md)"
           else
             gh issue create --title "$title" --label live-check --body-file body.md
           fi
       - name: Fail the run if the site is failing
-        if: steps.smoke.outputs.code != '0'
+        if: always() && steps.smoke.outputs.code != '0'
         run: exit 1

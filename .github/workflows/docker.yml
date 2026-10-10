@@ -9,7 +9,11 @@ name: Docker image (optional, not a merge gate)
 # production install, boot, smoke, restart durability, backup) is also proved without
 # a container runtime by `scripts/prod-install-check.sh` in ci.yml.
 #
-# Runs when the files that shape the image change, weekly, and on demand.
+# Do not add `docker` as a REQUIRED status check in the branch rules: it reports only when image
+# files change, so requiring it would block every other pull request.
+#
+# Runs when anything the image is built from changes, weekly, and on demand. It reports on the PR
+# but is not a required check; a red run here is a finding to read, not a reason the code is wrong.
 on:
   pull_request:
     paths:
@@ -17,7 +21,13 @@ on:
       - .dockerignore
       - package.json
       - package-lock.json
-      - scripts/backup.mjs
+      - scripts/**
+      - server.ts
+      - src/**
+      - api/**
+      - index.html
+      - vite.config.ts
+      - tsconfig.json
       - .github/workflows/docker.yml
   push:
     branches: [main]
@@ -26,7 +36,13 @@ on:
       - .dockerignore
       - package.json
       - package-lock.json
-      - scripts/backup.mjs
+      - scripts/**
+      - server.ts
+      - src/**
+      - api/**
+      - index.html
+      - vite.config.ts
+      - tsconfig.json
       - .github/workflows/docker.yml
   schedule:
     - cron: '17 6 * * 1'
@@ -44,8 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # same pin as the confidenceHigh repository
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # same pin as the confidenceHigh repository
         with:
           node-version-file: .nvmrc
       - name: Build image

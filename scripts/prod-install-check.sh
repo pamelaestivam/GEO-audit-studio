@@ -64,10 +64,18 @@ count_probe_rows() {
   " "$1"
 }
 
+BEFORE=$(count_probe_rows "$DATA/geo-audit.sqlite")
 kill "$PID"; wait "$PID" 2>/dev/null || true; PID=""
 start_server
 N=$(count_probe_rows "$DATA/geo-audit.sqlite")
-[ "$N" -ge 1 ] && echo "pass  probe rows surviving the restart: $N" || { echo "FAIL  state written before the restart is gone ($N rows)"; exit 1; }
+[ "$N" -ge 1 ] && [ "$N" -ge "$BEFORE" ] && echo "pass  probe rows surviving the restart: $N (before: $BEFORE)" || { echo "FAIL  state written before the restart is gone ($N rows, was $BEFORE)"; exit 1; }
+# The restarted server must be using that same file: a write through it must land there.
+TOKEN=$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"ci@example.com","accessCode":"install-check-code"}' \
+  | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).token))")
+curl -sS --max-time 90 "http://127.0.0.1:$PORT/api/audit/readiness" -H "Authorization: Bearer $TOKEN" >/dev/null || true
+AFTER=$(count_probe_rows "$DATA/geo-audit.sqlite")
+[ "$AFTER" -gt "$N" ] && echo "pass  the restarted server writes to the same database file ($N -> $AFTER rows)" || { echo "FAIL  the restarted server did not write to the data directory ($N -> $AFTER rows)"; exit 1; }
 
 # --- a backup of the running database restores what the server wrote ----------------------
 node "$ROOT/scripts/backup.mjs" "$DATA" "$DATA/backups/ci.sqlite" >/dev/null

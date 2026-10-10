@@ -95,7 +95,7 @@ trusts NO proxy for client IPs unless you set `TRUST_PROXY` (the image does not)
 
 The `docker` workflow (`.github/workflows/docker.yml`; it runs when the image files change, weekly and on demand, and is not a merge gate) builds this image, runs it with a volume, smoke-tests it, restarts it on the
 same volume and smoke-tests again. The Dockerfile could not be built where it
-was written (Docker CLI present, no daemon), so its only evidence is that workflow:
+was written (Docker CLI present, no daemon), so its only evidence is that workflow (it is informational, not a merge gate, so a change can merge before it has run):
 it built and passed on GitHub's runner for this repository, including the
 restart on the same volume. That is a build-and-smoke check against a fake
 Gemini endpoint, not a test of your host - run `scripts/smoke.mjs` against your
