@@ -19,6 +19,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { DEFAULT_QUERY_COUNT } from '../src/queries';
 installAuthFetch();
 
 let failures = 0;
@@ -194,6 +195,12 @@ async function main() {
     const queriesTestedCount = defaultQueries.final?.report?.queriesTested?.length || 0;
     console.log(
       `  (the default-query audit tested ${queriesTestedCount} template queries using ${hitsForDefaultAudit} real Gemini call(s))`
+    );
+
+    check(
+      'the default audit asks exactly DEFAULT_QUERY_COUNT questions (two until audits can resume; three at most)',
+      [queriesTestedCount, hitsForDefaultAudit],
+      [DEFAULT_QUERY_COUNT, DEFAULT_QUERY_COUNT + 1]
     );
 
     // One grounded search per templated query, plus one narrative call.

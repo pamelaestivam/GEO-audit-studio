@@ -20,6 +20,8 @@ import { progressPercent, runAuditJob, type AuditProgress } from '../auditClient
 import { apiFetch } from '../apiClient';
 import { newIdempotencyKey } from '../idempotency';
 import { describeEngines, useAuditStatus } from '../useQuotaStatus';
+import { DEFAULT_QUERY_COUNT } from '../queries';
+import { hasNoEngine, noEngineNotice } from '../statusView';
 
 interface CleanStartDashboardProps {
   onAuditComplete: (newReport: AuditReport) => void;
@@ -43,6 +45,8 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
 
   const { quota, engines } = useAuditStatus();
   const engineNames = describeEngines(engines);
+  const noEngine = hasNoEngine(engines);
+  const noEngineText = noEngineNotice(engines);
 
   const sampleBrands = [
     {
@@ -149,7 +153,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
 
     try {
       // Only the user's own queries are sent; with none, the server runs its
-      // three standard buyer-intent queries. One query per line - a comma is
+      // standard buyer-intent queries (DEFAULT_QUERY_COUNT of them). One query per line - a comma is
       // ordinary punctuation inside a question and used to split it in two.
       const combinedQueries = manualQueriesInput
         .split('\n')
@@ -258,7 +262,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => handleAutoDetectUrl(businessName)}
-                  disabled={isDetecting || isLoading}
+                  disabled={isDetecting || isLoading || noEngine}
                   className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 transition disabled:opacity-50"
                 >
                   {isDetecting ? (
@@ -351,10 +355,18 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
               className="w-full px-3.5 py-2.5 bg-slate-950 text-slate-200 text-xs rounded-lg border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition placeholder-slate-600 resize-y"
             />
             <p className="text-[11px] text-slate-500 mt-1">
-              Leave blank to run three standard buyer-intent queries built from the details above. If you enter
+              Leave blank to run {DEFAULT_QUERY_COUNT === 2 ? 'two' : DEFAULT_QUERY_COUNT} standard buyer-intent questions built from the details above. If you enter
               your own, only yours are run.
             </p>
           </div>
+
+          {/* No engine configured: nothing can be measured, so say so before the form is filled in. */}
+          {noEngineText && (
+            <div role="status" data-testid="no-engine-notice" className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+              <AlertCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-200/90 leading-relaxed">{noEngineText}</p>
+            </div>
+          )}
 
           {/* Known-exhausted quota: warn before the user fills out the whole form. */}
           {quota && !quota.available && (
@@ -390,7 +402,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              disabled={isLoading || !businessName.trim() || (quota ? !quota.available : false)}
+              disabled={isLoading || noEngine || !businessName.trim() || (quota ? !quota.available : false)}
               className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/25 flex items-center justify-center gap-2.5 transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (

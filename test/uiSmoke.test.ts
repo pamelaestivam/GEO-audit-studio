@@ -115,6 +115,30 @@ async function main() {
     assert('a visitor lands on sign-in, not the dashboard', (await page.locator('#auth-email-input').count()) === 1);
     assert('there is no demo / one-click bypass', (await page.locator('text=Quick Demo').count()) === 0);
 
+    // --- the deployment notices come from the server's own status, never hardcoded
+    const STATUS_OK = { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: ['Gemini'], auth: { mode: 'configured' } };
+    const durablePage = await ctx.newPage();
+    await durablePage.route('**/api/audit/status', (route) => route.fulfill({ json: { ...STATUS_OK, storage: { kind: 'sqlite', durable: true } } }));
+    // Wait for the status answer to actually arrive: an absence checked before it does passes for free.
+    await Promise.all([durablePage.waitForResponse('**/api/audit/status'), durablePage.goto(BASE)]);
+    await durablePage.waitForTimeout(300);
+    assert('a deployment with durable storage shows no temporary-storage notice (checked after the status answered)', (await durablePage.locator('[data-testid=storage-notice]').count()) === 0);
+    await durablePage.close();
+    const tempPage = await ctx.newPage();
+    await tempPage.route('**/api/audit/status', (route) =>
+      route.fulfill({
+        json: { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: ['Gemini'], storage: { kind: 'memory', durable: false }, auth: { mode: 'configured' } },
+      })
+    );
+    await tempPage.goto(BASE);
+    assert('when the server reports temporary storage, the sign-in page says so', await appears(tempPage, '[data-testid=storage-notice]'));
+    assert('...and tells the person what to do', /Export your report/.test(await tempPage.locator('[data-testid=storage-notice]').innerText()));
+    await signIn(tempPage, 'tester@example.com', TEST_ACCESS_CODE);
+    await tempPage.waitForSelector('#business-name-input');
+    assert('...and the same notice stays on screen after signing in (the app header carries it too)', await appears(tempPage, '[data-testid=storage-notice]'));
+    await tempPage.evaluate(() => localStorage.clear()); // pages share one browser context; leave no session behind
+    await tempPage.close();
+
     await signIn(page, 'tester@example.com', 'definitely-wrong-code');
     await page.waitForSelector('[role=alert]');
     assert('a wrong access code shows the server\'s sentence', /access code is not valid/i.test(await page.locator('[role=alert]').innerText()));
@@ -130,21 +154,21 @@ async function main() {
     assert('the run button names what it does', /Run Live GEO Search Audit/.test(firstClickLabel));
     await runAudit(page);
     const card = await page.locator('main').innerText();
-    assert('visibility is shown with its arithmetic', /Named in 3 of 3 answers \(Gemini\)/.test(card), card.slice(0, 400));
+    assert('visibility is shown with its arithmetic', /Named in 2 of 2 answers \(Gemini\)/.test(card), card.slice(0, 400));
     assert('a small sample carries a caution', /indicative, not a stable rate/.test(card));
-    assert('the score carries its rough 95% range, so 3 of 3 does not read as certainty', /Rough 95% range from this sample: 43%-100%/.test(card), card.slice(0, 600));
+    assert('the score carries its rough 95% range, so 2 of 2 does not read as certainty', /Rough 95% range from this sample: 34%-100%/.test(card), card.slice(0, 600));
     await page.click('summary:has-text("How this was measured")');
     const how = await page.locator('details').first().innerText();
     assert('the disclosure says it is the developer API, once, not the consumer apps', /not what people see in the ChatGPT, Gemini, Claude or Perplexity apps/.test(how) && /once/.test(how), how);
-    assert('...states what the range is and is not', /plausibly lie between 43%-100%/.test(how) && /not fully independent/.test(how), how);
+    assert('...states what the range is and is not', /plausibly lie between 34%-100%/.test(how) && /not fully independent/.test(how), how);
     assert('...names the model requested and when the answers were captured', /Models requested: Gemini \(gemini-3\.6-flash\)/.test(how) && /Answers captured .* GMT/.test(how), how);
     await page.click('summary:has-text("How this was measured")'); // close it again so later steps see only their own <details>
     const ringClass = (await page.locator('main .border-4').first().getAttribute('class')) || '';
-    assert('a 3-answer score has a neutral ring, no colour verdict', /text-slate-400/.test(ringClass) && !/emerald|amber|rose/.test(ringClass), ringClass);
+    assert('a 2-answer score has a neutral ring, no colour verdict', /text-slate-400/.test(ringClass) && !/emerald|amber|rose/.test(ringClass), ringClass);
     const optionNow = (await page.locator('#audit-selector option').allInnerTexts())[0];
-    assert('the audit dropdown entry never shows the bare number', /GEO Score: 100% \(3 answers\)/.test(optionNow), optionNow);
-    assert('the header badge and the sidebar never show the bare number', /GEO Score: 100% \(3 answers\)/.test(await page.locator('#header-geo-score-badge').innerText()) && /GEO 100% \(3 answers\)/.test(await page.locator('aside').innerText()));
-    assert('when every query names the brand, the card says the score mostly reflects reputation, not discovery', /All 3 questions name your brand/.test(card), card.slice(0, 500));
+    assert('the audit dropdown entry never shows the bare number', /GEO Score: 100% \(2 answers\)/.test(optionNow), optionNow);
+    assert('the header badge and the sidebar never show the bare number', /GEO Score: 100% \(2 answers\)/.test(await page.locator('#header-geo-score-badge').innerText()) && /GEO 100% \(2 answers\)/.test(await page.locator('aside').innerText()));
+    assert('when every query names the brand, the card says the score mostly reflects reputation, not discovery', /All 2 questions name your brand/.test(card), card.slice(0, 500));
     assert('share of voice is 33%', /33%/.test(card));
     const rivals = await page.locator('text=Rivals the engines named that you did not list').locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]').innerText();
     assert('only the real rivals are listed', /Pokeworks/.test(rivals) && /Sweetfin/.test(rivals) && !/Pricing|Key|Monday|Yelp|Austin/.test(rivals), rivals);
@@ -202,12 +226,23 @@ async function main() {
     assert('...and are well-formed', /What are the best alternatives to Acme Bowls\?/.test(modalText));
     await page.locator('.fixed button:has-text("✕")').click();
 
+    // --- the same modal with no engine configured must not offer a dead click
+    // (a fresh page on the same signed-in browser context, so the modal starts from its first step)
+    const modalNoEngine = await ctx.newPage();
+    await modalNoEngine.route('**/api/audit/status', (route) => route.fulfill({ json: { ...STATUS_OK, engines: [], storage: { kind: 'sqlite', durable: true } } }));
+    await modalNoEngine.goto(BASE);
+    await modalNoEngine.click('#run-new-audit-btn');
+    await modalNoEngine.fill('.fixed input[placeholder^="e.g. Acme SaaS"]', 'Acme Bowls');
+    assert('the Run Audit modal says nothing can be measured when no engine is configured', await appears(modalNoEngine, '.fixed [data-testid=no-engine-notice]'));
+    assert('...and its Generate button is disabled even with a business name entered', await modalNoEngine.locator('.fixed button:has-text("Generate Viewer-Intent Queries")').isDisabled());
+    await modalNoEngine.close();
+
     // --- export
     await page.click('#export-report-btn');
     assert('the export modal opens', await appears(page, 'text=Executive Audit Report Export'));
     const exportText = await page.locator('.fixed').innerText();
-    assert('the export carries the same basis as the card', /Named in 3 of 3 answers/.test(exportText));
-    assert('the export (and so the printed PDF) shows the range, the model and when the answers were captured beside the score', /Rough 95% range: 43%-100%/.test(exportText) && /Models requested: Gemini \(gemini-3\.6-flash\)/.test(exportText) && /Answers captured .* GMT/.test(exportText), exportText.slice(0, 700));
+    assert('the export carries the same basis as the card', /Named in 2 of 2 answers/.test(exportText));
+    assert('the export (and so the printed PDF) shows the range, the model and when the answers were captured beside the score', /Rough 95% range: 34%-100%/.test(exportText) && /Models requested: Gemini \(gemini-3\.6-flash\)/.test(exportText) && /Answers captured .* GMT/.test(exportText), exportText.slice(0, 700));
     assert('...and says it is not the consumer app', /not what people see/.test(exportText));
     await page.locator('.fixed button:has-text("✕")').click();
 
@@ -217,8 +252,8 @@ async function main() {
     assert('the saved audit is restored after a reload', await appears(page, 'text=Saved to your account'));
     const reloaded = await page.locator('main').innerText();
     const optionAfterReload = (await page.locator('#audit-selector option').allInnerTexts())[0];
-    assert('after a reload the dropdown (built from the saved summary) still carries what the score rests on', /GEO Score: 100% \(3 answers\)/.test(optionAfterReload), optionAfterReload);
-    assert('the saved audit comes back after a reload, in full', /Named in 3 of 3 answers/.test(reloaded) && /33%/.test(reloaded), reloaded.slice(0, 300));
+    assert('after a reload the dropdown (built from the saved summary) still carries what the score rests on', /GEO Score: 100% \(2 answers\)/.test(optionAfterReload), optionAfterReload);
+    assert('the saved audit comes back after a reload, in full', /Named in 2 of 2 answers/.test(reloaded) && /33%/.test(reloaded), reloaded.slice(0, 300));
 
     // --- after a reload nothing is explicitly selected; adding a query must still work
     await page.locator('aside').getByText('Query Intent Matrix', { exact: false }).first().click();
@@ -282,6 +317,26 @@ async function main() {
     assert('...and is removed from storage', (await page.evaluate(() => localStorage.getItem('geo_radar_user_session'))) === null);
 
     assert('no uncaught page errors occurred on desktop', consoleErrors.length === 0, consoleErrors.join(' | '));
+    // --- no engine configured: the run button is disabled and the reason is on screen
+    const noEnginePage = await ctx.newPage();
+    await noEnginePage.route('**/api/audit/status', (route) =>
+      route.fulfill({
+        json: { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: [], storage: { kind: 'sqlite', durable: true }, auth: { mode: 'configured' } },
+      })
+    );
+    let statusAnswers = 0;
+    noEnginePage.on('response', (r) => { if (r.url().includes('/api/audit/status')) statusAnswers++; });
+    await noEnginePage.goto(BASE);
+    await signIn(noEnginePage, 'tester@example.com', TEST_ACCESS_CODE);
+    await noEnginePage.waitForSelector('#business-name-input');
+    await noEnginePage.fill('#business-name-input', 'Acme Bowls');
+    assert('with no engine configured the form says nothing can be measured', await appears(noEnginePage, '[data-testid=no-engine-notice]'));
+    assert('...and the run button is disabled even though a business name is entered, not a dead click', await noEnginePage.locator('button:has-text("Run Live GEO Search Audit")').isDisabled());
+    // sign-in page + app header + dashboard each ask once; wait for all of them before asserting an absence
+    for (let i = 0; i < 50 && statusAnswers < 3; i++) await noEnginePage.waitForTimeout(100);
+    assert('...and the temporary-storage notice is absent (storage is fine here)', (await noEnginePage.locator('[data-testid=storage-notice]').count()) === 0);
+    await noEnginePage.close();
+
     await ctx.close();
 
     // =====================================================================
