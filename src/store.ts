@@ -256,7 +256,12 @@ export interface Store {
   /** Newest first. */
   listIncidents(opts?: { jobId?: string; limit?: number }): Promise<Incident[]>;
   /** Jobs still running that started within `maxAgeMs`. */
-  countRunning(maxAgeMs: number, now?: number): Promise<number>;
+  /**
+   * Jobs still running that started within `maxAgeMs`. With `staleAfterMs`, a job nobody has touched for that
+   * long (no heartbeat since it started, or since its last step) no longer counts: an audit its page abandoned
+   * must not hold a concurrency slot until the reaper stops it.
+   */
+  countRunning(maxAgeMs: number, now?: number, staleAfterMs?: number): Promise<number>;
   /** Billable jobs started at or after `sinceMs` under one budget key, or (omitted) everyone's. */
   countJobsSince(sinceMs: number, budgetKey?: string): Promise<number>;
   /** Start time of the oldest such job, for "try again at". */
@@ -448,9 +453,14 @@ export class MemoryStore implements Store {
       .slice(0, clampLimit(opts.limit))
       .map((i) => ({ ...i }));
   }
-  async countRunning(maxAgeMs: number, now = Date.now()) {
+  async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     let n = 0;
-    for (const j of this.jobs.values()) if (j.status === 'running' && now - j.startedAt <= maxAgeMs) n++;
+    for (const j of this.jobs.values()) {
+      if (j.status !== 'running' || now - j.startedAt > maxAgeMs) continue;
+      // Only a job the PAGE drives can be abandoned; a server-driven one is still being worked on however long a step takes.
+      if (staleAfterMs !== undefined && (j.plan as any)?.driver === 'client' && now - (j.heartbeatAt ?? j.startedAt) > staleAfterMs) continue;
+      n++;
+    }
     return n;
   }
   async countJobsSince(sinceMs: number, owner?: string) {
@@ -476,7 +486,9 @@ export class MemoryStore implements Store {
         j.status = 'error';
         j.error = reason;
         j.finishedAt = now;
-        j.billable = false;
+        // A reaped audit that had already made an engine call spent real quota: it keeps counting against the
+        // person's allowance. Only one that never reached an engine is free.
+        j.billable = (this.steps.get(j.id) || []).some((st) => st.callStartedAt !== undefined);
         j.failCode = STUCK_FAIL_CODE;
         n++;
       }
@@ -842,10 +854,14 @@ export class SqliteStore implements Store {
       : this.db.prepare('SELECT * FROM incidents ORDER BY id DESC LIMIT ?').all(clampLimit(opts.limit));
     return rows.map((r: Row) => ({ id: r.id, jobId: r.job_id ?? undefined, at: r.at, kind: r.kind, detail: r.detail }) as Incident);
   }
-  async countRunning(maxAgeMs: number, now = Date.now()) {
-    return this.db
-      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ?")
-      .get(now - maxAgeMs).n;
+  async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
+    return staleAfterMs === undefined
+      ? this.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ?").get(now - maxAgeMs).n
+      : this.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ? AND (COALESCE(json_extract(plan, '$.driver'), '') <> 'client' OR COALESCE(heartbeat_at, started_at) >= ?)"
+          )
+          .get(now - maxAgeMs, now - staleAfterMs).n;
   }
   async countJobsSince(sinceMs: number, owner?: string) {
     return owner
@@ -861,7 +877,11 @@ export class SqliteStore implements Store {
   async failStuck(maxAgeMs: number, reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running' AND started_at < ?")
+        .prepare(
+          `UPDATE jobs SET status = 'error', error = ?, finished_at = ?, fail_code = ?,
+             billable = CASE WHEN EXISTS (SELECT 1 FROM job_steps s WHERE s.job_id = jobs.id AND s.call_started_at IS NOT NULL) THEN 1 ELSE 0 END
+           WHERE status = 'running' AND started_at < ?`
+        )
         .run(reason, now, STUCK_FAIL_CODE, now - maxAgeMs).changes
     );
   }

@@ -38,12 +38,16 @@ import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import { analyseEvidence, assembleReport, discoverVendors, isUsableEvidence, planAudit } from './src/auditPipeline.js';
 import {
   MAX_STEP_ATTEMPTS,
+  PAUSE_BEFORE_ANALYSIS_MS,
+  PAUSE_BETWEEN_QUESTIONS_MS,
   analysingProgress,
   evidenceByQueryFromSteps,
+  nextStepAfterMs,
   planSteps,
   queryingProgress,
   skipForBreaker,
   startsQuestion,
+  summariseSteps,
   type AuditProgress,
   type StoredAuditPlan,
 } from './src/auditSteps.js';
@@ -127,6 +131,9 @@ async function buildApp() {
         ? `[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(kind)} is set: every audit will break at its ${kind} step. This is a test-only switch; unset it.`
         : `[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(kind)} matches no step (use collect, narrative or finalize) and does nothing. It is a test-only switch; unset it.`
     );
+  }
+  if ((process.env.AUDIT_DRIVER ?? '') !== '' && process.env.AUDIT_DRIVER !== 'client' && process.env.AUDIT_DRIVER !== 'inline') {
+    console.warn(`[config] AUDIT_DRIVER=${JSON.stringify(process.env.AUDIT_DRIVER)} is ignored: use "inline" or "client".`);
   }
   const app = express();
 
@@ -240,7 +247,9 @@ async function buildApp() {
   const RATE_LIMIT_PER_MIN = Number(process.env.RATE_LIMIT_PER_MIN ?? 30);
   const spendLimiter = new FixedWindowLimiter(RATE_LIMIT_PER_MIN, 60_000);
   app.use('/api/audit', (req, res, next) => {
-    if (req.method !== 'POST' || RATE_LIMIT_PER_MIN <= 0) return next();
+    // Advancing a job the person already started spends only that job's own, planned steps (a held step is
+    // refused, and an audit has a fixed number of them), so the page's steady stream of advances is not a flood.
+    if (req.method !== 'POST' || RATE_LIMIT_PER_MIN <= 0 || /^\/job\/[^/]+\/advance$/.test(req.path)) return next();
     const decision = spendLimiter.check(limiterKey(req.ip));
     if (decision.allowed) return next();
     res.setHeader('Retry-After', String(decision.retryAfterSeconds));
@@ -1538,7 +1547,7 @@ Return valid JSON matching the schema.`;
   }
 
   async function admit(budgetKey: string): Promise<void> {
-    const running = await store.countRunning(JOB_MAX_RUN_MS);
+    const running = await store.countRunning(JOB_MAX_RUN_MS, Date.now(), AUDIT_STALL_MS);
     if (running >= MAX_CONCURRENT_AUDITS) {
       throw new AdmissionError(
         `This service is already running ${MAX_CONCURRENT_AUDITS} audits, which is as many as the shared answer-engine quota supports at once. Please try again in a minute or two.`,
@@ -1572,6 +1581,22 @@ Return valid JSON matching the schema.`;
    * a rate-limit wait and the retries) or a live step would be taken over while it works.
    */
   const AUDIT_LEASE_MS = Number(process.env.AUDIT_LEASE_MS) > 0 ? Number(process.env.AUDIT_LEASE_MS) : 10 * 60 * 1000;
+  /** A running audit the PAGE drives, and nobody has touched for this long, stops holding one of the concurrent-audit slots. */
+  const AUDIT_STALL_MS = (() => {
+    const raw = process.env.AUDIT_STALL_MS;
+    if (raw === undefined || raw === '') return 3 * 60 * 1000;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    console.warn(`AUDIT_STALL_MS=${JSON.stringify(raw)} is not a positive number of milliseconds; using 180000.`);
+    return 3 * 60 * 1000;
+  })();
+  /**
+   * Who drives an audit's steps. `inline`: this process, after the response (right for an always-on host).
+   * `client`: nothing runs after any response; the page asks for one step at a time (right for a serverless
+   * host, where work after the response can be frozen or killed). Default: `client` on Vercel, else `inline`.
+   */
+  const AUDIT_DRIVER: 'inline' | 'client' =
+    process.env.AUDIT_DRIVER === 'client' || process.env.AUDIT_DRIVER === 'inline' ? process.env.AUDIT_DRIVER : process.env.VERCEL ? 'client' : 'inline';
 
   /** A pause the driver chooses how to spend: the inline driver sleeps, a client driver would hand it to the page. */
   type Pace = (ms: number) => Promise<void>;
@@ -1688,7 +1713,7 @@ Return valid JSON matching the schema.`;
         return 'ran';
       }
       if (startsQuestion(steps, step)) {
-        if (queryIndex > 0) await pace(1200);
+        if (queryIndex > 0) await pace(PAUSE_BETWEEN_QUESTIONS_MS);
         await setProgress(job, queryingProgress(queryIndex, total));
       }
       if (!(await startCall(job, step, holder))) return 'lost';
@@ -1706,7 +1731,7 @@ Return valid JSON matching the schema.`;
         await completeOrNote(job, step, { state: 'skipped', skipReason: 'no_evidence' }, Date.now());
         return 'ran';
       }
-      await pace(600);
+      await pace(PAUSE_BEFORE_ANALYSIS_MS);
       if (!(await startCall(job, step, holder))) return 'lost';
       const result = await runNarrative(plan, evidenceByQuery);
       await completeOrNote(job, step, { state: 'done', result }, Date.now());
@@ -1862,6 +1887,7 @@ Return valid JSON matching the schema.`;
           const others = engines.filter((e) => e !== 'Gemini');
           const stored: StoredAuditPlan = {
             ...planned,
+            driver: AUDIT_DRIVER,
             engines,
             unconfigured: measurable
               ? undefined
@@ -1891,8 +1917,9 @@ Return valid JSON matching the schema.`;
             phase: 'planned',
           };
           await store.createPlannedJob(job, planSteps(stored, measurable));
-          // Kick the work off and answer immediately; the client polls for the result.
-          void driveInline(job.id);
+          // With the inline driver, kick the work off and answer immediately; the client polls for the result. With
+          // the client driver nothing runs after this response: the page asks for one step at a time.
+          if (AUDIT_DRIVER === 'inline') void driveInline(job.id);
           return { id: job.id, replayed: false };
         });
       } catch (err) {
@@ -1909,9 +1936,20 @@ Return valid JSON matching the schema.`;
       // Report what the job is NOW: a replayed submit can name a job that has
       // already finished or failed (the client's next poll would say so anyway).
       const current = await store.getJob(outcome.id);
-      res.status(202).json({ jobId: outcome.id, status: current?.status ?? 'running' });
+      res.status(202).json({ jobId: outcome.id, status: current?.status ?? 'running', driver: (current?.plan as StoredAuditPlan | undefined)?.driver ?? 'inline' });
     })
   );
+
+  const JOB_GONE_MESSAGE = 'That audit is no longer available. It may have expired or the server restarted; please run it again.';
+
+  /** What a person (or their page) is told about a job right now. One definition for polling and advancing. */
+  function jobView(job: StoredJob): { httpStatus: number; body: any } {
+    if (job.status === 'running') {
+      return { httpStatus: 200, body: { status: 'running', elapsedMs: Date.now() - job.startedAt, progress: job.progress ?? null } };
+    }
+    if (job.status === 'error') return { httpStatus: 500, body: { status: 'error', error: job.error } };
+    return { httpStatus: 200, body: { status: 'done', ...job.result } };
+  }
 
   app.get(
     '/api/audit/job/:id',
@@ -1920,17 +1958,41 @@ Return valid JSON matching the schema.`;
       const job = await store.getJob(req.params.id);
       // Someone else's job is reported exactly like a missing one.
       if (!job || job.owner !== res.locals.user.owner) {
-        return res.status(404).json({
-          error: 'That audit is no longer available. It may have expired or the server restarted; please run it again.',
-        });
+        return res.status(404).json({ error: JOB_GONE_MESSAGE });
       }
-      if (job.status === 'running') {
-        return res.json({ status: 'running', elapsedMs: Date.now() - job.startedAt, progress: job.progress ?? null });
+      const view = jobView(job);
+      return res.status(view.httpStatus).json(view.body);
+    })
+  );
+
+  /**
+   * Do one step of an audit the page is driving (AUDIT_DRIVER=client) and say how it stands. Safe to call again
+   * at any time: a step someone else holds is `busy`, a finished audit just reports its result. The reply is
+   * the same body as polling, plus what the page needs to drive: the outcome, how long to wait before asking
+   * again, and how far the audit has got. A job that is not here (another instance, a restart) is a typed 404
+   * that says whether this deployment keeps jobs at all.
+   */
+  app.post(
+    '/api/audit/job/:id/advance',
+    handle(async (req, res) => {
+      await store.failStuck(JOB_MAX_RUN_MS, 'The audit took too long and was stopped. Please run it again.');
+      const job = await store.getJob(req.params.id);
+      if (!job || job.owner !== res.locals.user.owner) {
+        return res.status(404).json({ error: JOB_GONE_MESSAGE, code: 'job_not_found', storage: { durable: store.info().durable } });
       }
-      if (job.status === 'error') {
-        return res.status(500).json({ status: 'error', error: job.error });
+      const plan = job.plan as StoredAuditPlan | undefined;
+      let outcome: AdvanceOutcome = 'idle';
+      if (job.status === 'running' && plan?.driver === 'client') {
+        // A holder name that is new for every request. The lease decides who may work on a step; the holder only
+        // marks which request started a call (`markCallStarted`).
+        const holder = `client:${store.instanceId}:${crypto.randomBytes(6).toString('hex')}`;
+        outcome = await advanceJob(job.id, holder, async () => undefined);
       }
-      return res.json({ status: 'done', ...job.result });
+      const latest = (await store.getJob(job.id)) ?? job;
+      const steps = await store.getJobSteps(job.id);
+      const view = jobView(latest);
+      const waitMs = outcome === 'busy' ? 1000 : latest.status === 'running' ? nextStepAfterMs(steps) : 0;
+      return res.status(view.httpStatus).json({ ...view.body, outcome, nextStepAfterMs: waitMs, steps: summariseSteps(steps) });
     })
   );
 

@@ -101,7 +101,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    late-finish-after-reap behaviour (the foundation E2E check "a job reaped as stuck that later finishes is
    still recorded", `test/foundationE2E.test.ts` near line 661, must pass untouched). Boundary test (`test/auditStepsE2E.test.ts`): a 1-query audit makes exactly 2 fake
    Gemini hits and the SQLite file holds 3 `done` steps with `attempt=1`.
-4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** The GET job view also gains the additive fields deferred from S3 (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). `AUDIT_DRIVER=client`:
+4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** *Delivered 2026-10-10 except: the Gemini HTTP timeout and `vercel.json` `maxDuration` (neither has a principled value until the owner reports the real function limit, O-3; recorded in TECH_DEBT); the additive GET fields `phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId` that S3 deferred here (the GET job view is unchanged; the advance reply carries a `steps` summary with `callsMade` and `repeatedCalls`, and `storage` appears only in the 404; the GET fields move to S7, where the page first needs them); the `wait` outcome (replaced by `nextStepAfterMs` plus `idle`); `repeatedCalls`/`callsMade` are reported as 'at least' (a collector can retry inside a step).* `AUDIT_DRIVER=client`:
    `POST /api/audit/job/:id/advance` returns the view plus `outcome advanced | busy | finished | wait`
    and `nextStepAfterMs`; 404 `job_not_found`; `src/auditClient.ts` branches on the driver the 202
    returns and throws `AuditInterrupted`; exempt `/api/audit/job/*` from `spendLimiter`; make
@@ -129,7 +129,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `spend.scope` becomes `'shared store'` when durable. Tests: two processes, every inter-hit gap at least
    the interval; a daily 429 tripped on A means 0 further hits from B; a cap of 2 over two processes gives
    exactly 2 hits.
-7. **S7 stalled / Resume / Discard in the UI, visible retries.** Boundary tests as well as browser ones:
+7. **S7 stalled / Resume / Discard in the UI, visible retries.** Also adds the GET job-view fields S4 did not deliver (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). Boundary tests as well as browser ones:
    discard on a leased or running step makes 0 provider hits and is owner-scoped (another user's job gives
    404); resume never auto-resubmits (0 new POST `/api/audit/run`). Persist `{jobId, startedAt}` in
    `localStorage`, `resumeAuditJob`, a resume banner, the "Retried / Completed after 1 retry" strings,

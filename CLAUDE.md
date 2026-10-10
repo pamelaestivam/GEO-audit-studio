@@ -317,6 +317,14 @@ have to be rediscovered from scratch, not so it can be skipped.
 - `npm start` — run the built server
 - `npm run lint` — `tsc --noEmit`
 - `npm test` — build, then every check below, in order
+- `npx tsx test/auditClient.test.ts` — the page's side of an audit against a faked `fetch`: a page-driven
+  audit posts to advance and never polls; a server-driven one is only polled; a lost job on a stateless
+  deployment is `AuditInterrupted` with its exact sentence
+- `npx tsx test/auditClientDriverE2E.test.ts` — the real built server with `AUDIT_DRIVER=client`: nothing runs
+  after the 202; a replayed or abandoned submit spends nothing; advancing to the end makes exactly the planned
+  calls; two simultaneous advances give one `advanced` and one `busy` and one real call; a job on another
+  instance of a stateless deployment is a typed 404; advances are not counted by the per-minute limiter; an
+  undriven audit stops holding a concurrent-audit slot (needs a current `dist/`)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
   quota-breaker rule (including the several-engine cases no end-to-end test can reach)
 - `npx tsx test/auditStepsE2E.test.ts` — the real built server, a fake Gemini that counts hits, and the real

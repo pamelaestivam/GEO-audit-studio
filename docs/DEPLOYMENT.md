@@ -109,7 +109,7 @@ own deployment (section 6).
 | `SESSION_SECRET` | yes (production) | Signs sessions. 32+ characters. Rotating it signs everyone out |
 | `ACCESS_CODES` | yes (production) | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
 | `AUDIT_FORCE_STEP_EXCEPTION` | **never in production** | Test-only: a step kind (`collect`, `narrative` or `finalize`) that is made to throw, to prove a broken step ends the audit as a failed audit with an incident. The server logs a warning at start-up if it is set |
-| `AUDIT_LEASE_MS` | no (600000) | How long one claim on an audit step lasts; it must be longer than the longest a single step can take |
+| `AUDIT_LEASE_MS` | no (600000) | How long one claim on an audit step lasts. Keep it longer than the longest a step can take (a paced call, a rate-limit wait and retries), or a live step can be taken over and its call repeated (counted and recorded, but paid for) |
 | `AUDIT_FORCE_INVARIANT_VIOLATION` | **never in production** | Test-only: `1` makes every audit fail its consistency check, to prove the failure path. The server logs a warning at start-up if it is set |
 | `TRUST_PROXY` | no (0) | Reverse proxies in front of the server (1 on Render/Fly/nginx). **Leave at 0 when exposed directly**: otherwise anyone can send their own `X-Forwarded-For` and dodge every per-IP limit. Too low behind a proxy = all visitors throttled together (safe, but wrong) |
 | `USER_LOOKUPS_PER_HOUR` | no (30) | Brand detection, query suggestions and added queries per person per hour (per process; resets on restart) |
@@ -123,6 +123,8 @@ own deployment (section 6).
 | `USER_AUDITS_PER_DAY` | no (10) | Rolling 24h audits **per access code**. People sharing a code share this allowance; changing the email does not reset it. `0` disables |
 | `GLOBAL_AUDITS_PER_DAY` | no (100) | Rolling 24h audits for everyone. `0` disables |
 | `MAX_CONCURRENT_AUDITS` | no (2) | Audits running at once (they share one quota) |
+| `AUDIT_DRIVER` | no (`client` on Vercel, else `inline`) | Who runs an audit's steps. `inline`: this server, after answering. `client`: nothing runs after any response; the page asks for one step at a time (right for serverless, where work after the response can be frozen). Either way each step is recorded. On Vercel with the memory store a job lives only in the instance that took it, so a request that lands on another instance finds no job and the audit is reported as interrupted (see `docs/RELIABILITY.md`); a durable database is what makes it recoverable |
+| `AUDIT_STALL_MS` | no (180000) | A page-driven audit nobody has touched for this long stops holding one of the concurrent-audit slots (an abandoned page). Server-driven audits never do. Must be a positive number; anything else is ignored with a warning in the log |
 | `MAX_AUDIT_QUERIES` | no (8) | Queries per audit |
 | `RATE_LIMIT_PER_MIN` / `AUTH_RATE_LIMIT_PER_MIN` | no (30 / 10) | Per-IP request limits. `0` disables |
 | `SESSION_TTL_HOURS` | no (168) | Session length |
