@@ -3,7 +3,7 @@
  * quota-breaker rule. The server-level proof is test/auditStepsE2E.test.ts; this pins the rules, including the
  * several-engine cases no end-to-end test can reach (only Gemini can be faked). Run: npx tsx test/auditSteps.test.ts
  */
-import { evidenceByQueryFromSteps, planSteps, skipForBreaker, startsQuestion, queryingProgress, analysingProgress } from '../src/auditSteps';
+import { evidenceByQueryFromSteps, planSteps, skipForBreaker, startsQuestion, queryingProgress, analysingProgress, nextStepAfterMs, pauseBefore, summariseSteps, PAUSE_BETWEEN_QUESTIONS_MS, PAUSE_BEFORE_ANALYSIS_MS } from '../src/auditSteps';
 import type { JobStep } from '../src/store';
 
 let failures = 0;
@@ -55,6 +55,22 @@ check('a question whose first step was skipped skips its remaining steps too', s
 
 check('progress while collecting question 2 of 3: two done', queryingProgress(1, 3), { phase: 'querying', done: 1, total: 3 });
 check('progress once collection is over', analysingProgress(3), { phase: 'analysing', done: 3, total: 3 });
+
+// ---- the pauses a page-driven audit waits between steps, and how far an audit has got
+check('no pause before the first question', pauseBefore({ kind: 'collect', queryIndex: 0 }, true), 0);
+check('a pause before a later question starts', pauseBefore({ kind: 'collect', queryIndex: 1 }, true), PAUSE_BETWEEN_QUESTIONS_MS);
+check('no pause between two engines of the same question', pauseBefore({ kind: 'collect', queryIndex: 1 }, false), 0);
+check('a pause before the analysis, none before the finish, none with nothing next', [pauseBefore({ kind: 'narrative' }, false), pauseBefore({ kind: 'finalize' }, false), pauseBefore(undefined, false)], [PAUSE_BEFORE_ANALYSIS_MS, 0, 0]);
+check('next pause from the steps: the next question\'s first step waits', nextStepAfterMs(steps({ 'collect:0:Gemini': 'done', 'collect:0:ChatGPT': 'done' })), PAUSE_BETWEEN_QUESTIONS_MS);
+check('...the next engine of the same question does not', nextStepAfterMs(steps({ 'collect:0:Gemini': 'done' })), 0);
+check('...a step that is leased (in progress) is the next one for this purpose', nextStepAfterMs(steps({ 'collect:0:Gemini': 'done', 'collect:0:ChatGPT': 'done', 'collect:1:Gemini': 'leased' })), PAUSE_BETWEEN_QUESTIONS_MS);
+check('...before the analysis it waits the analysis pause; nothing left waits nothing', [nextStepAfterMs(steps({ 'collect:0:Gemini': 'done', 'collect:0:ChatGPT': 'done', 'collect:1:Gemini': 'done', 'collect:1:ChatGPT': 'done' })), nextStepAfterMs(steps(Object.fromEntries(planned.map((p) => [p.key, 'done'])) as any))], [PAUSE_BEFORE_ANALYSIS_MS, 0]);
+const started = steps({ 'collect:0:Gemini': 'done', 'collect:0:ChatGPT': 'leased' });
+started[1].callStartedAt = 5;
+check('the summary counts steps in a final state, planned calls, and a call that started but did not finish', summariseSteps(started), { done: 1, total: 6, plannedCalls: 5, callsMade: 2, repeatedCalls: 0 });
+started[2].repeatedCalls = 2;
+check('...and repeated calls', summariseSteps(started).repeatedCalls, 2);
+check('...skipped and failed steps count as finished but not as calls made', summariseSteps(steps({ 'collect:0:Gemini': 'skipped', 'collect:0:ChatGPT': 'failed' })), { done: 2, total: 6, plannedCalls: 5, callsMade: 0, repeatedCalls: 0 });
 
 console.log(failures === 0 ? '\nAll audit step checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

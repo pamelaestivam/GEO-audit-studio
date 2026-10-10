@@ -10,7 +10,10 @@
  *    moves by exactly one;
  *  - a job on another instance of a stateless deployment is a typed 404, and nothing is spent;
  *  - advancing is not counted by the per-minute limiter, submitting still is;
- *  - an audit nobody is driving stops holding a concurrent-audit slot.
+ *  - an audit nobody is driving stops holding a concurrent-audit slot (and a server-driven one never does);
+ *  - advancing is refused for another person's job, with no sign-in, for a server-driven job and for a stopped one;
+ *  - a first advance the page gave up on is not repeated by the next one;
+ *  - an audit abandoned after it spent calls still counts against the daily allowance.
  *
  * Needs a current dist/. Run: npx tsx test/auditClientDriverE2E.test.ts
  */
@@ -19,7 +22,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
-import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { TEST_AUTH_ENV, installAuthFetch, loginAs } from './authHelper';
 
 installAuthFetch();
 
@@ -84,6 +87,12 @@ async function main() {
   const slots = start({ MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '1000' });
   const mem1 = start({}, false);
   const mem2 = start({}, false);
+  const inline = start({ AUDIT_DRIVER: 'inline', MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '500' });
+  const reaper = start({ JOB_MAX_RUN_MS: '1500' });
+  const budget = start({ USER_AUDITS_PER_DAY: '2', JOB_MAX_RUN_MS: '1500', MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '500' });
+  const aborter = start({});
+  const owners = start({});
+  const badStall = start({ MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '0' });
 
   const submit = async (base: string, key?: string) => {
     const res = await fetch(`${base}/api/audit/run`, {
@@ -107,7 +116,7 @@ async function main() {
   };
 
   try {
-    for (const s of [main1, limited, slots, mem1, mem2]) {
+    for (const s of [main1, limited, slots, mem1, mem2, inline, reaper, budget, aborter, owners, badStall]) {
       for (let i = 0; i < 80; i++) {
         try {
           if ((await fetch(`${s.base}/api/health`)).ok) break;
@@ -186,6 +195,86 @@ async function main() {
     check('with one slot, a second audit is refused while the first is fresh', [s1.status, s2.status], [202, 429]);
     await sleep(1500);
     check('...and once the first has been left untouched past the stall window it no longer holds the slot', (await submit(slots.base, 's-3')).status, 202);
+
+    // ---- a stall window that is not a positive number is ignored (the default applies), never "everything is stale"
+    const b1 = await submit(badStall.base, 'bs-1');
+    await sleep(300);
+    const b2 = await submit(badStall.base, 'bs-2');
+    check('AUDIT_STALL_MS=0 does not switch the concurrent-audit cap off', [b1.status, b2.status], [202, 429]);
+
+    // ---- a server-driven audit is never released by the stall window, and advancing it does nothing
+    mode = 'slow';
+    before = fake.hits();
+    const i1 = await submit(inline.base, 'i-1');
+    await sleep(900);
+    const i2 = await submit(inline.base, 'i-2');
+    check('a server-driven audit keeps its slot while it works, even past the stall window', [i1.body.driver, i1.status, i2.status], ['inline', 202, 429]);
+    const pushed = await advance(inline.base, i1.body.jobId);
+    check('advancing a server-driven audit is a no-op', pushed.body.outcome, 'idle');
+    let fin: any = null;
+    for (let i = 0; i < 60 && fin?.status !== 'done'; i++) {
+      await sleep(250);
+      fin = await (await fetch(`${inline.base}/api/audit/job/${i1.body.jobId}`)).json();
+    }
+    check('...and it finishes with exactly its own planned calls: nobody else spent for it', [fin.status, fake.hits() - before], ['done', 2]);
+    mode = 'ok';
+
+    // ---- who may advance a job
+    const mineJob = await submit(owners.base, 'own-1');
+    check('(the job for the ownership checks was accepted)', mineJob.status, 202);
+    before = fake.hits();
+    const otherToken = await loginAs(owners.base, 'someone-else@example.com');
+    const asOther = await fetch(`${owners.base}/api/audit/job/${mineJob.body.jobId}/advance`, { method: 'POST', headers: { Authorization: `Bearer ${otherToken}` } });
+    const otherBody: any = await asOther.json();
+    check('another person cannot advance (or read) a job that is not theirs: a typed 404 and nothing spent', [asOther.status, otherBody.code, otherBody.report, fake.hits() - before], [404, 'job_not_found', undefined, 0]);
+    const noAuth = await fetch(`${owners.base}/api/audit/job/${mineJob.body.jobId}/advance`, { method: 'POST', headers: { 'X-Test-No-Auth': '1' } });
+    check('advancing without signing in is refused, and nothing is spent', [noAuth.status, fake.hits() - before], [401, 0]);
+
+    // ---- a job the reaper has stopped is not continued by a late advance
+    const old = await submit(reaper.base, 'old-1');
+    await sleep(2000);
+    before = fake.hits();
+    const late = await advance(reaper.base, old.body.jobId);
+    check('a job stopped for taking too long stays stopped when the page asks again, and nothing is spent', [late.body.status, late.body.outcome, fake.hits() - before], ['error', 'idle', 0]);
+
+    // ---- a first advance the page gave up on (its request aborted) is not repeated by the next one
+    mode = 'slow';
+    const slowJob = await submit(aborter.base, 'abort-1');
+    check('(the job for this check was accepted)', slowJob.status, 202);
+    before = fake.hits();
+    const ctl = new AbortController();
+    const firstTry = fetch(`${aborter.base}/api/audit/job/${slowJob.body.jobId}/advance`, { method: 'POST', signal: ctl.signal }).catch(() => 'aborted');
+    await sleep(400);
+    ctl.abort();
+    check('the page gave up on its first request', await firstTry, 'aborted');
+    const second = await advance(aborter.base, slowJob.body.jobId);
+    check('the next advance is told the step is still being worked on, and no second call is made', [second.body.outcome, fake.hits() - before], ['busy', 1]);
+    await sleep(1500);
+    const third = await advance(aborter.base, slowJob.body.jobId);
+    check('once that step has finished the next one proceeds (the analysis), with one more call', [third.body.outcome, fake.hits() - before], ['advanced', 2]);
+    mode = 'ok';
+
+    // ---- an audit abandoned after it spent calls still counts against the daily allowance
+    const budgetStatuses: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const sub = await submit(budget.base, `b-${i}`);
+      budgetStatuses.push(sub.status);
+      if (sub.status === 202) await advance(budget.base, sub.body.jobId); // one step: a real call is made, then the page goes away
+      await sleep(2000);
+    }
+    check('two audits abandoned after their first step used the allowance of two: the third is refused', budgetStatuses, [202, 202, 429]);
+    const idleBudget = start({ USER_AUDITS_PER_DAY: '1', JOB_MAX_RUN_MS: '1500', MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '500' });
+    for (let i = 0; i < 80; i++) {
+      try {
+        if ((await fetch(`${idleBudget.base}/api/health`)).ok) break;
+      } catch {
+        /* not up yet */
+      }
+      await sleep(250);
+    }
+    await submit(idleBudget.base, 'ib-0'); // never advanced: spent nothing
+    await sleep(2000);
+    check('...but an audit abandoned before any call was made spent nothing and does not', (await submit(idleBudget.base, 'ib-1')).status, 202);
   } finally {
     for (const p of procs) p.kill();
     fake.close();

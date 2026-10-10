@@ -378,12 +378,26 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
 
   // --- an audit nobody is touching stops counting as running (it must not hold a concurrency slot)
   const h = await make();
-  await h.createPlannedJob(job({ id: 'hb1', startedAt: NOW - 10_000 }), PLAN);
-  await h.createPlannedJob(job({ id: 'hb2', startedAt: NOW - 10_000 }), PLAN);
+  await h.createPlannedJob(job({ id: 'hb1', startedAt: NOW - 10_000, plan: { driver: 'client' } }), PLAN);
+  await h.createPlannedJob(job({ id: 'hb2', startedAt: NOW - 10_000, plan: { driver: 'client' } }), PLAN);
   await h.touchJob('hb2', NOW - 500);
   check(t('without a stall window every running job counts'), await h.countRunning(60_000, NOW), 2);
   check(t('a job nobody has touched since it started stops counting past the window; a recently touched one still counts'), [await h.countRunning(60_000, NOW, 2000), await h.countRunning(60_000, NOW, 100), await h.countRunning(60_000, NOW, 20_000)], [1, 0, 2]);
   check(t('a job older than the maximum age never counts, touched or not'), await h.countRunning(5_000, NOW, 20_000), 0);
+  // ...but only a job the PAGE drives can be abandoned: one the server drives is being worked on however long a step takes
+  await h.createPlannedJob(job({ id: 'hb3', startedAt: NOW - 10_000, plan: { driver: 'inline' } }), PLAN);
+  check(t('a server-driven job keeps its slot however long since it was touched'), [await h.countRunning(60_000, NOW, 100), await h.countRunning(60_000, NOW, 2000)], [1, 2]);
+
+  // --- a reaped audit that already made an engine call keeps counting against the allowance; one that never did does not
+  const rp = await make();
+  await rp.createPlannedJob(job({ id: 'rp-idle', startedAt: NOW - 100 * 60 * 1000, plan: { driver: 'client' } }), PLAN);
+  await rp.createPlannedJob(job({ id: 'rp-spent', startedAt: NOW - 100 * 60 * 1000, plan: { driver: 'client' } }), PLAN);
+  const rc = await rp.claimStep('rp-spent', 'A', LEASE, NOW - 100 * 60 * 1000, 3);
+  await rp.markCallStarted('rp-spent', 0, 'A', (rc as any).step.attempt, NOW - 100 * 60 * 1000);
+  await rp.failStuck(15 * 60 * 1000, 'took too long', NOW);
+  check(t('a reaped audit that never reached an engine is free'), [(await rp.getJob('rp-idle'))?.status, (await rp.getJob('rp-idle'))?.billable], ['error', false]);
+  check(t('a reaped audit that had started an engine call stays billable'), [(await rp.getJob('rp-spent'))?.status, (await rp.getJob('rp-spent'))?.billable], ['error', true]);
+  check(t('...and so the daily count includes it and not the idle one'), await rp.countJobsSince(NOW - 24 * 60 * 60 * 1000 - 100 * 60 * 1000), 1);
 
   // --- compacting a finished job drops the stored answers but keeps the rows
   await s.createPlannedJob(job({ id: 'cp1' }), PLAN);

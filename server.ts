@@ -1581,8 +1581,15 @@ Return valid JSON matching the schema.`;
    * a rate-limit wait and the retries) or a live step would be taken over while it works.
    */
   const AUDIT_LEASE_MS = Number(process.env.AUDIT_LEASE_MS) > 0 ? Number(process.env.AUDIT_LEASE_MS) : 10 * 60 * 1000;
-  /** A running audit nobody has touched for this long stops holding one of the concurrent-audit slots. */
-  const AUDIT_STALL_MS = Number(process.env.AUDIT_STALL_MS || 3 * 60 * 1000);
+  /** A running audit the PAGE drives, and nobody has touched for this long, stops holding one of the concurrent-audit slots. */
+  const AUDIT_STALL_MS = (() => {
+    const raw = process.env.AUDIT_STALL_MS;
+    if (raw === undefined || raw === '') return 3 * 60 * 1000;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    console.warn(`AUDIT_STALL_MS=${JSON.stringify(raw)} is not a positive number of milliseconds; using 180000.`);
+    return 3 * 60 * 1000;
+  })();
   /**
    * Who drives an audit's steps. `inline`: this process, after the response (right for an always-on host).
    * `client`: nothing runs after any response; the page asks for one step at a time (right for a serverless
@@ -1976,8 +1983,8 @@ Return valid JSON matching the schema.`;
       const plan = job.plan as StoredAuditPlan | undefined;
       let outcome: AdvanceOutcome = 'idle';
       if (job.status === 'running' && plan?.driver === 'client') {
-        // A holder name that is new for every request: two requests for one job are two different holders, so
-        // the lease (and the attempt fence) keeps them apart.
+        // A holder name that is new for every request. The lease decides who may work on a step; the holder only
+        // marks which request started a call (`markCallStarted`).
         const holder = `client:${store.instanceId}:${crypto.randomBytes(6).toString('hex')}`;
         outcome = await advanceJob(job.id, holder, async () => undefined);
       }

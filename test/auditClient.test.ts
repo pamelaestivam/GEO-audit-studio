@@ -8,7 +8,7 @@
  *
  * Run with: npx tsx test/auditClient.test.ts
  */
-import { AuditInterrupted, interruptedMessage, runAuditJob } from '../src/auditClient';
+import { AuditInterrupted, driveWaitMs, interruptedMessage, runAuditJob } from '../src/auditClient';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -96,7 +96,7 @@ async function main() {
   }
   check('a lost job on a stateless deployment throws AuditInterrupted', [err instanceof AuditInterrupted, err?.reason], [true, 'state_lost']);
   check('...with the exact sentence, how far it got, and what running again can cost', err?.message,
-    'The server that was running your audit was replaced before it finished, and this deployment does not keep saved state, so the audit could not continue. It had finished 1 of 4 steps and made at least 1 engine call. Nothing from the interrupted run is shown as a measurement. Running it again can use up to 3 engine calls. Please run it again.');
+    'The server that answered no longer had your audit, and this deployment does not keep saved state, so the audit could not continue. It had finished 1 of 4 steps and made at least 1 engine call. Nothing from the interrupted run is shown as a measurement. Running it again can use up to 3 engine calls. Please run it again.');
   check('...and the sentence does not claim a result, a resume, or that nothing was spent', /resume|continue where|nothing was spent|no calls/i.test(err?.message || ''), false);
 
   // ---- the same 404 on a deployment that keeps state is the ordinary expiry, not "interrupted"
@@ -110,8 +110,60 @@ async function main() {
   check('a missing job on a deployment that keeps state is an ordinary error', [err instanceof AuditInterrupted, err?.message], [false, 'It expired.']);
 
   // ---- before any step reported, the sentence still reads whole
-  check('the interrupted sentence with nothing known yet', interruptedMessage(null), 'The server that was running your audit was replaced before it finished, and this deployment does not keep saved state, so the audit could not continue. Nothing from the interrupted run is shown as a measurement. Please run it again.');
+  check('the interrupted sentence with nothing known yet says so, and does not claim nothing was spent', interruptedMessage(null), 'The server that answered no longer had your audit, and this deployment does not keep saved state, so the audit could not continue. It is not known whether any engine call had been made. Nothing from the interrupted run is shown as a measurement. Please run it again.');
   check('singular wording for one call', /made at least 1 engine call\./.test(interruptedMessage({ done: 1, total: 3, plannedCalls: 1, callsMade: 1, repeatedCalls: 0 })), true);
+
+  // ---- how long the page waits between requests
+  check('after a step that advanced, the server\'s own pause is used (including none)', [driveWaitMs('advanced', 0), driveWaitMs('advanced', 1200)], [0, 1200]);
+  check('after a busy answer it never waits less than a second, so a held step is not hammered', [driveWaitMs('busy', 0), driveWaitMs('busy', 5), driveWaitMs('busy', 3000)], [1000, 1000, 3000]);
+  check('after "nothing to do" it waits a full poll, whatever the server said', [driveWaitMs('idle', 0), driveWaitMs('gone', 0), driveWaitMs(undefined, undefined)], [2500, 2500, 1000]);
+
+  // ---- the page honours the pause the server asks for, and does not hammer on an idle answer
+  {
+    const stamps: number[] = [];
+    fakeFetch((req, n) => {
+      if (req.path === '/api/audit/run') return { status: 202, body: { jobId: 'j6', status: 'running', driver: 'client' } };
+      stamps.push(Date.now());
+      if (n === 2) return { status: 200, body: { status: 'running', elapsedMs: 10, progress: null, outcome: 'advanced', nextStepAfterMs: 400, steps: STEPS(1) } };
+      return { status: 200, body: { status: 'done', report: REPORT, saved: false, outcome: 'finished', nextStepAfterMs: 0, steps: STEPS(4) } };
+    });
+    await runAuditJob({ businessName: 'X' });
+    check('the page waits the pause the server asked for before the next request', stamps[1] - stamps[0] >= 380, true);
+  }
+
+  // ---- a gateway error is a blip, not the end of the audit
+  {
+    const c = fakeFetch((req, n) => {
+      if (req.path === '/api/audit/run') return { status: 202, body: { jobId: 'j7', status: 'running', driver: 'client' } };
+      if (n === 2) return { status: 504, body: { error: 'gateway timeout' } };
+      return { status: 200, body: { status: 'done', report: REPORT, saved: false, outcome: 'finished', nextStepAfterMs: 0, steps: STEPS(4) } };
+    });
+    const r = await runAuditJob({ businessName: 'X' });
+    check('a 504 on a step is asked again and the audit still finishes', [r.report.id, c.length], ['a1', 3]);
+  }
+  {
+    fakeFetch((req) => (req.path === '/api/audit/run' ? { status: 202, body: { jobId: 'j8', status: 'running', driver: 'client' } } : { status: 503, body: {} }));
+    err = null;
+    try {
+      await runAuditJob({ businessName: 'X' });
+    } catch (e) {
+      err = e;
+    }
+    check('four gateway errors in a row end it with a sentence that says it is paused, not running', /paused/.test(err?.message || '') && !/may still be running/.test(err?.message || ''), true);
+  }
+
+  // ---- asking for a step is never retried inside the request (a retry would repeat a paid call)
+  {
+    let attempts = 0;
+    (globalThis as any).fetch = async (path: string, init: RequestInit = {}) => {
+      if (path === '/api/audit/run') return new Response(JSON.stringify({ jobId: 'j9', status: 'running', driver: 'client' }), { status: 202 });
+      attempts++;
+      if (attempts === 1) throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify({ status: 'done', report: REPORT, saved: false, outcome: 'finished', nextStepAfterMs: 0, steps: STEPS(4) }), { status: 200 });
+    };
+    await runAuditJob({ businessName: 'X' });
+    check('a failed advance request is counted once by the page (no hidden retry inside the request)', attempts, 2);
+  }
 
   console.log(failures === 0 ? '\nAll audit client checks passed.' : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
