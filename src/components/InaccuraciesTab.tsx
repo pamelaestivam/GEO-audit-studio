@@ -8,9 +8,11 @@ interface InaccuraciesTabProps {
   onSelectRemediationTask?: (taskId: string) => void;
   /** False when the qualitative analysis failed; an empty list is then not a finding. */
   assessed?: boolean;
+  /** Claims the analysis reported that could not be tied to a captured answer, and were left out. */
+  discarded?: number;
 }
 
-export const InaccuraciesTab: React.FC<InaccuraciesTabProps> = ({ inaccuracies = [], onSelectRemediationTask, assessed = true }) => {
+export const InaccuraciesTab: React.FC<InaccuraciesTabProps> = ({ inaccuracies = [], onSelectRemediationTask, assessed = true, discarded = 0 }) => {
   const [severityFilter, setSeverityFilter] = useState<string>('all');
 
   const safeInaccuracies = inaccuracies || [];
@@ -70,7 +72,17 @@ export const InaccuraciesTab: React.FC<InaccuraciesTabProps> = ({ inaccuracies =
       </div>
 
       {/* Inaccuracies List */}
-      {filtered.length === 0 ? (
+      {discarded > 0 && (
+        <p className="text-xs text-amber-300/90 leading-relaxed">
+          The analysis reported {discarded} {discarded === 1 ? 'claim' : 'claims'} that could not be tied to a captured answer
+          that names your brand, so {discarded === 1 ? 'it is' : 'they are'} not listed or counted. We cannot say there are
+          no inaccuracies; re-run the audit to look again.
+        </p>
+      )}
+
+      {filtered.length === 0 && discarded > 0 ? null : filtered.length === 0 && safeInaccuracies.length > 0 ? (
+        <p className="text-sm text-slate-400">No claims at this severity. Choose another filter above.</p>
+      ) : filtered.length === 0 ? (
         <EmptyFindings
           assessed={assessed}
           subject="inaccuracies"

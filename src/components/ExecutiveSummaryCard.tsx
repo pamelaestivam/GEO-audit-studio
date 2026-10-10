@@ -291,7 +291,9 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
           </div>
           <p className="text-[11px] text-slate-400 mt-1">
             {counts
-              ? `${counts.inaccuracies} inaccuracies & ${counts.omissions} intent omissions`
+              ? `${counts.inaccuracies} inaccuracies & ${counts.omissions} intent omissions${
+                  counts.unattributed > 0 ? `; ${counts.unattributed} reported ${counts.unattributed === 1 ? 'claim' : 'claims'} not listed (could not be tied to an answer)` : ''
+                }`
               : 'Not assessed'}
           </p>
         </button>

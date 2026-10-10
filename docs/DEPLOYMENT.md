@@ -29,7 +29,7 @@ You need:
    limits; enabling billing on the key is the one lever that raises them.
 2. **A decision about who gets in.** Access is by email + an **access code you
    hand out**, written as `label=code` pairs in `ACCESS_CODES`, e.g.
-   `anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa` (8+ characters, no `,` or `=` inside a code).
+   `anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa` (8+ characters, no `,` inside a code; the first `=` separates the label from the code, so a labelled code may itself contain `=`).
    **How privacy works - read this:** saved audits belong to the pair
    *(label, email)*. Two people on different codes cannot see each other's audits
    even if one types the other's email. But **anyone holding a code can sign in
@@ -85,7 +85,7 @@ the per-IP limits or throttles everyone together).
 The image defaults `DATA_DIR=/data`; **the volume is what makes audits survive**
 - without `-v`, they are lost when the container is replaced. Put TLS in front
 (the host's proxy, Caddy, Cloudflare); the app itself speaks plain HTTP and
-trusts one proxy hop for client IPs.
+trusts NO proxy for client IPs unless you set `TRUST_PROXY` (the image does not).
 
 CI builds this image, runs it with a volume, smoke-tests it, restarts it on the
 same volume and smoke-tests again. The Dockerfile could not be built where it
@@ -168,9 +168,20 @@ on a host that cannot keep the process alive (see `TECH_DEBT.md` 1.4c).
   `localStorage` (so a script injected into the page could read it) and the app
   sets no `Content-Security-Policy` yet. Sessions expire (7 days by default) and
   end when their code is removed.
-- **Backups:** everything is in `DATA_DIR/geo-audit.sqlite` (plus `-wal`/`-shm`
-  while running). Copy it with `sqlite3 geo-audit.sqlite ".backup backup.sqlite"`
-  or use your host's disk snapshots. Nothing in this repo schedules backups.
+- **Backups:** the database runs in WAL mode, so a running server's recent writes
+  live in `geo-audit.sqlite-wal`, not in `geo-audit.sqlite`. **Copying only
+  `geo-audit.sqlite` restores an empty or stale database** (measured: one audit,
+  a 4 KB main file, 119 KB in the WAL, nothing visible after restoring the main
+  file alone). Take a snapshot with `node scripts/backup.mjs` (inside the
+  container: `docker exec <container> node scripts/backup.mjs`, which names the file
+  `DATA_DIR/backups/geo-audit-<timestamp>.sqlite`; a fixed output name works once and
+  then refuses to overwrite, so for cron leave the name off or add a date), which
+  writes one self-contained, integrity-checked file, never overwrites or deletes an
+  existing backup, and is safe while the server runs. Nothing prunes
+  `DATA_DIR/backups`: delete old snapshots yourself, and copy them off the host; or use disk snapshots of the whole `DATA_DIR`. To restore: stop the
+  server, put the snapshot at `DATA_DIR/geo-audit.sqlite`, delete any `-wal` and
+  `-shm` beside it, start. Nothing in this repo schedules backups or copies them
+  off the host: run the script from your host's cron and copy the file elsewhere.
 - **Deploys:** a deploy replaces the instance. With a single disk-backed instance
   that is a short outage, and any audit running at that moment is marked failed
   with a sentence ("The server restarted while this audit was running...") rather

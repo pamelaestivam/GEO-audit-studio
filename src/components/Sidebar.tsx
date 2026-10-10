@@ -70,7 +70,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'inaccuracies' as TabType,
       label: 'Inaccuracies & Hallucinations',
       icon: ShieldAlert,
-      badge: totalInaccuracies > 0 ? totalInaccuracies : null,
+      // '?' when the analysis reported claims it could not attribute: not a clean zero.
+      badge: totalInaccuracies > 0 ? totalInaccuracies : (audit?.inaccuraciesDiscarded ?? 0) > 0 ? '?' : null,
       badgeStyle: 'bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30',
       activeColor: 'border-l-4 border-rose-500 bg-rose-500/10 text-rose-400',
     },

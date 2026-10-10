@@ -119,7 +119,7 @@ check('counts are withheld on a failed audit', findingCounts({ degraded: true, i
 check(
   'a genuine zero is a zero',
   findingCounts({ degraded: false, narrativeAvailable: true, inaccuracies: [], omissions: [] }),
-  { inaccuracies: 0, omissions: 0 }
+  { inaccuracies: 0, omissions: 0, unattributed: 0 }
 );
 
 check('assessed: normal audit', wasAssessed({ degraded: false, narrativeAvailable: true }), true);
@@ -180,6 +180,11 @@ check('one question behind several answers reads "1 reading", not "1 readings"',
 check('2 of 3 answers from a single question: the range is wide (0%-80%) and still contains the 67% headline', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: 2, queriesAttempted: 1, questionsAnswered: 1 }), '0%-80%');
 check('more mentions than answers (corrupt counts) gives no range, not "20%-167%"', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: 5, queriesAttempted: 1 }), null);
 check('negative mentions give no range', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: -1, queriesAttempted: 1 }), null);
+
+check('accuracy with discarded claims is labelled an upper bound', /at most this, since 2 reported claims/.test(describeAccuracy({ degraded: false, narrativeAvailable: true, accuracyRate: 100, inaccuraciesDiscarded: 2 }).caption), true);
+check('accuracy without discards keeps the plain caption', /no flagged inaccuracy \(model judgement/.test(describeAccuracy({ degraded: false, narrativeAvailable: true, accuracyRate: 100 }).caption), true);
+
+check('discarded claims are carried as unattributed, never as a clean zero', findingCounts({ degraded: false, narrativeAvailable: true, inaccuracies: [], omissions: [], inaccuraciesDiscarded: 2 })?.unattributed, 2);
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
