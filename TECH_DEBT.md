@@ -750,8 +750,12 @@ those files is a re-run, not a regression, but it must be recorded here.
   (`store_busy`), which the server must turn into a sentence (S3/S4). `repeatedCalls` is a lower bound (a
   collector can also retry inside one step). A crash between receiving `exhausted` and closing the job is
   repaired by the next claim reporting it again, not by the store: the engine or the S5 sweeper must close the
-  job. Start-up retries `journal_mode = WAL` and the migrations for about five seconds when several processes
-  open one file together.
+  job. Start-up retries only the `journal_mode = WAL` switch (about two seconds, because SQLite refuses it
+  at once when another process holds the file); the migrations wait on the writer lock instead. Only the
+  `BEGIN IMMEDIATE` paths raise the typed `StoreBusyError`; the plain writes (`updateJob`, `touchJob`,
+  `markCallStarted`, `completeStep`) can still raise a raw 'database is locked'. A late result from a holder
+  whose step was already taken over is refused by design (fencing): the engine must record that as an incident,
+  not drop it silently (S3).
 - **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
   no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and
   slice) has no test that fails if removed; three components each poll the status endpoint.

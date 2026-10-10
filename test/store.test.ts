@@ -321,9 +321,35 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   read.list.push(3);
   check(t('changing the object after storing it, or the object read back, does not change the stored result'), (await s.getJobSteps('p8'))[0].result, { list: [1], n: null });
 
+  // a result that cannot be serialised is refused before anything changes, on both stores
+  await s.createPlannedJob(job({ id: 'p8b' }), PLAN);
+  const cl8b = await s.claimStep('p8b', 'A', LEASE, NOW, 3);
+  const circular: any = {};
+  circular.self = circular;
+  let threw = false;
+  try {
+    await s.completeStep('p8b', 0, (cl8b as any).step.attempt, { state: 'done', result: circular }, NOW + 1);
+  } catch {
+    threw = true;
+  }
+  const after8b = (await s.getJobSteps('p8b'))[0];
+  check(t('completing with a result that cannot be stored throws and leaves the step leased, with no result'), [threw, after8b.state, after8b.result, after8b.finishedAt, after8b.leaseHolder], [true, 'leased', undefined, undefined, 'A']);
+  let badKind = false;
+  try {
+    await s.createPlannedJob(job({ id: 'bad2' }), [{ key: 'x', kind: 'bogus' } as any]);
+  } catch {
+    badKind = true;
+  }
+  check(t('a plan with an unknown step kind is refused'), [badKind, await s.getJob('bad2')], [true, null]);
+
   // incidents are bounded sentences, and a limit that is not a whole number is not an error
   await s.recordIncident({ jobId: 'p8', at: NOW + 9, kind: 'invariant', detail: 'x'.repeat(5000) });
   check(t('an incident detail is cut to 500 characters'), (await s.listIncidents({ jobId: 'p8' }))[0].detail.length, 500);
+  const emoji = '\u{1F600}'.repeat(600);
+  await s.recordIncident({ jobId: 'p8', at: NOW + 10, kind: 'invariant', detail: emoji });
+  const cutEmoji = (await s.listIncidents({ jobId: 'p8' }))[0].detail;
+  check(t('cutting an incident never leaves half of an emoji'), [Array.from(cutEmoji).length, /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(cutEmoji)], [500, false]);
+  check(t('a limit that is not a whole number also means the default on a job\'s own incidents'), (await s.listIncidents({ jobId: 'p3', limit: -1 })).length, 2);
   const allCount = (await s.listIncidents()).length;
   check(t('a negative, fractional or NaN limit means the default, on both stores'), [(await s.listIncidents({ limit: -1 })).length, (await s.listIncidents({ limit: 2.5 })).length, (await s.listIncidents({ limit: NaN })).length], [allCount, allCount, allCount]);
 
@@ -334,7 +360,7 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   await s.touchJob('p9', NOW + 5);
   check(t('a touch without a phase still records the time and this instance, and keeps the phase'), [(await s.getJob('p9'))?.heartbeatAt, (await s.getJob('p9'))?.instanceId === s.instanceId, (await s.getJob('p9'))?.phase], [NOW + 5, true, 'planned']);
   await s.updateJob('p9', { phase: 'analysing', failCode: null });
-  check(t('a phase can be updated and a failure code cleared'), [(await s.getJob('p9'))?.phase, (await s.getJob('p9'))?.failCode], ['analysing', undefined]);
+  check(t('a phase can be updated and a failure code cleared (it reads back as absent, not null)'), [(await s.getJob('p9'))?.phase, (await s.getJob('p9'))?.failCode === undefined], ['analysing', true]);
 
   // --- pruning removes a pruned job's steps and old incidents
   const before = NOW + 1000;
@@ -354,6 +380,7 @@ function dir0() {
 }
 
 async function main() {
+  check('two memory stores have different instance ids', new MemoryStore().instanceId !== new MemoryStore().instanceId, true);
   await suite('memory', async () => new MemoryStore());
   const { DatabaseSync } = (await import('node:sqlite')) as any;
   await suite('sqlite', async () => new SqliteStore(DatabaseSync, ':memory:'));
@@ -491,6 +518,37 @@ async function main() {
     check('...and nothing was half written: the next claim works as attempt 1', [(await waiter.claimStep('bz', 'A', LEASE, NOW, 3) as any).outcome, (await waiter.getJobSteps('bz'))[0].attempt], ['claimed', 1]);
     holder.close();
     waiter.close();
+  }
+
+  // --- the switch to WAL is refused at once while another process holds the file: it is retried, not fatal
+  {
+    const file = path.join(dir0(), 'wal-wait.sqlite');
+    const raw = new DatabaseSync(file);
+    raw.exec('CREATE TABLE t (x)');
+    raw.close();
+    const script = path.join(dir0(), 'hold.mts');
+    fs.writeFileSync(
+      script,
+      `const { DatabaseSync } = await import('node:sqlite');
+       const db = new DatabaseSync(process.argv[2]);
+       db.exec('BEGIN IMMEDIATE');
+       console.log('held');
+       await new Promise((r) => setTimeout(r, 700));
+       db.exec('COMMIT');`
+    );
+    const holder = spawn('node', ['--import', 'tsx', script, file], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, NODE_NO_WARNINGS: '1' } });
+    await new Promise<void>((resolve) => holder.stdout.on('data', (d) => String(d).includes('held') && resolve()));
+    const t0 = Date.now();
+    let opened = false;
+    try {
+      const st = new SqliteStore(DatabaseSync, file);
+      opened = st.info().durable;
+      st.close();
+    } catch {
+      opened = false;
+    }
+    check('opening a file another process is holding waits for it and then starts (it does not fail)', [opened, Date.now() - t0 >= 300], [true, true]);
+    await new Promise((r) => holder.on('close', r));
   }
 
   // --- four real processes opening one old database at the same moment: every one starts, the schema is upgraded once

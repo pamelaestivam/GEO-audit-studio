@@ -217,7 +217,7 @@ export interface Store {
   findJobByKey(owner: string, idemKey: string): Promise<StoredJob | null>;
   updateJob(
     id: string,
-    patch: Partial<Pick<StoredJob, 'status' | 'progress' | 'result' | 'error' | 'finishedAt' | 'billable' | 'phase' | 'failCode'>>
+    patch: Partial<Pick<StoredJob, 'status' | 'progress' | 'result' | 'error' | 'finishedAt' | 'billable' | 'phase'>> & { failCode?: string | null }
   ): Promise<void>;
   /** Record that something is working on the job now (and which instance), optionally with a phase. */
   touchJob(id: string, now: number, patch?: { phase?: string }): Promise<void>;
@@ -302,18 +302,19 @@ function clampLimit(limit: number | undefined): number {
 }
 
 function cutIncident(detail: string): string {
-  const text = String(detail ?? '');
-  return text.length > MAX_INCIDENT_DETAIL ? `${text.slice(0, MAX_INCIDENT_DETAIL - 3)}...` : text;
+  // Cut by whole characters (code points) so an emoji is never split into a lone half.
+  const chars = Array.from(String(detail ?? ''));
+  return chars.length > MAX_INCIDENT_DETAIL ? `${chars.slice(0, MAX_INCIDENT_DETAIL - 3).join('')}...` : chars.join('');
 }
 
-/** Retry `fn` while the database reports it is locked, for up to about five seconds, sleeping between tries. */
+/** Retry `fn` while the database refuses it as locked, up to 60 tries of 25 to 50 ms (about two seconds), sleeping between. */
 function retryWhileLocked(fn: () => void) {
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
   for (let attempt = 0; ; attempt++) {
     try {
       return fn();
     } catch (err: any) {
-      if (!/locked|busy/i.test(String(err?.message || err)) || attempt >= 100) throw err;
+      if (!/locked|busy/i.test(String(err?.message || err)) || attempt >= 60) throw err;
       Atomics.wait(sleeper, 0, 0, 25 + Math.floor(Math.random() * 25));
     }
   }
@@ -325,7 +326,7 @@ function newInstanceId(): string {
 
 /** A claim result that shares no object with the stored rows. */
 function cloneClaim(r: ClaimResult): ClaimResult {
-  return r.outcome === 'none' ? r : { ...r, step: { ...r.step, result: jsonCopy(r.step.result) } };
+  return r.outcome === 'none' ? r : { ...r, step: { ...r.step } };
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +365,12 @@ export class MemoryStore implements Store {
   }
   async updateJob(id: string, patch: Parameters<Store['updateJob']>[1]) {
     const j = this.jobs.get(id);
-    if (j) Object.assign(j, patch);
+    if (!j) return;
+    const { failCode, ...rest } = patch;
+    Object.assign(j, rest);
+    // null clears the code (it then reads back as undefined, as on SQLite).
+    if (failCode === null) delete j.failCode;
+    else if (failCode !== undefined) j.failCode = failCode;
   }
   async touchJob(id: string, now: number, patch: { phase?: string } = {}) {
     const j = this.jobs.get(id);
@@ -404,8 +410,10 @@ export class MemoryStore implements Store {
   async completeStep(jobId: string, seq: number, attempt: number, c: StepCompletion, now: number) {
     const st = (this.steps.get(jobId) || [])[seq];
     if (!st || st.state !== 'leased' || st.attempt !== attempt) return false;
+    // Copy first: a result that cannot be serialised throws here, before anything changed (as in SQLite).
+    const result = jsonCopy(c.result);
     st.state = c.state;
-    st.result = jsonCopy(c.result);
+    st.result = result;
     st.skipReason = c.skipReason;
     st.errorCode = c.errorCode;
     st.finishedAt = now;
@@ -634,11 +642,12 @@ export class SqliteStore implements Store {
   ) {
     if (filePath !== ':memory:') fs.mkdirSync(path.dirname(filePath), { recursive: true });
     this.db = new DatabaseSync(filePath);
-    // Several processes can start on one file at the same moment. Switching to WAL needs a lock that SQLite
-    // can refuse at once instead of waiting for, so the start-up steps are retried for a few seconds.
+    // Several processes can start on one file at the same moment. Switching to WAL needs a lock that SQLite can
+    // refuse at once instead of waiting for (measured: 4 of 6 four-process starts failed without the retry), so
+    // that one step is retried for about two seconds. The migrations wait on the writer lock instead.
     this.db.exec('PRAGMA busy_timeout = 5000');
     retryWhileLocked(() => this.db.exec('PRAGMA journal_mode = WAL'));
-    retryWhileLocked(() => this.migrate());
+    this.migrate();
   }
 
   private migrate() {
