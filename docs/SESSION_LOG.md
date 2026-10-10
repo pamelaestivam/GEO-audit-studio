@@ -160,3 +160,9 @@ need `ALLOW_PAID_ENGINES=1`, Gemini calls are counted per UTC day with an option
 fails closed on an unreadable value, and a paid key alone now yields a precise reason. A mid-review
 failure was my own doing, not the product's: two full suites ran at once and one rebuilt `dist/` under
 the other (lesson: one suite at a time per checkout, see `docs/INSIGHTS.md` I-17).
+
+**Step e planned (docs/PLAN_STEP_E.md):** a read-only planning pass sliced the step-wise audit into seven
+small PRs with a boundary test each (counting real fake-Gemini hits, as `quotaEfficiencyE2E` does), the
+risks, and a list of what must not be claimed or built without the durable store or the owner. Its
+honest conclusion: on Vercel with memory-only storage the step-wise design makes a lost audit visible
+(designed to give a sentence rather than a hang or a zero; not built) but cannot make it recoverable; that is row 8 (Supabase, owner O-4).
