@@ -755,7 +755,9 @@ those files is a re-run, not a regression, but it must be recorded here.
   `BEGIN IMMEDIATE` paths raise the typed `StoreBusyError`; the plain writes (`updateJob`, `touchJob`,
   `markCallStarted`, `completeStep`) can still raise a raw 'database is locked'. A late result from a holder
   whose step was already taken over is refused by design (fencing): the engine must record that as an incident,
-  not drop it silently (S3).
+  not drop it silently (S3). If another process holds the writer lock for longer than the 5 s wait while a
+  server opens its database, the open raises `StoreBusyError` and `openStore` falls back to memory for that
+  process (logged, and the public note says the database could not be opened) until it restarts.
 - **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
   no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and
   slice) has no test that fails if removed; three components each poll the status endpoint.
