@@ -736,6 +736,7 @@ those files is a re-run, not a regression, but it must be recorded here.
   no incident id: only a server log line.
 - **"Not counted" strip and panel, and cited-only as its own number** (RELIABILITY step c, second
   half) are not built. Until they are, discarded items are only a count (`inaccuraciesDiscarded`).
+- **The $0 guard counts per process.** `GEMINI_DAILY_CALL_CAP` and the call counter live in memory of one server process; on Vercel each function instance counts alone, so a cap is a brake against loops, not a ceiling on the day's spend, and a restart resets it. The money control is a Google project with no billing account (owner action O-2), which the app cannot see. A durable counter needs the database (PROGRAM row 8).
 - **Browser coverage:** the summary-note line on screen and in the export has no browser test.
 - **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
   no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and

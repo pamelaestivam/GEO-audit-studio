@@ -127,12 +127,13 @@ async function main() {
     const tempPage = await ctx.newPage();
     await tempPage.route('**/api/audit/status', (route) =>
       route.fulfill({
-        json: { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: ['Gemini'], storage: { kind: 'memory', durable: false }, auth: { mode: 'configured' } },
+        json: { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: ['Gemini'], storage: { kind: 'memory', durable: false }, auth: { mode: 'configured' }, spend: { paidEnginesBlocked: ['ChatGPT'], geminiCallsToday: 0, geminiDailyCap: null, scope: 'this server instance only' } },
       })
     );
     await tempPage.goto(BASE);
     assert('when the server reports temporary storage, the sign-in page says so', await appears(tempPage, '[data-testid=storage-notice]'));
     assert('...and tells the person what to do', /Export your report/.test(await tempPage.locator('[data-testid=storage-notice]').innerText()));
+    assert('a paid engine that is switched off is named on the same page', /ChatGPT is set up on this server but switched off/.test(await tempPage.locator('[data-testid=paid-engine-notice]').innerText()));
     await signIn(tempPage, 'tester@example.com', TEST_ACCESS_CODE);
     await tempPage.waitForSelector('#business-name-input');
     assert('...and the same notice stays on screen after signing in (the app header carries it too)', await appears(tempPage, '[data-testid=storage-notice]'));

@@ -10,6 +10,8 @@ export interface AuditStatus {
   storage: { kind: string; durable: boolean; note?: string } | null;
   /** Whether people can sign in at all, and if not, what the operator must fix. */
   auth: { mode: 'configured' | 'dev' | 'unconfigured'; problem?: string } | null;
+  /** Paid engines that have a key but are switched off because paid engines are not switched on for this server. null until known. */
+  paidBlocked: string[] | null;
 }
 
 export interface QuotaState {
@@ -34,6 +36,7 @@ export function useAuditStatus(): AuditStatus {
   const [engines, setEngines] = useState<string[] | null>(null);
   const [storage, setStorage] = useState<AuditStatus['storage']>(null);
   const [auth, setAuth] = useState<AuditStatus['auth']>(null);
+  const [paidBlocked, setPaidBlocked] = useState<string[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +51,7 @@ export function useAuditStatus(): AuditStatus {
         setEngines(Array.isArray(data.engines) ? data.engines : null);
         setStorage(data.storage || null);
         setAuth(data.auth || null);
+        setPaidBlocked(Array.isArray(data.spend?.paidEnginesBlocked) ? data.spend.paidEnginesBlocked : null);
         if (data.quota && !data.quota.available) {
           const recheckIn = Math.min(60000, Math.max(5000, data.quota.msRemaining / 10));
           timer = setTimeout(check, recheckIn);
@@ -65,7 +69,7 @@ export function useAuditStatus(): AuditStatus {
     };
   }, []);
 
-  return { quota, engines, storage, auth };
+  return { quota, engines, storage, auth, paidBlocked };
 }
 
 /** "Gemini and Perplexity" - for copy that must name only engines actually queried. */

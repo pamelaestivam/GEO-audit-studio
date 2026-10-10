@@ -1,7 +1,7 @@
 /**
  * What the server's own status becomes on screen. Run with: npx tsx test/statusView.test.ts
  */
-import { TEMPORARY_STORAGE_NOTICE, NO_ENGINE_NOTICE, storageNotice, hasNoEngine, noEngineNotice } from '../src/statusView';
+import { TEMPORARY_STORAGE_NOTICE, NO_ENGINE_NOTICE, storageNotice, hasNoEngine, noEngineNotice, paidEngineNotice } from '../src/statusView';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -24,6 +24,8 @@ check('an empty engine list means none is configured', [hasNoEngine([]), noEngin
 check('an engine means measurement is possible', [hasNoEngine(['Gemini']), noEngineNotice(['Gemini'])], [false, null]);
 check('unknown engines (not yet loaded) is NOT treated as none, so the button is not disabled by a slow status call', [hasNoEngine(null), noEngineNotice(null), hasNoEngine(undefined)], [false, null, false]);
 check('the no-engine notice says nothing is simulated', /Nothing is simulated/.test(NO_ENGINE_NOTICE), true);
+
+check('a switched-off paid engine is named and nothing is claimed about it', [paidEngineNotice(['Claude']) !== null, /Nothing from it is measured or simulated/.test(paidEngineNotice(['Claude']) || ''), paidEngineNotice([])], [true, true, null]);
 
 console.log(failures === 0 ? '\nAll status view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

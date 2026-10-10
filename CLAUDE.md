@@ -223,7 +223,11 @@ The audit pipeline is deliberately layered so metrics stay reproducible:
 
 Engines are queried only when their API key is configured. A missing key means
 the engine is reported as not measured — never silently simulated by another
-model.
+model. **ChatGPT, Perplexity and Claude are paid, and the owner's directive is $0:
+they are queried only when `ALLOW_PAID_ENGINES=1` is also set** (a key alone is
+ignored and the status says so). `GEMINI_DAILY_CALL_CAP` optionally caps Gemini
+calls per UTC day, counted per server process; the real $0 control is a Google
+project with no billing account (`src/spendGuard.ts`).
 
 | Engine | Env var | Notes |
 |---|---|---|

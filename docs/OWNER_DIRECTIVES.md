@@ -14,20 +14,24 @@ speaks with the same authority. Source of every quote below: the session of
 
 > "0 dollars for now."
 
-Meaning, as the team read it (`docs/DECISIONS.md`, 2026-10-10). The app-side items
-below are the **plan** (step d in `docs/PROGRAM.md`) and are not built yet; only the
-provider-side rule is something the owner can act on today:
+Meaning, as the team read it (`docs/DECISIONS.md`, 2026-10-10). The provider-side rule
+is something only the owner can act on; the app-side items are marked built or not built
+(step d in `docs/PROGRAM.md`, `src/spendGuard.ts`):
 
 - The Gemini key must come from a Google AI Studio project with **billing never
   enabled**. A project without billing answers 429 when the free limit is hit; it
   cannot charge (AGENT-level evidence from web search, to be confirmed by the
   owner in the Google console once and recorded in `docs/PROGRAM.md`).
-- No ChatGPT, Perplexity or Claude key is configured. **Plan (not built):** the app
-  will refuse to query a paid engine unless an explicit environment flag is set, and
-  will treat the presence of such a key as a configuration alarm.
-- **Plan (not built):** the app will also keep its own call counter and stop before
-  the free limit. That counter will be a safeguard, not the money control; the money
-  control is the missing billing account.
+- No ChatGPT, Perplexity or Claude key is configured. **Built (step d, PR #39):** the
+  app refuses to query a paid engine unless `ALLOW_PAID_ENGINES=1` is also set, says on
+  every page and in `/api/audit/status` which engine is switched off, and `smoke.mjs`
+  prints a note. **Not built:** treating a paid key as a red health check or alarm (the
+  deep health endpoint is PROGRAM row 9, `TECH_DEBT.md` 2.15).
+- **Built (step d):** the app counts the Gemini calls its own process makes per UTC day
+  and, if the operator sets `GEMINI_DAILY_CALL_CAP`, refuses further calls at that
+  number. The cap is optional, off by default, chosen by the operator, and knows nothing
+  about Google's free limit; it counts one process only. It is a safeguard, not the money
+  control; the money control is the missing billing account.
 - Any new feature that adds a recurring call (a canary, a health probe) must count
   against that same budget.
 
