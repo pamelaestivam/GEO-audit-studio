@@ -630,3 +630,110 @@ export function extractCandidateVendors(rawText: string, excludeMatchers: BrandM
     .slice(0, 15)
     .map((c) => (c.plain ?? c.possessive) as string);
 }
+
+// ---------------------------------------------------------------- inaccuracy attribution
+
+export interface QueryRef {
+  queryText: string;
+}
+
+export interface AttributedInaccuracy<T> {
+  claim: T;
+  /** Index into the audit's query list. */
+  queryIndex: number;
+  engine: string;
+}
+
+/** Lower-case, collapse whitespace, drop surrounding quotes and trailing punctuation. */
+function normaliseQueryText(value: string): string {
+  return value
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s"'`“”‘’]+|[\s"'`“”‘’.?!:;,]+$/g, '')
+    .trim();
+}
+
+/**
+ * Tie each model-reported inaccuracy to the captured answer it is about.
+ *
+ * The narrative model is only a reader of the evidence, so a claim that cannot
+ * be tied to an answer we captured - a query we never asked, an engine we never
+ * measured, or an answer that does not name the brand at all - is discarded, and
+ * counted so the report can say so. It used to be silently re-attributed to the
+ * first query and first engine, which put an invented claim into the report
+ * under a real query's name and counted it against the accuracy rate.
+ *
+ * This is a SHAPE check, not a fact check: it proves a claim points at a real
+ * answer, not that the claim is true of that answer (nothing here verifies that
+ * `claimedFact` appears in the text). The model's judgement stays a model's
+ * judgement (TECH_DEBT 2.5).
+ *
+ * The query is found, in order, by the number the model was shown (`queryNumber`,
+ * 1-based, which cannot be paraphrased or confused by duplicate texts), then by
+ * its text compared loosely (case, spacing, quotes, trailing punctuation), and
+ * only when that text is unambiguous. An engine that is not named can only mean
+ * the one engine when a single engine was measured, or the one engine that
+ * answered that query.
+ */
+export function attributeInaccuracies<T extends { queryText?: unknown; engine?: unknown; queryNumber?: unknown }>(
+  claims: T[],
+  queries: QueryRef[],
+  measuredEngines: string[],
+  /** `${queryIndex}|${engine}` of every captured answer that names the brand. */
+  answerKeys: Set<string>
+): { kept: AttributedInaccuracy<T>[]; discarded: number } {
+  const kept: AttributedInaccuracy<T>[] = [];
+  let discarded = 0;
+  const normalisedQueries = queries.map((q) => normaliseQueryText(q.queryText || ''));
+  for (const claim of Array.isArray(claims) ? claims : []) {
+    let queryIndex = -1;
+    const number = typeof claim?.queryNumber === 'number' ? claim.queryNumber : Number.NaN;
+    const byNumber = Number.isInteger(number) && number >= 1 && number <= queries.length ? number - 1 : -1;
+    let byText = -1;
+    if (typeof claim?.queryText === 'string' && claim.queryText.trim()) {
+      const wanted = normaliseQueryText(claim.queryText);
+      const matches = normalisedQueries.reduce<number[]>((acc, q, i) => (q === wanted ? [...acc, i] : acc), []);
+      // Two questions with the same text cannot be told apart by text.
+      if (matches.length === 1) byText = matches[0];
+    }
+    if (byNumber >= 0 && byText >= 0 && byNumber !== byText) {
+      // The number and the text name different questions (an off-by-one, a 0-based
+      // count): either could be the mistake, so the claim is not placed under a guess.
+      discarded++;
+      continue;
+    }
+    queryIndex = byNumber >= 0 ? byNumber : byText;
+
+    const named = typeof claim?.engine === 'string' ? claim.engine.trim().toLowerCase() : '';
+    let engine: string | undefined;
+    if (named) {
+      engine = measuredEngines.find((e) => e.toLowerCase() === named);
+    } else if (queryIndex >= 0) {
+      const answering = measuredEngines.filter((e) => answerKeys.has(`${queryIndex}|${e}`));
+      if (answering.length === 1) engine = answering[0];
+    }
+
+    if (queryIndex < 0 || !engine || !answerKeys.has(`${queryIndex}|${engine}`)) {
+      discarded++;
+      continue;
+    }
+    kept.push({ claim, queryIndex, engine });
+  }
+  return { kept, discarded };
+}
+
+/**
+ * Share of the answers that mention the brand in which the narrative flagged no
+ * inaccuracy. The unit is the ANSWER, not the claim: three claims about one
+ * answer make that one answer inaccurate, not three. (It used to divide the
+ * claim count by the mention count, so a single answer with two flagged claims
+ * out of two mentioning answers read as 0% accurate instead of 50%.)
+ * null when no answer mentioned the brand - there is nothing to check.
+ */
+export function computeAccuracyRate(mentionedKeys: Set<string>, flaggedKeys: Iterable<string>): number | null {
+  if (mentionedKeys.size === 0) return null;
+  const flagged = new Set<string>();
+  for (const key of flaggedKeys) if (mentionedKeys.has(key)) flagged.add(key);
+  return Math.round(((mentionedKeys.size - flagged.size) / mentionedKeys.size) * 100);
+}
