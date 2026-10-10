@@ -19,6 +19,8 @@ export interface StoredAuditPlan extends AuditPlan {
   engines: string[];
   /** Set when nothing can be measured at all; the audit then has a single finishing step. */
   unconfigured?: { reason: string };
+  /** The request as it was received, kept only for the failed-audit report if something unexpected breaks the run. */
+  request: { businessName?: string; domain?: string; industry?: string; coreOfferings?: string; competitors?: any; queries?: any[] };
 }
 
 /** The ordered steps for a plan. `measurable` is false when no engine (or no analysis key) is configured. */

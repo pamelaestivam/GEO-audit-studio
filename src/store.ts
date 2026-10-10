@@ -114,7 +114,7 @@ export type ClaimResult =
   /** Nothing to claim: the job is finished, failed, unknown, or all its steps are in a final state. */
   | { outcome: 'none' };
 
-export type IncidentKind = 'lease_expired_midcall' | 'step_attempts_exceeded' | 'invariant';
+export type IncidentKind = 'lease_expired_midcall' | 'step_attempts_exceeded' | 'step_exception' | 'invariant';
 
 export interface Incident {
   id: number;
