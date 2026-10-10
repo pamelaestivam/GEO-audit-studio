@@ -713,6 +713,15 @@ did not reproduce locally in three runs. A port collision is the suspected cause
 port back, and fail loudly on a bind error. Until then a single unexplained red in
 those files is a re-run, not a regression, but it must be recorded here.
 
+Update 2026-10-10 (PR #50): a server that misses its 20-second start window under load
+used to print FAIL and still exit 0 (`if (!up) return;` skipped the exit status). It now
+fails the run, so this flake turns a slow machine's `npm test` red instead of passing
+silently. That is the intended trade, but it makes the port fix above more worth doing:
+`retrySpendE2E` (3900-4100) failed once this way in a full local run and passed alone
+three times in a row. The cause of that start failure was not captured because the
+suites spawn the server with `stdio: 'ignore'`; capturing its output on a failed start
+belongs with the same fix. `test/testHarness.test.ts` guards the early-return shape.
+
 ### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
 
 - **The number guard covers the executive summary, model forecasts (`expectedGain`) and the
