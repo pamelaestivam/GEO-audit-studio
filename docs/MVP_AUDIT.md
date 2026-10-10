@@ -12,8 +12,9 @@ step that would confirm it.
 
 ## 0. Who the "agents" are
 
-There are no agent definition files in this repo (no `.claude/agents`, no
-subagent configs). The "agents" are the four standing **seats** in
+(Written before `.claude/agents/` existed - it now holds `adversarial-reviewer`,
+`eval-pm` and `ux-tourist`, which are prompts a session invokes as sub-agents, not
+independent services.) The four standing **seats** in
 `docs/TEAM_CHARTER.md`, which one Claude session adopts as thinking lenses -
 not separate processes or models:
 
@@ -222,7 +223,7 @@ nothing before the first audit. All replaced with true statements or removed.
 | 11 | **Admission control on shared state**: per-user limits and the concurrency cap on the datastore, not in process memory | A4 is fixed per process; this makes it fixed per deployment. | 🟡 audit budgets in the store; lookup and IP limits still per process |
 | 12 | **CI plus a post-deploy smoke test** | CI added (`.github/workflows/ci.yml`: lint + `npm test`). The smoke test - `/api/health`, a nested `/api/audit/status`, a rejected POST, against the *deployed URL* - would have caught all four Vercel incidents before you did. | ✅ CI + `scripts/smoke.mjs` + container job (their first GitHub run is the first build of the image) |
 | 13 | **Observability**: request/job ids in structured logs, error tracking, an uptime monitor on `/api/health`, a daily "calls per engine" line | Diagnosing the Vercel crash required you to copy a stack trace out of a dashboard. | 🟡 request ids + JSON logs; no error tracker or uptime monitor |
-| 14 | **Deep readiness check**: validate each configured key and *model id* with one tiny call at boot/deploy; verify the defaults (`gemini-3.6-flash`, OpenAI `gpt-5`, Anthropic `claude-sonnet-4-5` are unverified here) | A wrong model id currently surfaces as the first customer's failed audit. | ✅ `/api/audit/readiness` (a live check only with a real key) |
+| 14 | **Deep readiness check**: validate each configured key and *model id* with one tiny call at boot/deploy; verify the defaults (`gemini-3.6-flash`, OpenAI `gpt-5`, Anthropic `claude-sonnet-4-5` are unverified here; `claude-sonnet-4-5` is deprecated and retires 2026-11-30, so the default is now `claude-sonnet-5-5`) | A wrong model id currently surfaces as the first customer's failed audit. | ✅ `/api/audit/readiness` (a live check only with a real key) |
 | 15 | **Config hygiene**: fail-fast env validation with a sentence, rotate any key ever pasted into a chat, delete the in-source demo credential, keep `.env.example` complete | `.env.example` was missing four of five keys. | 🟡 fail-fast env, demo credential removed, `.env.example` complete; key rotation is yours |
 
 ### Product and trust

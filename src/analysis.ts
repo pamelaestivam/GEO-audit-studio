@@ -33,6 +33,12 @@ export interface BrandMatcher {
   /** Case-sensitive match required (brand name collides with a common word). */
   strictCase: boolean;
   tokens: string[];
+  /**
+   * Two-character ACRONYM spellings of the brand (HP, 3M, EY), matched exactly
+   * as written. Kept apart from `tokens` because every token under three
+   * characters is otherwise ignored ("it", "of", "on" would match everywhere).
+   */
+  acronyms: string[];
 }
 
 /**
@@ -45,6 +51,18 @@ const COMMON_WORD_BRANDS = new Set([
   'apple', 'amazon', 'oracle', 'salesforce', 'shopify', 'wave', 'mint',
   'ramp', 'brex', 'plaid', 'lattice', 'front', 'linear', 'vercel', 'render',
 ]);
+
+/**
+ * Characters that make up a word in scripts that separate words with spaces:
+ * Latin, Cyrillic and Greek letters, digits and combining marks. Deliberately NOT
+ * every \p{L}: Chinese, Japanese and Korean are written without spaces, so a Latin
+ * brand sits directly against them ("推荐Stripe和Adyen") and must still be found.
+ * The underscore is a word character too, as it is for \\b: `adyen_token` is code, not a
+ * mention of Adyen.
+ */
+const WORD_CLASS = '\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}\\p{N}\\p{M}_';
+const startsWithWordChar = (value: string) => new RegExp(`^[${WORD_CLASS}]`, 'u').test(value);
+const endsWithWordChar = (value: string) => new RegExp(`[${WORD_CLASS}]$`, 'u').test(value);
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -75,11 +93,13 @@ export function extractDomain(url: string): string {
 }
 
 export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
+  // The label stays exactly as typed (it is shown back to the person and compared
+  // with other copies of what they typed); matching uses its composed (NFC) form.
   const label = (name || '').trim();
   const cleanDomain = normaliseDomain(domain || '');
   const domainRoot = cleanDomain.split('.')[0] || '';
 
-  const lower = label.toLowerCase();
+  const lower = label.normalize('NFC').toLowerCase();
   const words = lower.split(/\s+/).filter(Boolean);
   const tokens: string[] = [];
   if (lower) tokens.push(lower);
@@ -110,17 +130,47 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
 
   const strictCase = tokens.some((t) => COMMON_WORD_BRANDS.has(t));
 
-  return { label, domain: cleanDomain, domainRoot, strictCase, tokens };
+  // Short acronym brands (HP, 3M, EY, BP). Skipping every token under three
+  // characters meant a brand the answer named in every sentence was measured at
+  // 0%, shown as "omitted" on every engine and given a remediation plan - a
+  // failure to measure reported as a finding about the client. Two narrow cases
+  // qualify, and nothing else does:
+  //  - the WHOLE name is a two-character acronym written in capitals/digits
+  //    ("HP", "3M", "EY", "BP"); or
+  //  - the name is longer ("HP Inc", "3M Company") and its first word is such an
+  //    acronym AND equals the root of the domain the user gave (hp.com). Without
+  //    the domain, "US Bank", "LA Fitness" or "UK Power Networks" would be credited
+  //    with every "US", "LA" and "UK" in every answer; a longer name stays matched
+  //    on its full name only, like every other multi-word brand.
+  // A name typed in lowercase or mixed case ("hp", "Hp") is NOT promoted: a
+  // domain equal to a dictionary word (ai.com, on.com) proves nothing. Limits:
+  // TECH_DEBT 2.6c.
+  const acronyms: string[] = [];
+  const isAcronym = (w: string) => w.length === 2 && /^[A-Z0-9]{2}$/.test(w) && /[A-Z]/.test(w);
+  const firstWord = label.split(/\s+/)[0] || '';
+  if (isAcronym(label)) acronyms.push(label);
+  else if (words.length > 1 && isAcronym(firstWord) && firstWord.toLowerCase() === domainRoot) acronyms.push(firstWord);
+
+  return { label, domain: cleanDomain, domainRoot, strictCase, tokens, acronyms };
 }
 
 /**
  * Character index of the first brand mention in `text`, or -1.
  * Uses word boundaries so "striped" never counts as "Stripe".
  */
-export function findFirstMention(text: string, matcher: BrandMatcher): number {
-  if (!text || matcher.tokens.length === 0) return -1;
+export function findFirstMention(rawText: string, matcher: BrandMatcher): number {
+  // Composed form, so a label typed decomposed and the same label typed composed are one brand.
+  const text = (rawText || '').normalize('NFC');
+  if (!text || (matcher.tokens.length === 0 && !matcher.acronyms?.length)) return -1;
 
   let earliest = -1;
+  // Acronyms are matched exactly as written (case-sensitive) with word
+  // boundaries (the same script-aware class as every other name): "HP" is not "HPE",
+  // "OHP", "HP2", "HP_x" or "hp".
+  for (const acronym of matcher.acronyms ?? []) {
+    const hit = new RegExp(`(?<![${WORD_CLASS}])${escapeRegex(acronym)}(?![${WORD_CLASS}])`, 'gu').exec(text);
+    if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
+  }
   for (const token of matcher.tokens) {
     if (token.length < 3) continue;
 
@@ -129,12 +179,13 @@ export function findFirstMention(text: string, matcher: BrandMatcher): number {
     const needle = matcher.strictCase
       ? token.charAt(0).toUpperCase() + token.slice(1)
       : token;
-    // \b only works between a word and a non-word character. Brands ending or
-    // starting in punctuation ("Yahoo!", "(Parens) Co") would never match if we
-    // demanded a boundary on that side.
-    const leading = /^\w/.test(needle) ? '\\b' : '';
-    const trailing = /\w$/.test(needle) ? '\\b' : '';
-    const pattern = new RegExp(`${leading}${escapeRegex(needle)}${trailing}`, matcher.strictCase ? 'g' : 'gi');
+    // A boundary is demanded only on a side that starts/ends with a word character
+    // (Yahoo! and "(Parens) Co" have punctuation edges), and it is the same
+    // script-aware class discovery uses - \b is ASCII-only, so it treated "é" as a
+    // boundary ("Nestléx" matched "Nestlé") yet matched nothing next to CJK text.
+    const leading = startsWithWordChar(needle) ? `(?<![${WORD_CLASS}])` : '';
+    const trailing = endsWithWordChar(needle) ? `(?![${WORD_CLASS}])` : '';
+    const pattern = new RegExp(`${leading}${escapeRegex(needle)}${trailing}`, matcher.strictCase ? 'gu' : 'giu');
 
     const hit = pattern.exec(text);
     if (hit && (earliest === -1 || hit.index < earliest)) earliest = hit.index;
@@ -175,8 +226,9 @@ export function dedupeMatchers(matchers: BrandMatcher[]): BrandMatcher[] {
  * the brand are pointed to it. The report surfaces this instead of letting a
  * perfect score pass for a finding.
  */
-export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boolean {
-  if (!queryText) return false;
+export function queryNamesBrand(rawQueryText: string, matcher: BrandMatcher): boolean {
+  if (!rawQueryText) return false;
+  const queryText = rawQueryText.normalize('NFC');
   // Deliberately more permissive than findFirstMention, which is built to avoid
   // false MENTIONS in answers: here the question is only "was the brand put in
   // the query", so a short name ("3M", "HP"), a lowercase typing ("notion") and
@@ -186,7 +238,7 @@ export function queryNamesBrand(queryText: string, matcher: BrandMatcher): boole
   // warning about an inflated score rather than missing one.
   // The full domain counts too: "poke.house" is not among the matcher's tokens
   // (its root "poke" is just the category word), but typing it names the brand.
-  const candidates = matcher.domain ? [...matcher.tokens, matcher.domain] : matcher.tokens;
+  const candidates = [...matcher.tokens, ...(matcher.acronyms ?? []), ...(matcher.domain ? [matcher.domain] : [])];
   for (const token of candidates) {
     const t = token.trim();
     if (t.length < 2) continue;
@@ -235,7 +287,9 @@ export function analyseAnswer(
   evidence: QueryEvidence,
   matchers: BrandMatcher[]
 ): BrandQueryResult[] {
-  const text = evidence.answerText || '';
+  // Composed (NFC) form, so a name written with combining accents still matches
+  // the matcher's label; the excerpt is cut from the same string.
+  const text = (evidence.answerText || '').normalize('NFC');
   const raw = matchers.map((m) => {
     const idx = findFirstMention(text, m);
     const citedAsSource = isCitedAsSource(evidence.citations, m);
@@ -496,8 +550,10 @@ function isStructuralPosition(prefix: string): boolean {
  * Understating the field slightly flatters the client; the user can add that
  * rival by name and it is then tracked explicitly. See TECH_DEBT.md 2.6b.
  */
-export function extractCandidateVendors(text: string, excludeMatchers: BrandMatcher[]): string[] {
-  if (!text) return [];
+export function extractCandidateVendors(rawText: string, excludeMatchers: BrandMatcher[]): string[] {
+  if (!rawText) return [];
+  // Composed form, so "Café" typed as e + combining accent is one name, not "Cafe".
+  const text = rawText.normalize('NFC');
 
   // 1-3 consecutive capitalised words: "Adyen", "Archer Aviation", "Bank of
   // America", "Johnson & Johnson". "of" and "&" are the only mid-phrase
@@ -505,7 +561,25 @@ export function extractCandidateVendors(text: string, excludeMatchers: BrandMatc
   // name, but "and" lists separate names ("Bank of America and Wells
   // Fargo"), so allowing it would bridge two distinct entities into one
   // wrong candidate spanning both.
-  const pattern = /\b[A-Z][a-zA-Z0-9']*(?:\s+(?:of|&)\s+[A-Z][a-zA-Z0-9']*|\s+[A-Z][a-zA-Z0-9']*){0,2}\b/g;
+  // Unicode-aware, for scripts that separate words with spaces. With [A-Za-z]
+  // and \b (both ASCII-only) "Café Lumière" was cut to "Caf", "Nestlé" to
+  // "Nestl" and "Zoë Group" lost entirely. The name and boundary classes are
+  // Latin, Cyrillic and Greek letters, digits and combining marks - NOT every
+  // \p{L}: Chinese, Japanese and Korean are written without spaces, so a Latin
+  // brand sits directly against CJK characters ("推荐Stripe和Adyen") or a Korean
+  // particle ("Stripe는") and must still be found, without absorbing them. An
+  // apostrophe belongs to a name only between letters ("Sweetfin's"), never at
+  // its end ("'Stripe'").
+  // Name characters exclude the underscore (an identifier like Foo_Bar is code, not
+  // a vendor) while the boundary class includes it, so "Foo_Bar" yields nothing.
+  const W = WORD_CLASS;
+  const N = WORD_CLASS.replace('_', '');
+  const CAP = '(?=[\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}])\\p{Lu}';
+  const pattern = new RegExp(
+    `(?<![${W}])${CAP}[${N}]*(?:'[${N}]+)*` +
+      `(?:\\s+(?:of|&)\\s+${CAP}[${N}]*(?:'[${N}]+)*|\\s+${CAP}[${N}]*(?:'[${N}]+)*){0,2}(?![${W}])`,
+    'gu'
+  );
 
   interface Seen {
     /** Presentable form: the plain spelling if it was ever seen, else the possessive one. */
@@ -555,4 +629,111 @@ export function extractCandidateVendors(text: string, excludeMatchers: BrandMatc
     .sort((a, b) => b.count - a.count)
     .slice(0, 15)
     .map((c) => (c.plain ?? c.possessive) as string);
+}
+
+// ---------------------------------------------------------------- inaccuracy attribution
+
+export interface QueryRef {
+  queryText: string;
+}
+
+export interface AttributedInaccuracy<T> {
+  claim: T;
+  /** Index into the audit's query list. */
+  queryIndex: number;
+  engine: string;
+}
+
+/** Lower-case, collapse whitespace, drop surrounding quotes and trailing punctuation. */
+function normaliseQueryText(value: string): string {
+  return value
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s"'`“”‘’]+|[\s"'`“”‘’.?!:;,]+$/g, '')
+    .trim();
+}
+
+/**
+ * Tie each model-reported inaccuracy to the captured answer it is about.
+ *
+ * The narrative model is only a reader of the evidence, so a claim that cannot
+ * be tied to an answer we captured - a query we never asked, an engine we never
+ * measured, or an answer that does not name the brand at all - is discarded, and
+ * counted so the report can say so. It used to be silently re-attributed to the
+ * first query and first engine, which put an invented claim into the report
+ * under a real query's name and counted it against the accuracy rate.
+ *
+ * This is a SHAPE check, not a fact check: it proves a claim points at a real
+ * answer, not that the claim is true of that answer (nothing here verifies that
+ * `claimedFact` appears in the text). The model's judgement stays a model's
+ * judgement (TECH_DEBT 2.5).
+ *
+ * The query is found, in order, by the number the model was shown (`queryNumber`,
+ * 1-based, which cannot be paraphrased or confused by duplicate texts), then by
+ * its text compared loosely (case, spacing, quotes, trailing punctuation), and
+ * only when that text is unambiguous. An engine that is not named can only mean
+ * the one engine when a single engine was measured, or the one engine that
+ * answered that query.
+ */
+export function attributeInaccuracies<T extends { queryText?: unknown; engine?: unknown; queryNumber?: unknown }>(
+  claims: T[],
+  queries: QueryRef[],
+  measuredEngines: string[],
+  /** `${queryIndex}|${engine}` of every captured answer that names the brand. */
+  answerKeys: Set<string>
+): { kept: AttributedInaccuracy<T>[]; discarded: number } {
+  const kept: AttributedInaccuracy<T>[] = [];
+  let discarded = 0;
+  const normalisedQueries = queries.map((q) => normaliseQueryText(q.queryText || ''));
+  for (const claim of Array.isArray(claims) ? claims : []) {
+    let queryIndex = -1;
+    const number = typeof claim?.queryNumber === 'number' ? claim.queryNumber : Number.NaN;
+    const byNumber = Number.isInteger(number) && number >= 1 && number <= queries.length ? number - 1 : -1;
+    let byText = -1;
+    if (typeof claim?.queryText === 'string' && claim.queryText.trim()) {
+      const wanted = normaliseQueryText(claim.queryText);
+      const matches = normalisedQueries.reduce<number[]>((acc, q, i) => (q === wanted ? [...acc, i] : acc), []);
+      // Two questions with the same text cannot be told apart by text.
+      if (matches.length === 1) byText = matches[0];
+    }
+    if (byNumber >= 0 && byText >= 0 && byNumber !== byText) {
+      // The number and the text name different questions (an off-by-one, a 0-based
+      // count): either could be the mistake, so the claim is not placed under a guess.
+      discarded++;
+      continue;
+    }
+    queryIndex = byNumber >= 0 ? byNumber : byText;
+
+    const named = typeof claim?.engine === 'string' ? claim.engine.trim().toLowerCase() : '';
+    let engine: string | undefined;
+    if (named) {
+      engine = measuredEngines.find((e) => e.toLowerCase() === named);
+    } else if (queryIndex >= 0) {
+      const answering = measuredEngines.filter((e) => answerKeys.has(`${queryIndex}|${e}`));
+      if (answering.length === 1) engine = answering[0];
+    }
+
+    if (queryIndex < 0 || !engine || !answerKeys.has(`${queryIndex}|${engine}`)) {
+      discarded++;
+      continue;
+    }
+    kept.push({ claim, queryIndex, engine });
+  }
+  return { kept, discarded };
+}
+
+/**
+ * Share of the answers that mention the brand in which the narrative flagged no
+ * inaccuracy. The unit is the ANSWER, not the claim: three claims about one
+ * answer make that one answer inaccurate, not three. (It used to divide the
+ * claim count by the mention count, so a single answer with two flagged claims
+ * out of two mentioning answers read as 0% accurate instead of 50%.)
+ * null when no answer mentioned the brand - there is nothing to check.
+ */
+export function computeAccuracyRate(mentionedKeys: Set<string>, flaggedKeys: Iterable<string>): number | null {
+  if (mentionedKeys.size === 0) return null;
+  const flagged = new Set<string>();
+  for (const key of flaggedKeys) if (mentionedKeys.has(key)) flagged.add(key);
+  return Math.round(((mentionedKeys.size - flagged.size) / mentionedKeys.size) * 100);
 }

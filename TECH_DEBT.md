@@ -610,6 +610,92 @@ so). An added query still costs a real engine call. Persisting both means a PATC
 on the saved audit and a decision on whether an added query joins the headline
 figures (today it deliberately does not).
 
+### 2.13 The visibility range is a floor on the uncertainty (low-medium)
+
+`wilsonInterval` (95%, rounded outward) is a confidence interval for the underlying
+rate, not a prediction of a repeat run, and it assumes independent readings. Answers
+from several engines to one question are counted as ONE reading (so is the
+low-sample warning), but three different questions asked once are still treated as
+three independent draws of one rate, which they are not. The honest fix is repeated
+runs per query with paraphrased questions (MVP_AUDIT item 8); until then the card
+says "plausibly" and the disclosure says the real uncertainty is wider. The model
+ids shown are those REQUESTED, not necessarily the dated version a provider served.
+Saved summaries (the audit list) carry neither the question count nor the models, so
+the list badge shows the answer count only. Readings are the questions that produced a
+usable answer (`questionsAnswered`; older reports fall back to the number planned).
+
+### 2.5a Inaccuracy claims are attributed, not verified (medium)
+
+Found in the 2026-10-09 independent review. The accuracy rate is now counted per
+answer (not claim over mention) and a claim is kept only if it points at a
+captured answer that names the brand (by query number, else by loosely matched
+text; an engine that is not named means the only engine that answered).
+**This is a shape check, not a fact check:** nothing verifies that the claimed
+fact appears in that answer, so a hallucinated claim carrying a real query and
+engine is still counted. Also: reports saved before this change used a different
+definition (claims over mentions); do not trend `accuracyRate` across them. The
+structured-output schema asks the model for `engine` and `queryNumber`; whether a
+real model honours them has not been seen (no key), which is why discards are
+shown to the user rather than hidden (the accuracy tile says "at most this", the
+findings tile and sidebar show them as unlisted, never as a clean zero). A claim
+whose number and text name different questions is discarded, not placed under a
+guess. The narrative model is shown every answer up to `max(40, MAX_AUDIT_QUERIES x
+4)`; beyond that cap, answers it never saw would count as "no flagged
+inaccuracy". Reports saved before 2026-10-09 carry the older rate and no marker.
+
+### 2.6d Vendor-name discovery still truncates some names (low-medium)
+
+Found in the 2026-10-09 independent review. Accented Latin, Cyrillic and Greek
+names are now discovered whole, Latin brands inside Chinese, Japanese and Korean
+text are found without absorbing the surrounding characters, and word boundaries
+in the brand matcher use the same script-aware class instead of ASCII `\b` (so
+"Nestléx" no longer matches "Nestlé"). A brand's label is kept exactly as typed;
+matching uses its composed (NFC) form; an underscore stays a word character, so
+`adyen_token` is code and not a mention. **Still true:**
+
+- Hyphenated names and names with a leading digit are cut ("Coca-Cola" becomes
+  "Coca", "Mercedes-Benz" "Mercedes", "Studio 54 Fitness" "Studio", "3M" is
+  dropped). Same class of defect as the accents; not fixed here. Add such a rival
+  as a tracked competitor and it is measured correctly.
+- Vendors written in CJK, Arabic or other caseless scripts are never discovered
+  (there is no capital letter to anchor on); tracked competitors still are.
+- Turkish dotted İ does not survive lower-casing in the matcher, so a discovered
+  name containing it is dropped at scoring time (a missed rival, not a fabricated
+  one). Title-case letters (U+01C5) are not capitals to the discovery pattern.
+- A client typed without accents ("Nestle") does not match "Nestlé" in answers.
+- A mixed-script look-alike ("Stripe" with a Cyrillic е) is a separate candidate
+  from "Stripe"; invisible variation selectors can split one name into two (both
+  collapse later in `dedupeMatchers`).
+- Answer text is compared in NFC, so an excerpt of a decomposed answer is cut from
+  the composed copy and is not a byte-for-byte slice of the stored text.
+- Extraction is quadratic on a single very long line (about 9 s for 200 KB of
+  table cells, unchanged by the Unicode work); real answers are far smaller.
+
+### 2.6c Two-character brands: acronyms are measured, other short names are not (medium)
+
+Found in the 2026-10-09 independent review. Every brand token under three
+characters used to be skipped, so a brand such as HP was measured at 0% and
+reported as "omitted" on every engine. Now a name that is **entirely** a
+two-character acronym in capitals or digits (HP, 3M, EY, BP), or a longer name
+(HP Inc, 3M Company) whose first word is that acronym **and** equals the root of
+the domain the user gave (hp.com), is matched exactly as written, with word
+boundaries. **Still true, and not fixed:**
+
+- Everything else short still reads 0%: a one-character name; an ordinary word
+  (On, Go, It, Us); a name typed in lowercase or mixed case ("hp", "Hp", "hp
+  inc"); "HP Inc" with no domain or a different one; a punctuated legal name
+  ("HP, Inc."); hyphenated names ("EY-Parthenon"). A domain equal to a dictionary word proves nothing, so none of
+  these is promoted. The honest end state is a visible "cannot be measured" state
+  instead of a zero; not built.
+- An acronym matches by spelling, so it can match another sense of the same
+  letters: "$3M" (three million), "200 HP" (horsepower), "BP" (blood pressure), and
+  a brand whose whole name is a common acronym ("AI", "IT", "US") is credited with
+  every occurrence. Read the evidence for any quoted figure.
+- The word boundary is ASCII-only: "éHP" matches, and "HP-UX" matches (a hyphen is
+  a boundary).
+- A tracked competitor whose name contains the client's ("BP Pulse" beside "BP")
+  is dropped by `dedupeMatchers`, the same as "Stripe Atlas" beside "Stripe".
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer
@@ -660,8 +746,10 @@ Written 2026-10-09 so none of these is rediscovered:
   failed with a sentence (and is not counted against the daily budget); the
   person re-runs it. A job reaped as stuck after 15 minutes that later finishes
   is still recorded.
-- **No automated backups.** Copy `DATA_DIR/geo-audit.sqlite` or use the host's
-  disk snapshots. Deleting an access code does not delete that person's saved
+- **No automated backups.** `node scripts/backup.mjs` makes a consistent
+  snapshot (a plain copy of `geo-audit.sqlite` alone loses recent writes - they
+  are in the WAL), but nothing schedules it or copies it off the host. Use the
+  host's disk snapshots too. Deleting an access code does not delete that person's saved
   audits.
 - **`node:sqlite` is marked experimental by Node 22** (it prints a warning at
   start). It is stable in practice but the API could change; `engines` pins
@@ -693,9 +781,17 @@ Written 2026-10-09 so none of these is rediscovered:
   tracked — the most interesting part of that finding is not called out.
 - ~~`generateSynthesizedAudit` still emits placeholder remediation text.~~ Fixed
   2026-10-09, see 2.1b: the failed-audit report now carries no findings.
-- The provider adapters are untested against real API responses — their parsers
-  are written defensively but have never seen live payloads from OpenAI,
-  Perplexity or Anthropic. This is the largest remaining untested surface.
+- The provider adapters have never seen a LIVE payload from OpenAI, Perplexity or
+  Anthropic. `test/providers.test.ts` (added 2026-10-09) runs them against
+  fixtures written from the vendors' docs - it pins what is sent and how the
+  documented shapes are parsed, not what the services return today. Recording one
+  real response per engine into the fixtures is the next step once keys exist.
+  Also untested: that `server.ts` passes an adapter's sentence through unflattened (the
+  suites never configure a non-Gemini engine, because the vendor URLs are hard-coded);
+  re-introducing a second `describeProviderError` over `answer.error` would go unnoticed.
+  An invalid-model 400 from OpenAI or Perplexity gets the generic sentence (only the
+  wordings listed in `errors.ts` name the model variable), and a 403 "no access to
+  model" reads as a rejected key.
 - `Core Offerings` was removed from the audit form as low value; the field still
   exists in the API and types, unused, and should be retired properly.
 - There is no UI test layer. Interactive regressions (a tile that is not a

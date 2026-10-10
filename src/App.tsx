@@ -367,6 +367,7 @@ export default function App() {
                     inaccuracies={activeAudit.inaccuracies}
                     onSelectRemediationTask={handleJumpToRemediationTask}
                     assessed={wasAssessed(activeAudit)}
+                    discarded={activeAudit.inaccuraciesDiscarded}
                   />
                 )}
 

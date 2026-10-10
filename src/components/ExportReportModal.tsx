@@ -8,7 +8,12 @@ import {
   formatScore,
   hasMeasurements,
   isLowSample,
+  lowSampleReason,
+  engineModelsLine,
+  MEASUREMENT_DISCLOSURE,
   visibilityBasis,
+  rangeExplanation,
+  visibilityRange,
   wasAssessed,
 } from '../reportView';
 
@@ -35,6 +40,13 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const measured = hasMeasurements(audit);
   const accuracy = describeAccuracy(audit);
   const basis = visibilityBasis(audit);
+  const range = visibilityRange(audit);
+  const rangeText = rangeExplanation(audit);
+  const lowSample = isLowSample(audit);
+  const modelsLine = engineModelsLine(audit);
+  const capturedLine = audit.answersCapturedFrom
+    ? `Answers captured ${new Date(audit.answersCapturedFrom).toUTCString()}${audit.answersCapturedTo && audit.answersCapturedTo !== audit.answersCapturedFrom ? ` to ${new Date(audit.answersCapturedTo).toUTCString()}` : ''}.`
+    : null;
   const assessed = wasAssessed(audit);
   const enginesLine = (audit.measuredEngines || []).length
     ? (audit.measuredEngines || []).join(', ')
@@ -51,7 +63,11 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const branded = brandedQueryCaution(audit);
   if (branded) caveats.push(branded);
   if (isLowSample(audit)) {
-    caveats.push(`Small sample: only ${audit.observationsWithEvidence} captured answer(s). Indicative, not a stable rate.`);
+    caveats.push(`Small sample: ${lowSampleReason(audit)}. Indicative, not a stable rate.`);
+  }
+  if (measured) {
+    caveats.push(MEASUREMENT_DISCLOSURE);
+    if (rangeText) caveats.push(rangeText);
   }
   if ((audit.queriesAddedAfterAudit || 0) > 0) {
     caveats.push(`${audit.queriesAddedAfterAudit} query(ies) added after the audit are not included in these figures.`);
@@ -60,9 +76,9 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const handleCopyText = async () => {
     const summaryText = `GEO AI SEARCH AUDIT REPORT - ${audit.businessName}${audit.domain ? ` (${audit.domain})` : ''}
 Date: ${new Date(audit.createdAt).toLocaleDateString()}
-Engines measured: ${enginesLine}${basis ? `\n${basis}` : ''}
+Engines measured: ${modelsLine ? `${modelsLine} (model ids requested)` : enginesLine}${basis ? `\n${basis}` : ''}${capturedLine ? `\n${capturedLine}` : ''}
 ${caveats.length ? `\nCAVEATS:\n${caveats.map((c) => `- ${c}`).join('\n')}\n` : ''}
-Visibility (answers naming the brand): ${formatScore(audit)}${measured ? '/100' : ''}
+Visibility (answers naming the brand): ${formatScore(audit)}${measured ? '/100' : ''}${range ? ` (rough 95% range ${range})` : ''}
 Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoice)}
 #1 Recommendation Rate: ${formatPercent(audit, audit.leaderShare)}
 Fact Accuracy Rate: ${accuracy.value} (${accuracy.caption})
@@ -121,7 +137,7 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
 
         {/* Printable Executive Document Sheet */}
         <div className="bg-slate-950 border border-slate-800 rounded-xl p-8 space-y-6 text-xs text-slate-300 shadow-inner">
-          <div className="flex items-start justify-between border-b border-slate-800 pb-6">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-800 pb-6">
             <div>
               <div className="text-indigo-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1">
                 <Sparkles className="h-3.5 w-3.5" />
@@ -140,9 +156,12 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
             </div>
 
             <div className="text-right bg-slate-900 border border-slate-800 p-3 rounded-xl">
-              <span className={`text-3xl font-black block ${measured ? 'text-emerald-400' : 'text-slate-500'}`}>{formatScore(audit)}</span>
+              <span className={`text-3xl font-black block ${measured && !lowSample ? 'text-emerald-400' : 'text-slate-400'}`}>{formatScore(audit)}</span>
               <span className="text-[10px] font-semibold text-slate-400 uppercase">GEO Visibility Score</span>
               {basis && <span className="block text-[10px] text-slate-400 mt-1">{basis}</span>}
+              {range && <span className="block text-[10px] text-slate-300 mt-1">Rough 95% range: {range}</span>}
+              {measured && modelsLine && <span className="block text-[10px] text-slate-400 mt-1">Models requested: {modelsLine}</span>}
+              {measured && capturedLine && <span className="block text-[10px] text-slate-400 mt-1">{capturedLine}</span>}
             </div>
           </div>
 

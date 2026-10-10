@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_remediation' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -18,8 +18,10 @@ export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
 According to Yelp and TripAdvisor, Pricing starts at $12. Key takeaways: Fresh fish matters. Why choose Pokeworks? Check Monday hours.`;
 
-export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 2500): Promise<http.Server & { hits: () => number }> {
+export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 2500): Promise<http.Server & { hits: () => number; narrativeRequests: () => any[] }> {
   let hits = 0;
+  // Request bodies of the structured (narrative / lookup) calls, so a test can assert what the server ASKED, not only what it did with the answer.
+  const structured: any[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
@@ -27,6 +29,13 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
       hits++;
       const mode = getMode();
       const wantsJson = body.includes('responseSchema');
+      if (wantsJson) {
+        try {
+          structured.push(JSON.parse(body));
+        } catch {
+          /* not JSON */
+        }
+      }
       if (mode === 'slow') await new Promise((r) => setTimeout(r, slowMs));
       if (mode === 'unauthorized') {
         res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -47,7 +56,23 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
           : wantsJson
             ? JSON.stringify({
                 executiveSummary: 'Narrative ok.',
-                inaccuracies: [],
+                // 'narrative_findings': two claims about the SAME real answer, one about a
+                // query that was never asked, one naming an engine that was never measured.
+                inaccuracies:
+                  mode === 'narrative_findings'
+                    ? [
+                        { engine: 'Gemini', queryNumber: 1, queryText: 'best poke in Austin', claimedFact: 'a', actualFact: 'b', impactSeverity: 'high' },
+                        // same answer, query text paraphrased (case, quotes, punctuation): still attributable
+                        { engine: 'gemini', queryText: '"Best Poke in Austin?"', claimedFact: 'c', actualFact: 'd', impactSeverity: 'low' },
+                        { engine: 'Gemini', queryText: 'a question nobody asked', claimedFact: 'e', actualFact: 'f', impactSeverity: 'high' },
+                        { engine: 'ChatGPT', queryText: 'best poke in Austin', claimedFact: 'g', actualFact: 'h', impactSeverity: 'high' },
+                      ]
+                    : mode === 'narrative_unattributable'
+                      ? [
+                          { engine: 'Gemini', queryNumber: 99, queryText: 'a question nobody asked', claimedFact: 'e', actualFact: 'f', impactSeverity: 'high' },
+                          { engine: 'ChatGPT', queryText: 'what are the best alternatives to poke house', claimedFact: 'g', actualFact: 'h', impactSeverity: 'high' },
+                        ]
+                      : [],
                 omissions: [],
                 remediationPlan:
                   mode === 'narrative_remediation'
@@ -73,6 +98,6 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
     });
   });
   return new Promise((resolve) =>
-    server.listen(port, () => resolve(Object.assign(server, { hits: () => hits })))
+    server.listen(port, () => resolve(Object.assign(server, { hits: () => hits, narrativeRequests: () => structured })))
   );
 }

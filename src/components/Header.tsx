@@ -1,7 +1,7 @@
 import React from 'react';
 import { Search, Sparkles, Plus, Download, Bell, Activity, RefreshCw, Award } from 'lucide-react';
 import { AuditReport } from '../types';
-import { formatPercent } from '../reportView';
+import { formatScoreBadge } from '../reportView';
 
 interface HeaderProps {
   audits: AuditReport[];
@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <optgroup label="Active Audit Benchmarks">
                     {audits.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.businessName}{a.domain ? ` (${a.domain})` : ''} — GEO Score: {formatPercent(a, a.geoVisibilityScore)}
+                        {a.businessName}{a.domain ? ` (${a.domain})` : ''} — GEO Score: {formatScoreBadge(a)}
                       </option>
                     ))}
                   </optgroup>
@@ -94,7 +94,7 @@ export const Header: React.FC<HeaderProps> = ({
                   id="header-geo-score-badge"
                 >
                   <Award className="h-3.5 w-3.5 text-indigo-400" />
-                  <span>GEO Score: {formatPercent(activeAudit, activeAudit.geoVisibilityScore)}</span>
+                  <span>GEO Score: {formatScoreBadge(activeAudit)}</span>
                 </div>
               )}
             </div>

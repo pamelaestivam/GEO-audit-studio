@@ -2,13 +2,16 @@
  * Answer-engine provider adapters.
  *
  * Each adapter performs a genuine web-grounded call to a different vendor and
- * returns the answer text plus the sources that vendor actually cited. An engine
+ * returns the answer text plus the sources that vendor cited in it. (For Claude
+ * that is the citations on the answer's text blocks - not every search result the
+ * tool retrieved, which would inflate Claude's source counts.) An engine
  * is only ever queried when its API key is configured; a missing key means the
  * engine is reported as "not measured" rather than being simulated by another
  * model.
  */
 
 import { extractDomain } from './analysis.js';
+import { describeProviderError, type ReadableError } from './errors.js';
 
 export type EngineName = 'Gemini' | 'ChatGPT' | 'Perplexity' | 'Claude';
 
@@ -19,7 +22,23 @@ export interface EngineAnswer {
   answerText: string;
   citations: { url: string; title: string; domain: string }[];
   searchQueries: string[];
+  /** A readable sentence, already worded for this provider - never a raw payload. */
   error?: string;
+  errorKind?: ReadableError['kind'];
+  /** The raw provider text, for the server log only. */
+  rawError?: string;
+}
+
+/** A failed lookup whose reason this adapter already knows in words. */
+function failed(base: EngineAnswer, message: string, kind: ReadableError['kind'] = 'unknown'): EngineAnswer {
+  return { ...base, error: message, errorKind: kind };
+}
+
+/** A failed lookup from a thrown HTTP/network error: described once, here, for the right provider. */
+function failedFrom(base: EngineAnswer, err: any, fallback: string): EngineAnswer {
+  const raw = String(err?.message || fallback);
+  const readable = describeProviderError(raw, base.engine);
+  return { ...base, error: readable.message, errorKind: readable.kind, rawError: raw };
 }
 
 /** Redirect and proxy hosts that are not real publishers. */
@@ -69,6 +88,35 @@ export function configuredEngines(): EngineName[] {
   return engines;
 }
 
+/**
+ * The default Claude model. `claude-sonnet-4-5` was the default until it was
+ * deprecated (2026-09-30, retired 2026-11-30 per Anthropic's model deprecations
+ * page): a default that stops answering turns every Claude observation into a
+ * failed lookup on the retirement date. Override with ANTHROPIC_MODEL.
+ */
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+export const DEFAULT_OPENAI_MODEL = 'gpt-5';
+export const DEFAULT_PERPLEXITY_MODEL = 'sonar';
+
+/**
+ * The model id an engine is queried with: the single definition used both to
+ * make the call and to stamp the report, so the report cannot name a model the
+ * call did not use.
+ */
+export function engineModelId(engine: EngineName): string {
+  switch (engine) {
+    case 'Gemini':
+      return process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+    case 'ChatGPT':
+      return process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+    case 'Perplexity':
+      return process.env.PERPLEXITY_MODEL || DEFAULT_PERPLEXITY_MODEL;
+    case 'Claude':
+      return process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+  }
+}
+
 const ANSWER_SYSTEM_PROMPT =
   'You are an AI search assistant answering a real user question. Search the web and recommend the specific vendors, products or providers that genuinely best answer the question, naming each one explicitly. Do not mention that you are part of an audit.';
 
@@ -100,7 +148,7 @@ async function askOpenAI(query: string): Promise<EngineAnswer> {
       'https://api.openai.com/v1/responses',
       { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
       {
-        model: process.env.OPENAI_MODEL || 'gpt-5',
+        model: engineModelId('ChatGPT'),
         instructions: ANSWER_SYSTEM_PROMPT,
         input: query,
         tools: [{ type: 'web_search' }],
@@ -110,6 +158,7 @@ async function askOpenAI(query: string): Promise<EngineAnswer> {
     const rawCitations: { url: string; title: string }[] = [];
     const searchQueries: string[] = [];
     const textParts: string[] = [];
+    let refusal = '';
 
     for (const item of data.output || []) {
       if (item.type === 'web_search_call') {
@@ -117,6 +166,9 @@ async function askOpenAI(query: string): Promise<EngineAnswer> {
         if (q) searchQueries.push(q);
       }
       for (const block of item.content || []) {
+        if (block?.type === 'refusal' && typeof block.refusal === 'string') {
+          refusal = block.refusal;
+        }
         if (typeof block.text === 'string') textParts.push(block.text);
         for (const ann of block.annotations || []) {
           if (ann.url) rawCitations.push({ url: ann.url, title: ann.title || '' });
@@ -124,15 +176,24 @@ async function askOpenAI(query: string): Promise<EngineAnswer> {
       }
     }
 
+    // A 200 that carries no finished answer must read as a failed lookup, not as
+    // "the brand was not named".
+    if (data.status === 'failed' || data.status === 'incomplete' || data.error) {
+      const why = data.error?.message || data.incomplete_details?.reason || data.status;
+      return failed(base, `ChatGPT did not finish its answer (${String(why).slice(0, 120)}), so it was not counted. Re-run the audit.`);
+    }
     // Prefer the convenience field when present; otherwise stitch the blocks.
     const answerText =
       typeof data.output_text === 'string' && data.output_text.length > 0
         ? data.output_text
         : textParts.join('\n');
 
+    if (!answerText.trim() && refusal) {
+      return failed(base, 'ChatGPT declined to answer this question, so it was not counted.');
+    }
     return { ...base, answerText, citations: dedupeCitations(rawCitations), searchQueries };
   } catch (err: any) {
-    return { ...base, error: err?.message || 'OpenAI request failed' };
+    return failedFrom(base, err, 'OpenAI request failed');
   }
 }
 
@@ -144,7 +205,7 @@ async function askPerplexity(query: string): Promise<EngineAnswer> {
       'https://api.perplexity.ai/chat/completions',
       { Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}` },
       {
-        model: process.env.PERPLEXITY_MODEL || 'sonar',
+        model: engineModelId('Perplexity'),
         messages: [
           { role: 'system', content: ANSWER_SYSTEM_PROMPT },
           { role: 'user', content: query },
@@ -152,7 +213,15 @@ async function askPerplexity(query: string): Promise<EngineAnswer> {
       }
     );
 
-    const answerText = data.choices?.[0]?.message?.content || '';
+    if (data.error) {
+      return failed(base, `Perplexity returned an error instead of an answer (${String(data.error?.message || data.error).slice(0, 120)}). Re-run the audit.`);
+    }
+    const rawContent = data.choices?.[0]?.message?.content;
+    const answerText = Array.isArray(rawContent)
+      ? rawContent.map((part: any) => (typeof part === 'string' ? part : part?.text || '')).join('')
+      : typeof rawContent === 'string'
+        ? rawContent
+        : '';
 
     // Newer responses carry search_results; older ones a bare citations array.
     const rawCitations: { url: string; title: string }[] = [];
@@ -166,7 +235,7 @@ async function askPerplexity(query: string): Promise<EngineAnswer> {
 
     return { ...base, answerText, citations: dedupeCitations(rawCitations) };
   } catch (err: any) {
-    return { ...base, error: err?.message || 'Perplexity request failed' };
+    return failedFrom(base, err, 'Perplexity request failed');
   }
 }
 
@@ -181,8 +250,11 @@ async function askAnthropic(query: string): Promise<EngineAnswer> {
         'anthropic-version': '2023-06-01',
       },
       {
-        model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5',
-        max_tokens: 2000,
+        model: engineModelId('Claude'),
+        // Output tokens are the narration, the search queries and the vendor list;
+        // retrieved pages are input. 2000 was close to the ceiling for a list-heavy
+        // answer, and a truncated answer is now (correctly) a failed lookup.
+        max_tokens: 4096,
         system: ANSWER_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: query }],
         tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
@@ -193,26 +265,45 @@ async function askAnthropic(query: string): Promise<EngineAnswer> {
     const rawCitations: { url: string; title: string }[] = [];
     const searchQueries: string[] = [];
 
-    for (const block of data.content || []) {
-      if (block.type === 'text' && typeof block.text === 'string') {
-        answerText += block.text;
-        for (const cit of block.citations || []) {
-          if (cit.url) rawCitations.push({ url: cit.url, title: cit.title || '' });
+    // `data.content` is a list of blocks; so is a search result's `content` - except
+    // when the search itself failed, where Anthropic answers HTTP 200 with a single
+    // `web_search_tool_result_error` OBJECT there (too_many_requests, unavailable,
+    // ...). Iterating that object threw, discarding an answer that had been written.
+    const asList = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+    // Adjacent text blocks are ONE passage split at citation boundaries ("Pokeworks"
+    // + "'s menu"), so they are concatenated exactly. Text on either side of a tool
+    // call is separate prose ("...search for that." + "Based on..."), and is
+    // separated by a blank line so the two sentences do not run together.
+    let toolBoundary = false;
+    for (const block of asList(data.content)) {
+      if (block?.type === 'text' && typeof block.text === 'string') {
+        answerText += (toolBoundary && answerText ? '\n\n' : '') + block.text;
+        toolBoundary = false;
+        for (const cit of asList(block.citations)) {
+          if (cit?.url) rawCitations.push({ url: cit.url, title: cit.title || '' });
         }
+      } else if (block?.type === 'server_tool_use' || block?.type === 'web_search_tool_result') {
+        toolBoundary = true;
       }
-      if (block.type === 'server_tool_use' && block.input?.query) {
+      if (block?.type === 'server_tool_use' && block.input?.query) {
         searchQueries.push(block.input.query);
       }
-      if (block.type === 'web_search_tool_result') {
-        for (const r of block.content || []) {
-          if (r?.url) rawCitations.push({ url: r.url, title: r.title || '' });
-        }
-      }
+    }
+
+    // Only a finished answer is an answer. An answer that stopped early (length
+    // limit, a paused search, a refusal, an exceeded context window) is not one
+    // that left the brand out, and counted as success it would be scored as
+    // "brand not named".
+    const stop = data.stop_reason;
+    if (stop !== undefined && stop !== null && stop !== 'end_turn' && stop !== 'stop_sequence') {
+      const why =
+        stop === 'max_tokens' ? 'it hit the length limit' : stop === 'pause_turn' ? 'its search was paused' : stop === 'refusal' ? 'it declined' : `it stopped with "${String(stop).slice(0, 40)}"`;
+      return failed(base, `Claude's answer was cut off before it finished (${why}), so it was not counted. Re-run the audit.`);
     }
 
     return { ...base, answerText, citations: dedupeCitations(rawCitations), searchQueries };
   } catch (err: any) {
-    return { ...base, error: err?.message || 'Anthropic request failed' };
+    return failedFrom(base, err, 'Anthropic request failed');
   }
 }
 

@@ -6,7 +6,9 @@ import {
   analyseAnswer,
   buildBrandMatcher,
   buildCitationSourceMap,
+  attributeInaccuracies,
   buildScorecards,
+  computeAccuracyRate,
   dedupeMatchers,
   extractCandidateVendors,
   findFirstMention,
@@ -44,6 +46,7 @@ import {
   askEngine,
   configuredEngines,
   dedupeCitations,
+  engineModelId,
   type EngineName,
 } from './src/providers.js';
 
@@ -77,10 +80,13 @@ if (process.env.NODE_ENV !== 'production') {
 const geminiBreaker = new QuotaBreaker();
 
 /** Single source of truth for the audit model, so it can be swapped in one place. */
-const AUDIT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const AUDIT_MODEL = engineModelId('Gemini');
 
 /** Bounds audit cost and runtime; each query fans out across every engine. */
 const MAX_AUDIT_QUERIES = Number(process.env.MAX_AUDIT_QUERIES || 8);
+
+/** Answers shown to the narrative model: every (query, engine) answer of a full audit. */
+const NARRATIVE_MAX_ANSWERS = Math.max(40, MAX_AUDIT_QUERIES * 4);
 
 /**
  * Builds the Express app with every route registered, but never binds a
@@ -1140,8 +1146,10 @@ Return a JSON array of exactly 3 query objects.`;
       if (engine === 'Gemini') return collectGeminiEvidence(aiInstance, query);
 
       const answer = await askEngine(engine, query.queryText);
-      const readable = answer.error ? describeProviderError(answer.error, engine) : null;
-      if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.error}`);
+      // The adapter already worded the failure for this provider; describing it again
+      // flattened every specific reason ("cut off", "declined", "out of credit") to
+      // "unexpected error".
+      if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.rawError || answer.error}`);
       return {
         queryId: query.id,
         queryText: query.queryText,
@@ -1150,8 +1158,8 @@ Return a JSON array of exactly 3 query objects.`;
         searchQueries: answer.searchQueries,
         capturedAt: new Date().toISOString(),
         engine,
-        error: readable?.message,
-        errorKind: readable?.kind,
+        error: answer.error,
+        errorKind: answer.errorKind,
       };
     });
 
@@ -1203,7 +1211,10 @@ Return a JSON array of exactly 3 query objects.`;
    */
   async function generateNarrative(aiInstance: any, ctx: any) {
     const evidenceDigest = ctx.usableEvidence
-      .slice(0, 20)
+      // Every answer the accuracy rate counts must be one the model was shown: 8 queries
+      // across 4 engines is 32. (A cap below that made unseen answers count as "no
+      // flagged inaccuracy".)
+      .slice(0, NARRATIVE_MAX_ANSWERS)
       .map((ev: QueryEvidence) => {
         const rows = ctx.analysisByEvidence.get(ev);
         const client = rows?.find((r: any) => r.brand === ctx.clientLabel);
@@ -1211,7 +1222,7 @@ Return a JSON array of exactly 3 query objects.`;
           .filter((r: any) => r.rank && (!client?.rank || r.rank < client.rank))
           .map((r: any) => r.brand);
         return [
-          `[${ev.engine}] QUERY: "${ev.queryText}"`,
+          `[Q${(ctx.queryNumberOf.get(ev) ?? 0) + 1}][${ev.engine}] QUERY: "${ev.queryText}"`,
           `Client named: ${client?.mentioned ? `YES (position ${client.rank} of ${(rows || []).filter((r: any) => r.rank).length} vendors named)` : 'NO'}`,
           `Vendors named ahead of client: ${ahead.join(', ') || 'none'}`,
           `Sources cited: ${ev.citations.map((c) => c.domain).join(', ') || 'none'}`,
@@ -1250,7 +1261,7 @@ ${evidenceDigest}
 Write the analysis. Rules:
 - Ground every statement in the evidence above. Never invent a statistic, citation or competitor.
 - If competitors appear in the scoreboard that the client did not ask us to track, call that out explicitly - discovering an unexpected rival is a valuable finding.
-- "inaccuracies": only claims made about ${ctx.businessName} that are wrong or misleading, quoting the claim verbatim. Return an empty array if the evidence shows none. Never invent one to fill space.
+- "inaccuracies": only claims made about ${ctx.businessName} that are wrong or misleading, quoting the claim verbatim. Return an empty array if the evidence shows none. Never invent one to fill space. Each one names the answer it comes from: "queryNumber" is the Q number shown in the evidence, "engine" is the engine in brackets, and "queryText" is that query copied exactly.
 - "omissions": explain WHY the brand is absent where it is absent, tied to the specific source domains above. Categories: "Schema & Entity Data", "Review & Directory Signals", "Comparison & Top 10 Coverage", "Reddit / Forum Sentiment", "Pricing & Feature Clarity".
 - "remediationPlan": 4-7 concrete tasks, each targeting a gap visible in the evidence, naming the exact source domains to pursue. Include valid JSON-LD in codeSnippet only where genuinely useful.
   priority: "P0 Critical" | "P1 High" | "P2 Medium" | "P3 Maintenance"
@@ -1276,13 +1287,14 @@ Return valid JSON matching the schema.`;
                 type: Type.OBJECT,
                 properties: {
                   engine: { type: Type.STRING },
+                  queryNumber: { type: Type.INTEGER },
                   queryText: { type: Type.STRING },
                   claimedFact: { type: Type.STRING },
                   actualFact: { type: Type.STRING },
                   impactSeverity: { type: Type.STRING },
                   sourceOriginUrl: { type: Type.STRING },
                 },
-                required: ['queryText', 'claimedFact', 'actualFact', 'impactSeverity'],
+                required: ['engine', 'queryNumber', 'queryText', 'claimedFact', 'actualFact', 'impactSeverity'],
               },
             },
             omissions: {
@@ -1473,6 +1485,10 @@ Return valid JSON matching the schema.`;
       const totalObservations = perObservation.length;
       const measuredEngines = Array.from(new Set(usableEvidence.map((e) => e.engine)));
 
+      // Which query each captured answer belongs to, so the narrative can cite it by number.
+      const queryNumberOf = new Map<QueryEvidence, number>();
+      evidenceByQuery.forEach((group, qi) => group.forEach((ev) => queryNumberOf.set(ev, qi)));
+
       // ---------- Layer 3: narrative ----------
       let narrative: any = null;
       // Why the qualitative analysis is missing, when it is. An empty
@@ -1491,6 +1507,7 @@ Return valid JSON matching the schema.`;
           competitorList,
           usableEvidence,
           analysisByEvidence,
+          queryNumberOf,
           scorecards,
           clientScore,
           citationSources,
@@ -1575,25 +1592,38 @@ Return valid JSON matching the schema.`;
         };
       });
 
-      const inaccuracies = (narrative?.inaccuracies || []).map((item: any, i: number) => ({
+      // Which captured answers exist, and which of them name the brand, keyed by
+      // (query index, engine) - the unit the accuracy rate is a rate of.
+      const mentionedKeys = new Set<string>();
+      evidenceByQuery.forEach((group, qi) => {
+        for (const ev of group) {
+          const rows = analysisByEvidence.get(ev);
+          if (!rows) continue;
+          if (rows.find((r) => r.brand === clientLabel)?.mentioned) mentionedKeys.add(`${qi}|${ev.engine}`);
+        }
+      });
+      const { kept: attributed, discarded: inaccuraciesDiscarded } = attributeInaccuracies<any>(
+        narrative?.inaccuracies || [],
+        queryList,
+        measuredEngines,
+        mentionedKeys
+      );
+      const inaccuracies = attributed.map(({ claim: item, queryIndex, engine }, i: number) => ({
         id: `inacc-${i + 1}`,
-        engine: measuredEngines.includes(item.engine) ? item.engine : measuredEngines[0],
-        queryId: queryList.find((q: any) => q.queryText === item.queryText)?.id || queryList[0]?.id || `q-${i}`,
-        queryText: item.queryText,
+        engine,
+        queryId: queryList[queryIndex].id,
+        queryText: queryList[queryIndex].queryText,
         claimedFact: item.claimedFact,
         actualFact: item.actualFact,
         impactSeverity: ['high', 'medium', 'low'].includes(item.impactSeverity) ? item.impactSeverity : 'medium',
         sourceOriginUrl: item.sourceOriginUrl,
       }));
 
-      // Accuracy is only meaningful where the brand was actually discussed.
-      // It is also only meaningful where the qualitative analysis actually ran:
-      // with no analysis there is nothing to count inaccuracies from.
-      const mentionCount = clientScore.timesMentioned;
-      const accuracyRate =
-        narrativeAvailable && mentionCount > 0
-          ? Math.max(0, Math.round(((mentionCount - inaccuracies.length) / mentionCount) * 100))
-          : null;
+      // Accuracy is only meaningful where the brand was actually discussed, and
+      // only where the qualitative analysis actually ran. Counted per answer.
+      const accuracyRate = narrativeAvailable
+        ? computeAccuracyRate(mentionedKeys, attributed.map((a) => `${a.queryIndex}|${a.engine}`))
+        : null;
 
       const untrackedRivals = scorecards
         .filter((s) => discovered.some((d) => d.toLowerCase() === s.brand.toLowerCase()))
@@ -1620,6 +1650,8 @@ Return valid JSON matching the schema.`;
         shareOfVoice: clientScore.shareOfVoice,
         leaderShare: clientScore.leaderShare,
         accuracyRate,
+        // Model-reported claims that could not be tied to a captured answer and were left out.
+        inaccuraciesDiscarded,
         avgProminence: clientScore.avgProminence,
 
         executiveSummary:
@@ -1675,8 +1707,18 @@ Return valid JSON matching the schema.`;
 
         citationSources,
         measuredEngines,
+        // The model id each measured engine was queried with, and when the answers
+        // were captured: a number from a model cannot be compared or reproduced
+        // without them.
+        engineModels: Object.fromEntries(measuredEngines.map((e) => [e, engineModelId(e as EngineName)])),
+        answersCapturedFrom: usableEvidence.map((e) => e.capturedAt).sort()[0],
+        answersCapturedTo: usableEvidence.map((e) => e.capturedAt).sort().slice(-1)[0],
         untrackedRivals,
         queriesAttempted: queryList.length,
+        // Questions that produced at least one usable answer: the independent readings behind
+        // the headline (a planned question that failed everywhere, or was never reached after
+        // the quota breaker tripped, is not a reading).
+        questionsAnswered: evidenceByQuery.filter((group) => group.some((ev) => !ev.error && ev.answerText.trim().length > 0)).length,
         queriesNamingBrand,
         observationsAttempted: allEvidence.length,
         observationsWithEvidence: usableEvidence.length,
