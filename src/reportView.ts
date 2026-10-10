@@ -273,6 +273,7 @@ export const NOT_COUNTED_REASONS: Record<string, string> = {
   no_such_question: 'It pointed at a question this audit did not ask.',
   ambiguous_question: 'It could not be tied to one question (two questions share its wording, or the number and the text disagreed).',
   engine_not_measured: 'It named an engine this audit did not measure.',
+  engine_not_identified: 'It did not say which engine\'s answer it was about, and more than one engine answered that question.',
   answer_does_not_name_brand: 'The answer it points at does not name the brand, so there is nothing for it to be wrong about.',
 };
 
@@ -283,6 +284,14 @@ export interface NotCountedView {
   /** Claims left out beyond the rows kept in the report (rows are capped). */
   moreCount: number;
   footer: string;
+}
+
+/** The plain-text block the exported report carries for claims that were not counted ('' when there are none). */
+export function notCountedExportText(view: NotCountedView | null): string {
+  if (!view) return '';
+  const rows = view.rows.map((r) => `\n- "${r.text}" (unverified): ${r.reason}`).join('');
+  const more = view.moreCount > 0 ? `\n- ...and ${view.moreCount} more not listed.` : '';
+  return `\n\nNOT COUNTED: ${view.summary} ${view.footer}${rows}${more}`;
 }
 
 /**

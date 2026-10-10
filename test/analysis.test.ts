@@ -493,6 +493,12 @@ check(
     reasons([{ queryText: 'Best poke in Austin?', engine: 'ChatGPT' }]),
     reasons([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])),
   ], [['no_such_question'], ['ambiguous_question'], ['ambiguous_question'], ['engine_not_measured'], ['answer_does_not_name_brand']]);
+  check('a claim naming no engine on a question several engines answered is "engine not identified", not "answer does not name the brand"',
+    attributeInaccuracies([{ queryNumber: 1 }], queries, ['Gemini', 'Perplexity'], new Set(['0|Gemini', '0|Perplexity'])).discardedClaims.map((d) => d.reason), ['engine_not_identified']);
+  check('...while a claim about an answer that does not name the brand stays that, with or without a named engine',
+    [attributeInaccuracies([{ queryNumber: 1, engine: 'Gemini' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Perplexity'])).discardedClaims[0].reason,
+     attributeInaccuracies([{ queryNumber: 1 }], queries, ['Gemini', 'Perplexity'], new Set()).discardedClaims[0].reason],
+    ['answer_does_not_name_brand', 'answer_does_not_name_brand']);
   check('the discarded claim itself is kept so the report can show what was left out', attr([{ queryText: 'nope', claimedFact: 'Open until midnight' }]).discardedClaims[0].claim.claimedFact, 'Open until midnight');
   check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0, discardedClaims: [] });
 

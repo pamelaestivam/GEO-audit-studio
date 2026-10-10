@@ -657,7 +657,7 @@ export function notCountedItems(discarded: DiscardedClaim<{ claimedFact?: unknow
 }
 
 /** Why a model-reported claim was left out of the counted findings. */
-export type DiscardReason = 'no_such_question' | 'ambiguous_question' | 'engine_not_measured' | 'answer_does_not_name_brand';
+export type DiscardReason = 'no_such_question' | 'ambiguous_question' | 'engine_not_measured' | 'engine_not_identified' | 'answer_does_not_name_brand';
 
 export interface DiscardedClaim<T> {
   claim: T;
@@ -748,9 +748,13 @@ export function attributeInaccuracies<T extends { queryText?: unknown; engine?: 
     if (queryIndex < 0 || !engine || !answerKeys.has(`${queryIndex}|${engine}`)) {
       discarded++;
       // Why, in the order the checks above can fail: no question it points at; a named engine that was never
-      // measured; otherwise the answer it points at does not name the brand (or the engine cannot be told).
-      const reason: DiscardReason =
-        queryIndex < 0 ? (ambiguousText ? 'ambiguous_question' : 'no_such_question') : named && !measuredEngines.some((e) => e.toLowerCase() === named) ? 'engine_not_measured' : 'answer_does_not_name_brand';
+      // measured; no engine named while several answered that question; otherwise the answer it points at
+      // does not name the brand.
+      let reason: DiscardReason;
+      if (queryIndex < 0) reason = ambiguousText ? 'ambiguous_question' : 'no_such_question';
+      else if (named && !measuredEngines.some((e) => e.toLowerCase() === named)) reason = 'engine_not_measured';
+      else if (!named && measuredEngines.filter((e) => answerKeys.has(`${queryIndex}|${e}`)).length >= 2) reason = 'engine_not_identified';
+      else reason = 'answer_does_not_name_brand';
       discardedClaims.push({ claim, reason });
       continue;
     }

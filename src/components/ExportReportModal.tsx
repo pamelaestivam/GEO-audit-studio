@@ -16,6 +16,7 @@ import {
   visibilityRange,
   wasAssessed,
   notCountedView,
+  notCountedExportText,
 } from '../reportView';
 
 interface ExportReportModalProps {
@@ -86,7 +87,7 @@ Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoic
 Fact Accuracy Rate: ${accuracy.value} (${accuracy.caption})
 
 EXECUTIVE SUMMARY:
-${audit.executiveSummary}${audit.summaryNote ? `\n(${audit.summaryNote})` : ''}${notCounted ? `\n\nNOT COUNTED: ${notCounted.summary} ${notCounted.footer}${notCounted.rows.map((r) => `\n- "${r.text}" (unverified): ${r.reason}`).join('')}${notCounted.moreCount > 0 ? `\n- ...and ${notCounted.moreCount} more not listed.` : ''}` : ''}
+${audit.executiveSummary}${audit.summaryNote ? `\n(${audit.summaryNote})` : ''}${notCountedExportText(notCounted)}
 ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.title} (${r.expectedGain})`).join('\n') || '(none proposed)'}` : '\nREMEDIATION: not generated for this audit.'}`;
 
     try {
