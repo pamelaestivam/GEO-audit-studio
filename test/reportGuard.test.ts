@@ -44,6 +44,11 @@ check('a calendar year is not a figure', containsFigure('Reviews from 2026 domin
 check('...but a year-looking number with a percent sign is', containsFigure('Up 2026%.'), true);
 check('the same digits outside a name are a figure', containsFigure('Acme grows 3 times faster.', NAMES), true);
 
+check('a "name" that is itself a figure ("10", "47%") hides nothing', [containsFigure('It gains 10% and 47%.', ['10', '47%']), containsFigure('named in three answers', ['Three'])], [true, true]);
+check('names match whole tokens only ("ty" does not hide "thirty")', containsFigure('thirty answers named it', ['ty']), true);
+check('a name with digits is case-sensitive ("3M" does not hide "3m" = 3 million)', containsFigure('Sales hit 3m units.', ['3M']), true);
+check('a name with regex characters is safe', containsFigure('Acme (v2.0) leads.', ['Acme (v2.0)']), false);
+
 // ---- the guard -----------------------------------------------------------------------
 // Independent corpus of known-bad phrasings (written by hand, not produced by the extractor).
 const BAD = [
@@ -54,7 +59,9 @@ const BAD = [
   'Fifty buyers asked.', 'It rose by nine.', 'Acme is named in 1 of 2 answers.', 'Acme appears in 0% of answers.',
   'Acme is named in 67% of answers.', 'Expect gains within 2 weeks.', 'Expect 2x traffic.', 'Acme was named in only one answer.',
   'None of the answers named it.', 'Rank in the top 3.', 'Results improve in six months.',
-  'About 2000 visitors a month.', 'Traffic from 2000 visitors is flat.', 'Thrice as likely to be named.', 'Hundreds of buyers ask this.', 'A single answer named it.',
+  'Visibility rose-40% this year.', 'Acme leads page-1 results.', 'Acme sits in the top-10 lists.', 'Acme gets top3 mentions.', 'A fifth of answers omit it.',
+  'A billion searches happen.', 'Acme was named once.', 'It appears just once.', 'Over 2000 reviews exist.', 'It was cited in 2024 answers.',
+  'A six-month plan is needed.', 'About 2000 visitors a month.', 'Traffic from 2000 visitors is flat.', 'Thrice as likely to be named.', 'Hundreds of buyers ask this.', 'A single answer named it.',
   'A pair of answers agree.', 'Several dozens of sources.'.replace('Several dozens', 'Dozens'), 'A couple of answers differ.',
 ];
 for (const sentence of BAD) check(`known-bad phrasing is removed: "${sentence}"`, guardSummary(sentence, NAMES).removed, 1);
@@ -62,7 +69,8 @@ for (const sentence of BAD) check(`known-bad phrasing is removed: "${sentence}"`
 const GOOD = [
   'Pokeworks leads the answers.', 'Competitors own the answer surface for comparison questions.', 'Acme 3M Widgets appears in the answers.',
   'In the B2B space the brand is rarely recommended.', '7-Eleven is the leading rival.', 'Reviews from 2026 dominate.',
-  'Founded in 2019, the brand is known locally.', 'Coverage since March 2025 is thin.', 'Reviews from 2024, 2025 and 2026 dominate.',
+  'Answers lean on third-party review sites such as G2.', 'Zero-click answers mean buyers never visit.', 'The team should double down on structured data.',
+  'Half-hearted coverage hurts.', 'A third-party listing is missing.', 'Visibility on ChatGPT-5 is thin.', 'Founded in 2019, the brand is known locally.', 'Coverage since March 2025 is thin.', 'Reviews from 2024, 2025 and 2026 dominate.',
   'The highest-leverage move is to earn coverage on review sites.', 'One of the leading tools is missing from the answers.',
 ];
 for (const sentence of GOOD) check(`figure-free phrasing is kept: "${sentence}"`, guardSummary(sentence, NAMES).removed, 0);

@@ -59,10 +59,12 @@ against raw evidence:
 2. Headline visibility equals its own numerator over its denominator (within 1 point).
 3. Engines reported as measured were requested; every inaccuracy ties to a question in the audit
    and a measured engine; no findings or accuracy rate when the qualitative analysis did not run.
-4. Shares of voice add up to about 100; omission counts do not exceed the questions asked.
+4. Shares of voice do not add up to more than about 100 (a sum far below 100 is not flagged); omission counts do not exceed the questions asked.
 
 A violation returns the existing failed-audit shape (not billable, not saved) with a sentence that
-says the figures failed a consistency check, and logs the violations to the server log.
+says the figures failed a consistency check, cells that say the answers were collected but no result
+is shown, and a line in the server log. The path is proved end to end with a test-only switch
+(`AUDIT_FORCE_INVARIANT_VIOLATION=1`, like `GEMINI_BASE_URL`; unset everywhere real).
 
 **Not built:** re-running the check when a saved report is read; status `invalid` as its own
 state; an incident record (only the log line exists); checking inaccuracy claims against the raw
@@ -73,12 +75,16 @@ answer text; a fuzz test against random evidence.
 The server states the measured figures itself, in the first sentence of the executive summary.
 The model writes qualitative prose only, and **the prose may contain no figure at all**: a
 sentence with a digit, a spelled-out number ("three of four"), a size-of-change word ("double",
-"threefold", "twice as many"), a fraction ("a third") or a suffixed figure ("10k") is removed.
+"threefold", "twice as many"), a fraction word from a fixed list (half, third, quarter, fifth to tenth),
+a loose quantity word ("hundreds", "a pair", "billion"), a count like "only one answer" or "named once",
+or a suffixed figure ("10k") is removed. The lists are finite: a phrasing not in them is not caught
+(`TECH_DEBT.md` 2.15). Ordinary words that contain one ("third-party", "zero-click", "double down")
+are kept.
 Digits inside names (the business, rivals, a typed query, identifiers such as "B2B" or "GPT-5") and
 calendar years are not figures. Matching a figure against the computed set was rejected: a wrong
 figure that happens to equal some count (0 to 6 nearly always do) would pass as verified. A removal
 is counted into `summaryNote` ("N sentences from the written summary were removed because they
-contained a figure we could not verify. Only the figures in the first sentence are measured.") on
+appeared to state a figure we could not verify. Only the figures in the first sentence are measured.") on
 the page and in the export. No second model call.
 
 Also guarded: a model-supplied "questions affected" count is bounded by the questions asked, and

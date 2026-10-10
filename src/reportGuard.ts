@@ -42,7 +42,10 @@ const SCALES: Record<string, number> = {
 const MULTIPLIER_WORDS = ['double', 'doubled', 'doubles', 'doubling', 'twice', 'triple', 'tripled', 'triples', 'tripling', 'quadruple', 'quadrupled', 'quintuple', 'quintupled'];
 
 /** Quantity words with no exact value ("hundreds of buyers", "a pair of answers", "thrice as likely"). */
-const LOOSE_QUANTITY_WORDS = ['thrice', 'hundreds', 'thousands', 'millions', 'dozens', 'pair', 'pairs', 'couple', 'couples'];
+const LOOSE_QUANTITY_WORDS = [
+  'thrice', 'hundreds', 'thousands', 'millions', 'dozens', 'pair', 'pairs', 'couple', 'couples', 'billion', 'trillion',
+  'fifth', 'fifths', 'sixth', 'sixths', 'eighth', 'eighths', 'tenth', 'tenths',
+];
 
 const UNIT_WORDS = Object.keys(UNITS).filter((w) => UNITS[w] <= 9).join('|');
 const TENS_WORDS = Object.keys(TENS).join('|');
@@ -56,7 +59,7 @@ const NUMBER_RE = new RegExp(
     String.raw`|\b(?:${ALL_UNIT_WORDS}|${TENS_WORDS}|hundred|thousand|million)[-\s]?fold\b` +
     String.raw`|\b(?:${MULTIPLIER_WORDS.join('|')})\b` +
     String.raw`|\b(?:${TENS_WORDS})(?:[-\s](?:${UNIT_WORDS}))?\b` +
-    String.raw`|\b(?:${ALL_UNIT_WORDS}|${SCALE_WORDS}|none|single|${LOOSE_QUANTITY_WORDS.join('|')})\b`,
+    String.raw`|\b(?:${ALL_UNIT_WORDS}|${SCALE_WORDS}|none|single|once|${LOOSE_QUANTITY_WORDS.join('|')})\b`,
   'gi'
 );
 
@@ -94,10 +97,15 @@ export function extractNumbers(text: string): number[] {
       continue;
     }
     if (/fold$/.test(token) || MULTIPLIER_WORDS.includes(token)) {
+      if (token === 'double' && /^\s+down\b/i.test(t.slice(end, end + 8))) continue; // "double down on schema"
       found.push(NaN);
       continue;
     }
-    if (LOOSE_QUANTITY_WORDS.includes(token)) {
+    // "third-party", "zero-click", "half-hearted" and "double down" are ordinary words, not figures (a short
+    // allowlist: "six-month" or "half-year" must stay figures).
+    if ((token === 'third' || token === 'zero' || token === 'half') && /^-(?:party|click|hearted|baked|way|trust)\b/i.test(t.slice(end, end + 9))) continue;
+    if (token === 'once' || LOOSE_QUANTITY_WORDS.includes(token)) {
+      if (token === 'once' && !/\b(?:only|just|exactly|named|mentioned|cited|appears?|appeared|listed)\s+(?:\w+\s+)?$/i.test(t.slice(Math.max(0, (m.index ?? 0) - 24), m.index ?? 0))) continue;
       found.push(NaN);
       continue;
     }
@@ -143,11 +151,17 @@ function escapeRegExp(v: string): string {
 function withoutIdentifiers(text: string, names: readonly string[]): string {
   let out = text;
   const list = names.map((n) => String(n ?? '').trim()).filter((n) => n.length >= 2).sort((a, b) => b.length - a.length);
-  for (const n of list) out = out.replace(new RegExp(escapeRegExp(n), 'gi'), ' ');
+  for (const n of list) {
+    // A "name" that is itself a figure ("10", "47%", "Three") would hide every such figure: not a name.
+    if (/^[\d\s.,%$+-]+$/.test(n) || (extractNumbers(n).length > 0 && /^[a-z\s-]+$/i.test(n))) continue;
+    // Whole tokens only; case-insensitive unless the name has digits (so "3M" does not hide "3m" = 3 million).
+    out = out.replace(new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(n)}(?![A-Za-z0-9])`, /\d/.test(n) ? 'g' : 'gi'), ' ');
+  }
   return (
     out
-      // Identifiers that start with letters ("B2B", "GPT-5", "Q3").
-      .replace(/\b[A-Za-z]+-?\d+[A-Za-z0-9]*\b/g, ' ')
+      // Identifiers: capital letters then digits ("B2B", "GPT-5", "Q3", "SOC2") or a camel-case name then digits
+      // ("ChatGPT-5"). "top3", "page-1", "rose-40%" and "Top-10" are figures.
+      .replace(/\b(?:[A-Z]{1,6}|[A-Z][a-z]*[A-Z][A-Za-z]*)-?\d+[A-Za-z0-9]*\b/g, ' ')
       // A year only where it reads as one. First a list of years or a year closing a clause
       // ("2024, 2025 and", "founded in 2019,"), then a year after a preposition or month ("from
       // 2019", "March 2025"). "About 2000 visitors" stays a figure.

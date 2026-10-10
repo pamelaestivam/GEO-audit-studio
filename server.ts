@@ -1633,6 +1633,13 @@ Return valid JSON matching the schema.`;
         .slice(0, 8)
         .map((s) => s.brand);
 
+      // Questions that got a usable answer in which the brand was named by no engine: what an omission
+      // "affects" when the model's own count is missing or impossible. Computed, not guessed.
+      const unnamedQuestions = evidenceByQuery.filter(
+        (group, qi) =>
+          group.some((ev) => !ev.error && ev.answerText.trim().length > 0) && !group.some((ev) => mentionedKeys.has(`${qi}|${ev.engine}`))
+      ).length;
+
       // Strings whose digits are not "figures": what the person typed and what the audit found.
       const guardNames: string[] = [
         businessName, cleanDomain, industry, coreOfferings, targetAudience,
@@ -1678,12 +1685,12 @@ Return valid JSON matching the schema.`;
           id: `om-${i + 1}`,
           category: o.category,
           description: o.description,
-          // A model-supplied count is bounded by the number of questions actually asked; an
-          // impossible one is replaced by the count of answers that did not name the brand.
+          // A model-supplied count is bounded by the number of questions actually asked; a missing or
+          // impossible one is replaced by the number of answered questions that never named the brand.
           affectedQueriesCount:
             Number.isInteger(o.affectedQueriesCount) && o.affectedQueriesCount >= 0 && o.affectedQueriesCount <= queryList.length
               ? o.affectedQueriesCount
-              : Math.min(queryList.length, Math.max(0, totalObservations - clientScore.timesMentioned)),
+              : unnamedQuestions,
           rootCause: o.rootCause,
           recommendation: o.recommendation,
         })),
@@ -1744,7 +1751,7 @@ Return valid JSON matching the schema.`;
       // person typed or the audit found ("3M", "7-Eleven", a query "top 10 ...") are not figures.
       const factualSentence = `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.`;
       const guarded = narrativeAvailable
-        ? guardSummary(String(narrative?.executiveSummary || ''), guardNames)
+        ? guardSummary(typeof narrative?.executiveSummary === 'string' ? narrative.executiveSummary : '', guardNames)
         : null;
       report.executiveSummary = [
         factualSentence,
@@ -1753,19 +1760,32 @@ Return valid JSON matching the schema.`;
         .filter(Boolean)
         .join(' ');
       if (guarded && guarded.removed > 0) {
-        (report as any).summaryNote = `${guarded.removed} ${guarded.removed === 1 ? 'sentence' : 'sentences'} from the written summary ${guarded.removed === 1 ? 'was' : 'were'} removed because ${guarded.removed === 1 ? 'it' : 'they'} contained a figure we could not verify. Only the figures in the first sentence are measured.`;
+        (report as any).summaryNote = `${guarded.removed} ${guarded.removed === 1 ? 'sentence' : 'sentences'} from the written summary ${guarded.removed === 1 ? 'was' : 'were'} removed because ${guarded.removed === 1 ? 'it' : 'they'} appeared to state a figure we could not verify. Only the figures in the first sentence are measured.`;
         console.warn(`[guard] removed ${guarded.removed} of ${guarded.total} summary sentences that stated a figure`);
       }
 
       // A report whose own figures contradict each other is a bug in this code, not a finding
       // about the client. It is never shown as done: the person gets a failed audit that says
       // so (not billable, not saved) and the violation is logged for the owner.
-      const violations = assertReportInvariants(report);
+      // AUDIT_FORCE_INVARIANT_VIOLATION=1 is a test-only switch (like GEMINI_BASE_URL) that makes the
+      // check report a violation, so the end-to-end test can prove the failure path. Unset everywhere real.
+      const violations = process.env.AUDIT_FORCE_INVARIANT_VIOLATION === '1' ? ['forced by the test switch'] : assertReportInvariants(report);
       if (violations.length > 0) {
         console.error(`[invariant] report failed ${violations.length} consistency check(s): ${violations.join('; ')}`);
+        const failedShape = generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines);
         return {
           report: {
-            ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),
+            ...failedShape,
+            // The answers WERE collected: the cells must not claim a retrieval failure that did not happen.
+            queriesTested: failedShape.queriesTested.map((q: any) => ({
+              ...q,
+              engines: Object.fromEntries(
+                Object.entries(q.engines).map(([name, cell]: [string, any]) => [
+                  name,
+                  { ...cell, excerpt: `Answers were collected from ${name}, but this audit's figures failed a consistency check, so no result is shown.` },
+                ])
+              ),
+            })),
             degraded: true,
             executiveSummary:
               'This audit finished collecting answers, but its figures failed an internal consistency check, so none of them are shown and nothing here is a measurement.',

@@ -30,10 +30,10 @@ let mode: FakeMode = 'narrative_invented_numbers';
 
 async function main() {
   const fake = await startFakeGemini(GEMINI_PORT, () => mode);
-  const app: ChildProcess = spawn('node', ['dist/server.cjs'], {
+  const spawnApp = (port: number, extraEnv: Record<string, string> = {}): ChildProcess => spawn('node', ['dist/server.cjs'], {
     env: {
       ...process.env,
-      PORT: String(APP_PORT),
+      PORT: String(port),
       NODE_ENV: 'production',
       GEMINI_API_KEY: 'fake-key',
       GEMINI_BASE_URL: `http://127.0.0.1:${GEMINI_PORT}`,
@@ -45,13 +45,19 @@ async function main() {
       PERPLEXITY_API_KEY: '',
       ANTHROPIC_API_KEY: '',
       ...TEST_AUTH_ENV,
+      ...extraEnv,
     },
     stdio: 'ignore',
   });
+  const app = spawnApp(APP_PORT);
+  // A second server whose consistency check is forced to fail, to prove the failure path.
+  const APP2_PORT = APP_PORT + 301;
+  const forcedApp = spawnApp(APP2_PORT, { AUDIT_FORCE_INVARIANT_VIOLATION: '1' });
   const base = `http://127.0.0.1:${APP_PORT}`;
+  const forcedBase = `http://127.0.0.1:${APP2_PORT}`;
 
-  async function runAudit(): Promise<any> {
-    const start = await fetch(`${base}/api/audit/run`, {
+  async function runAudit(b: string = base): Promise<any> {
+    const start = await fetch(`${b}/api/audit/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -66,8 +72,8 @@ async function main() {
     const { jobId } = await start.json();
     for (let i = 0; i < 240; i++) {
       await new Promise((r) => setTimeout(r, 250));
-      const d = await (await fetch(`${base}/api/audit/job/${jobId}`)).json();
-      if (d.status !== 'running') return d.report;
+      const d = await (await fetch(`${b}/api/audit/job/${jobId}`)).json();
+      if (d.status !== 'running') return Object.assign(d.report ?? {}, { __job: d });
     }
     return null;
   }
@@ -75,7 +81,7 @@ async function main() {
   try {
     for (let i = 0; i < 80; i++) {
       try {
-        if ((await fetch(`${base}/api/health`)).ok) break;
+        if ((await fetch(`${base}/api/health`)).ok && (await fetch(`${forcedBase}/api/health`)).ok) break;
       } catch {
         /* not up yet */
       }
@@ -91,10 +97,19 @@ async function main() {
     check('a size-of-change word with no digit ("double") never reaches the summary', /double/i.test(summary), false);
     check('an invented spelled-out figure ("three months") never reaches the summary', /three months/i.test(summary), false);
     check('the plain sentence is kept', /Pokeworks is the main rival/.test(summary), true);
-    check('the removal is said: four sentences, with the reason and what is still true', report?.summaryNote, '4 sentences from the written summary were removed because they contained a figure we could not verify. Only the figures in the first sentence are measured.');
+    check('the removal is said: four sentences, with the reason and what is still true', report?.summaryNote, '4 sentences from the written summary were removed because they appeared to state a figure we could not verify. Only the figures in the first sentence are measured.');
 
     check('an impossible model-supplied count (47 questions in a 2-question audit) is replaced, not shown', (report?.omissions || []).map((o: any) => o.affectedQueriesCount <= report.queriesAttempted), [true]);
     check('a model forecast with a figure ("+40% visibility in 30 days") is replaced by the plain default', (report?.remediationPlan || []).map((t: any) => t.expectedGain), ['Improved answer-engine citation rate']);
+
+    // ---- a violated invariant becomes a visible failed audit, not a result
+    const forced = await runAudit(forcedBase);
+    check('a violated consistency check returns a failed audit, not a result', [forced.degraded, forced.narrativeAvailable], [true, false]);
+    check('...whose summary says the figures failed a check and nothing is a measurement', /failed an internal consistency check/.test(forced.executiveSummary || '') && /nothing here is a measurement/.test(forced.executiveSummary || ''), true);
+    check('...whose per-question cells do not claim a retrieval failure that did not happen', (forced.queriesTested || []).every((q: any) => Object.values(q.engines).every((c: any) => /Answers were collected from .*consistency check/.test(c.excerpt) && !/No answer was captured/.test(c.excerpt))), true);
+    check('...and which was not saved to the person\'s history', forced.__job?.saved, false);
+    const history = await (await fetch(`${forcedBase}/api/audits`)).json();
+    check('...so the audit list stays empty', (history.audits || []).length, 0);
 
     mode = 'ok';
     report = await runAudit();
@@ -103,6 +118,7 @@ async function main() {
     check('...and the audit is not rejected by the consistency check', report?.degraded !== true, true);
   } finally {
     app.kill();
+    forcedApp.kill();
     fake.close();
   }
   console.log(failures === 0 ? '\nReport guard end-to-end checks passed.' : `\n${failures} check(s) failed.`);

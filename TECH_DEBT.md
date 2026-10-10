@@ -726,6 +726,9 @@ those files is a re-run, not a regression, but it must be recorded here.
   real model phrasing has not been sampled. It removes more than strictly needed (a sentence
   repeating a measured figure, "named twice" as prose), which is the safe direction.
 - **Known extraction misses and over-removals:** a bare 4-digit number is read as a year only after a preposition or month, or when it closes a clause or a list of years, so "in 2000 visitors" style phrasings are treated as figures (safe direction) and a year in an unusual position is removed; quantity words not in the lists ("several", "a handful", "most") are deliberately not figures, and others may be missing.
+- **Claims without a figure are not checked.** "Acme never appears", "in every answer", "ranked first" pass the guard even when the measured sentence beside them says otherwise (visibility 33%). The guard is about figures; a check of absolute claims against the measured rates needs its own design.
+- **Removing a sentence can orphan its neighbours** ("Despite this, the brand is well positioned" after the sentence it answered was removed). The measured sentence comes first and the note says sentences were removed; nothing repairs the prose.
+- **Non-English number words and CJK numerals are not recognised** ("trois sur quatre", "五"); this matters only if a summary comes back in another language.
 - **The invariants check relations between the report's own figures, not the figures against the raw
   answers.** It cannot catch a wrong brand match, and on realistic reports it holds by construction
   today; it is a tripwire for future code changes, not evidence of correctness. A violation costs
