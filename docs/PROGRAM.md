@@ -8,6 +8,11 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 
 Last updated: 2026-10-10.
 
+**First action for a cold session:** run `npm ci && npm run verify` (it should report
+0 failures), then take the first row marked **next** in section 2 (currently item 3).
+The owner actions in section 3 run in parallel and block only the rows that name them;
+never wait on them to do the others.
+
 ## 1. Where it runs
 
 | Fact | Evidence |
