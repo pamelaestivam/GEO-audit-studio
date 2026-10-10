@@ -107,18 +107,17 @@ absent "...and is not called MERGED" "$out" "MERGED"
 # only a merge whose subject names the branch counts.
 g checkout -q main
 g reset -q --hard origin/main
-g commit -q --allow-empty -m "local main work"
-tipold=$(g rev-parse origin/main)
-git -C "$tmp/work" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "x" 2>/dev/null
-g checkout -q -b scratch-remote origin/main
-g commit -q --allow-empty -m "remote moves"
+g checkout -q -b scratch-remote
+g commit -q --allow-empty -m "someone else's work, pushed to main"
+remote_tip=$(g rev-parse HEAD)
 g push -q origin scratch-remote:main
 g checkout -q main
+g commit -q --allow-empty -m "local main work, not pushed"
 g fetch -q origin
 g merge -q --no-ff -m "Merge branch 'main' of github.com:owner/repo" origin/main
 g push -q origin main
 g fetch -q origin
-g checkout -q -b claude/never-worked "$tipold"
+g checkout -q -b claude/never-worked "$remote_tip"
 out=$(status)
 absent "a branch cut at a commit that a pull-merge on main brought in is not called MERGED" "$out" "MERGED"
 check "...it has nothing of its own" "$out" "nothing to merge (every commit on it is already on main)"
