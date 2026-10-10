@@ -97,6 +97,10 @@ const NARRATIVE_MAX_ANSWERS = Math.max(40, MAX_AUDIT_QUERIES * 4);
  * never call `app.listen`).
  */
 async function buildApp() {
+  if (process.env.AUDIT_FORCE_INVARIANT_VIOLATION === '1') {
+    // A test-only switch: set on a real deployment it makes EVERY audit fail its consistency check. Say so loudly.
+    console.warn('[config] AUDIT_FORCE_INVARIANT_VIOLATION=1 is set: every audit will fail its consistency check. This is a test-only switch; unset it.');
+  }
   const app = express();
 
   app.disable('x-powered-by');
