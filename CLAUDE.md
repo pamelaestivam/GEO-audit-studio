@@ -325,6 +325,11 @@ have to be rediscovered from scratch, not so it can be skipped.
   calls; two simultaneous advances give one `advanced` and one `busy` and one real call; a job on another
   instance of a stateless deployment is a typed 404; advances are not counted by the per-minute limiter; an
   undriven audit stops holding a concurrent-audit slot (needs a current `dist/`)
+- `npx tsx test/auditResumeE2E.test.ts` — the real built server on a durable `DATA_DIR`, killed with SIGKILL and started
+  again: an audit killed between steps finishes with exactly the planned calls; one killed mid-call repeats that call
+  once and says so (a repeated call and an incident); one killed three times on the same step stops with a sentence
+  and the calls are capped; a page-driven audit carries on when the page asks again; a job with no plan is failed at
+  boot with a code and a sentence (needs a current `dist/`)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
   quota-breaker rule (including the several-engine cases no end-to-end test can reach)
 - `npx tsx test/auditStepsE2E.test.ts` — the real built server, a fake Gemini that counts hits, and the real

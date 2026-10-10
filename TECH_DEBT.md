@@ -750,6 +750,27 @@ those files is a re-run, not a regression, but it must be recorded here.
   is too small to hit from outside), and when it fires the page-driven request just answers `busy`. Jobs that end in
   error (a failed or exhausted step, a driver error) are not compacted, so their raw step answers stay for the
   seven-day retention; the person gets no report in those cases.
+- **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper, so a job whose
+  holder dies without the whole process dying (not a case the server has today) is not picked up until the next
+  restart or, for a page-driven job, until the page asks again. The supported topology is ONE server process per
+  database file: `releaseLeasesNotHeldBy(instanceId)` at boot frees every other holder's live claim, so two
+  processes sharing a file would repeat each other's in-flight calls (counted and recorded, but paid for); the
+  shared pacer/breaker and a safer liveness rule are S6/row 8. A call that was in flight when the server died is
+  made again once: that is one extra paid call, recorded as a repeated call and a `lease_expired_midcall` incident,
+  and a step killed three times ends the audit (`step_attempts_exceeded`, not billable, calls capped at three).
+  Jobs made before audits were stepped have no plan and cannot be resumed; they are failed at boot with a sentence.
+  Memory stores (Vercel today) lose their jobs with the process: nothing here changes that (owner O-4).
+  Found in the S5 review and kept as limits: a restart during a pacing pause (before any call) still uses an attempt,
+  so three quick restarts within the 1.2 s / 0.6 s pauses end the audit with the three-tries sentence although no call
+  was repeated; and a kill in the ~1 ms between saving the report and marking the job done saves a second copy of
+  the report on resume (report ids are random). Neither spends beyond the plan.
+  Also found, reachable only by editing the database by hand, so recorded rather than built: when a step is exhausted,
+  its own start mark is cleared before the audit is closed, so if attempts 1 and 2 both died before any call started
+  and the failing step is the first one, the audit is recorded as free although a call may have been paid for; and a
+  running job whose steps are all done (no real path creates it) would sit running until the 15-minute reaper instead
+  of ending with a sentence and an `invariant` incident (step g's health checks are the place for that). A failure
+  inside the start-up resume itself is logged and recorded as an `invariant` incident; the interrupted audits are then
+  left as they were and end at the run-time limit.
 - **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
   HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
   says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). What a person actually sees if
@@ -854,10 +875,10 @@ Written 2026-10-09 so none of these is rediscovered:
 - **The limiter table is capped (50,000 keys)** and fails closed past that: a
   flood from many addresses can make new addresses wait. IPv6 clients are limited
   by /64 to make that hard. Acceptable against unbounded memory.
-- **Jobs are not resumable.** An audit cut off by a restart or deploy is marked
-  failed with a sentence (and is not counted against the daily budget); the
-  person re-runs it. A job reaped as stuck after 15 minutes that later finishes
-  is still recorded.
+- **Jobs are resumable only on a durable store, at boot.** An audit cut off by a restart or deploy is taken up
+  again from its step (step e, slice S5; see its limits below). Memory stores (Vercel today) lose their jobs with
+  the process; a job with no plan, or older than the maximum run time, is failed with a sentence. A job reaped
+  as stuck after 15 minutes that later finishes is still recorded.
 - **No automated backups.** `node scripts/backup.mjs` makes a consistent
   snapshot (a plain copy of `geo-audit.sqlite` alone loses recent writes - they
   are in the WAL), but nothing schedules it or copies it off the host. Use the

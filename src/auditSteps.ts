@@ -25,6 +25,15 @@ export interface StoredAuditPlan extends AuditPlan {
   request: { businessName?: string; domain?: string; industry?: string; coreOfferings?: string; competitors?: any; queries?: any[] };
 }
 
+/**
+ * Whether a booting server may release the step claims held by every OTHER holder. True only where one process owns
+ * the database (a durable store, not a serverless host): where many instances share a store, other holders' claims
+ * are live and releasing them would take over steps that are being worked on right now. Pure.
+ */
+export function mayReleaseOtherHoldersAtBoot(where: { durable: boolean; serverless: boolean }): boolean {
+  return where.durable && !where.serverless;
+}
+
 /** The ordered steps for a plan. `measurable` is false when no engine (or no analysis key) is configured. */
 export function planSteps(plan: Pick<StoredAuditPlan, 'queryList' | 'engines'>, measurable: boolean): PlannedStep[] {
   if (!measurable) return [{ key: 'finalize', kind: 'finalize' }];

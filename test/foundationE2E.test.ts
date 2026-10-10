@@ -293,7 +293,7 @@ async function main() {
     const oldJob = await rawFetch(`${A2.base}/api/audit/job/${run.body.jobId}`, { headers: authed(alice.body.token) });
     check('a finished job can still be polled after a restart', (await oldJob.json()).status, 'done');
 
-    // --- an audit running when the server dies is failed honestly, not lost
+    // --- an audit running when the server dies is resumed from the step it was on, not lost
     mode = 'slow';
     const inflight = await startAudit(A2, alice.body.token);
     check('a slow audit is accepted', inflight.status, 202);
@@ -304,10 +304,16 @@ async function main() {
     assert('the server restarts after being killed mid-audit', !!A3);
     if (!A3) return;
     apps.push(A3);
-    const orphan = await rawFetch(`${A3.base}/api/audit/job/${inflight.body.jobId}`, { headers: authed(alice.body.token) });
-    const orphanBody = await orphan.json();
-    check('the orphaned job is reported as failed, not stuck "running"', [orphan.status, orphanBody.status], [500, 'error']);
-    assert('...with a sentence that says what happened', /restarted/i.test(orphanBody.error), JSON.stringify(orphanBody));
+    let orphan: Response | null = null;
+    let orphanBody: any = null;
+    for (let i = 0; i < 120; i++) {
+      orphan = await rawFetch(`${A3.base}/api/audit/job/${inflight.body.jobId}`, { headers: authed(alice.body.token) });
+      orphanBody = await orphan.json();
+      if (orphanBody.status !== 'running') break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    check('the job the killed server was running is resumed and finishes (it is not left "running" or failed)', [orphan?.status, orphanBody?.status, orphanBody?.report?.degraded !== true], [200, 'done', true]);
+    assert('...and it was kept in the person\'s history', orphanBody?.saved === true, JSON.stringify(Object.keys(orphanBody || {})));
 
     // --- delete
     const del = await rawFetch(`${A3.base}/api/audits/${reportId}`, { method: 'DELETE', headers: authed(alice.body.token) });
@@ -512,9 +518,9 @@ async function main() {
       check('...and made ONE real Gemini call between them, not one each', fake.hits() - before, 1);
     }
 
-    // --- a restart or deploy must not cost anyone their daily allowance
+    // --- a restart or deploy must not cost anyone a second allowance: the interrupted audit is resumed and counted ONCE
     const orphanDir = tmp();
-    const O1 = await startApp({ DATA_DIR: orphanDir, USER_AUDITS_PER_DAY: '1', GLOBAL_AUDITS_PER_DAY: '0' });
+    const O1 = await startApp({ DATA_DIR: orphanDir, USER_AUDITS_PER_DAY: '2', GLOBAL_AUDITS_PER_DAY: '0' });
     if (O1) {
       apps.push(O1);
       const t = (await login(O1, 'orphan@example.com')).body.token;
@@ -524,14 +530,21 @@ async function main() {
       await new Promise((r) => setTimeout(r, 400));
       await stopApp(O1, 'SIGKILL');
       mode = 'ok';
-      const O2 = await startApp({ DATA_DIR: orphanDir, USER_AUDITS_PER_DAY: '1', GLOBAL_AUDITS_PER_DAY: '0' }, O1.port);
+      const O2 = await startApp({ DATA_DIR: orphanDir, USER_AUDITS_PER_DAY: '2', GLOBAL_AUDITS_PER_DAY: '0' }, O1.port);
       if (O2) {
         apps.push(O2);
-        const fresh = await startAudit(O2, t, BIZ);
-        check('after the crash the person can run their one audit of the day (the orphan was not counted)', fresh.status, 202);
         const replay = await startAudit(O2, t, BIZ, { 'Idempotency-Key': 'orphan-click' });
-        check('replaying the orphaned click returns the same job', replay.body.jobId, started.body.jobId);
-        check('...and says what that job IS now (failed), not "running"', replay.body.status, 'error');
+        check('replaying the interrupted click returns the same job', replay.body.jobId, started.body.jobId);
+        let resumed: any = null;
+        for (let i = 0; i < 120; i++) {
+          resumed = await (await rawFetch(`${O2.base}/api/audit/job/${started.body.jobId}`, { headers: authed(t) })).json();
+          if (resumed.status !== 'running') break;
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        check('...which was resumed after the crash and finished', resumed?.status, 'done');
+        const fresh = await startAudit(O2, t, BIZ);
+        check('the interrupted audit used one of two allowances, so the person can run one more', fresh.status, 202);
+        check('...and then the allowance is spent: the interrupted audit was counted once, not twice and not never', (await startAudit(O2, t, BIZ)).status, 429);
       }
     }
 

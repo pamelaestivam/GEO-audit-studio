@@ -173,8 +173,9 @@ on a host that cannot keep the process alive (see `TECH_DEBT.md` 1.4c).
 - **Spend control:** per-person and global *daily audit* limits and a
   concurrency cap (all stored, so they survive restarts), plus a per-person
   *hourly lookup* limit and per-IP request limits (in memory, so they reset on
-  restart). An audit that collected no evidence, or was cut off by a restart or
-  deploy, is not counted against anyone. **There is no spend limit on your
+  restart). An audit that collected no evidence is not counted against anyone. An audit
+  cut off by a restart or deploy is resumed (see Deploys) and counted once; one that could not be resumed
+  and made no engine call is not counted. **There is no spend limit on your
   Gemini key itself** - set one in Google's console, and check real usage there
   (https://aistudio.google.com/apikey); the app cannot see your quota.
 - **Security you should know about:** the session token is kept in the browser's
@@ -196,9 +197,14 @@ on a host that cannot keep the process alive (see `TECH_DEBT.md` 1.4c).
   `-shm` beside it, start. Nothing in this repo schedules backups or copies them
   off the host: run the script from your host's cron and copy the file elsewhere.
 - **Deploys:** a deploy replaces the instance. With a single disk-backed instance
-  that is a short outage, and any audit running at that moment is marked failed
-  with a sentence ("The server restarted while this audit was running...") rather
-  than left hanging. Saved audits are unaffected.
+  that is a short outage, and any audit running at that moment is taken up again when the new instance is listening, from the
+  step it was on (on a persistent disk only). A call that was in flight is made again once: that is one extra
+  paid call, recorded as a repeated call and an incident. An audit older than 15 minutes is not resumed; it is
+  stopped with a sentence. A job made before audits were run as steps is failed with a sentence
+  ("The server restarted while this audit was running..."). Run ONE process per database file: starting a
+  second process on the same file (an overlapping deploy, a manual start) releases the first one's live claims
+  and repeats a paid call per overlap; a second process that cannot bind the port does not (it exits before
+  it touches anything). Saved audits are unaffected.
 - **Quota exhausted:** the app tells people and stops spending (circuit breaker,
   `TECH_DEBT.md` 2.3a). A restart clears its memory of the failure, not the
   provider's limit.
