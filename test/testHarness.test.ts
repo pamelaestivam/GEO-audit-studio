@@ -26,11 +26,12 @@ const MARKER = 'harness-ok';
 const MAX_LOOKBACK = 60;
 
 const indentOf = (line: string) => line.length - line.trimStart().length;
-const stripComment = (line: string) => line.replace(/\/\/.*$/, '');
+// a `//` starts a comment only at the start of a line or after whitespace, so a URL in a string is left alone
+const stripComment = (line: string) => line.replace(/(^|\s)\/\/.*$/, '$1');
 
 /** Line numbers (1-based) of bare returns that follow a negated check without setting a failing exit status. */
 function findSilentEarlyReturns(source: string): number[] {
-  const raw = source.split('\n');
+  const raw = source.split(/\r?\n/);
   const code = raw.map(stripComment);
   const found: number[] = [];
   for (let i = 0; i < raw.length; i++) {
@@ -99,6 +100,8 @@ const mustFlag: Record<string, string> = {
   'return ;': 'if (!up) {\n  return ;\n}',
   'return undefined': 'if (!up) {\n  return undefined;\n}',
   'a comment that mentions the status': 'if (!up) {\n  // TODO set process.exitCode = 1\n  return;\n}',
+  'CRLF line endings with a comment that mentions the status': 'if (!up) {\r\n  // process.exitCode = 1\r\n  return;\r\n}',
+  'a URL in the condition': "if (!(await fetch('http://127.0.0.1:3000/api/health')).ok) return;",
   'a status of zero': 'if (!up) {\n  process.exitCode = 0;\n  return;\n}',
   'the status set after the return': 'if (!up) {\n  return;\n  process.exitCode = 1;\n}',
 };
@@ -118,6 +121,7 @@ const mustLeave: Record<string, string> = {
   'a return in a plain function body': 'function f() {\n  log("x");\n  return;\n}',
   'a return under an else': 'if (!a) {\n  process.exitCode = 1;\n} else {\n  return;\n}',
   'a handler return marked harness-ok': 'if (!req.url) {\n  res.end();\n  return; // harness-ok: fake-server handler\n}',
+  'a URL on a line that sets the status': "if (!up) {\n  log('see http://x'); process.exitCode = 1;\n  return;\n}",
   'a marker on the if line': 'if (!body) return; // harness-ok: handler has already answered',
 };
 for (const [name, src] of Object.entries(mustLeave)) {
