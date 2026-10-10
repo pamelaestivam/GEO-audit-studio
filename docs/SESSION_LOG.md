@@ -197,8 +197,9 @@ window; passed alone three times) and, later, `mvpHardeningE2E` ("Could not reac
 running in parallel; passed alone three times and on a clean rerun). The causes were not captured (the suites spawn the
 server with `stdio: 'ignore'`).
 The daily live check is red on every deployment and that is correct: issue #36 says the production site has no engine key
-and no sign-in configuration (owner actions O-2, O-3). Before building S6 I read the code: the reaper already bounds a
-hung audit on every submit, read and advance, and a shared pacer, breaker and counter need a second process on one file,
-which the boot release forbids. S6 is deferred on purpose (reasons in `docs/PLAN_STEP_E.md` under S6); S7 is next.
+and no sign-in configuration (owner actions O-2, O-3). Before building S6 I read the code; the review of that
+reading corrected it: the reaper bounds a hung audit's row (on submit, job read and advance), not the process; a Gemini
+call with no HTTP timeout can block the queue; the breaker, counter and pacer reset on restart. S6 is deferred on purpose
+(reasons and residual exposure in `docs/PLAN_STEP_E.md` under S6, entries in TECH_DEBT); S7 is next.
 Nothing on the live site, and no real audit, can change until the owner does O-2 and O-3.
 
