@@ -7,6 +7,7 @@ import {
   buildBrandMatcher,
   buildCitationSourceMap,
   attributeInaccuracies,
+  notCountedItems,
   buildScorecards,
   computeAccuracyRate,
   dedupeMatchers,
@@ -1656,7 +1657,7 @@ Return valid JSON matching the schema.`;
           if (rows.find((r) => r.brand === clientLabel)?.mentioned) mentionedKeys.add(`${qi}|${ev.engine}`);
         }
       });
-      const { kept: attributed, discarded: inaccuraciesDiscarded } = attributeInaccuracies<any>(
+      const { kept: attributed, discarded: inaccuraciesDiscarded, discardedClaims } = attributeInaccuracies<any>(
         narrative?.inaccuracies || [],
         queryList,
         measuredEngines,
@@ -1720,6 +1721,8 @@ Return valid JSON matching the schema.`;
         accuracyRate,
         // Model-reported claims that could not be tied to a captured answer and were left out.
         inaccuraciesDiscarded,
+        // What was left out, in the model's words and with the reason, so "not counted" can be inspected.
+        notCounted: notCountedItems(discardedClaims),
         avgProminence: clientScore.avgProminence,
 
         // Filled in below, once the figures it may state are known.

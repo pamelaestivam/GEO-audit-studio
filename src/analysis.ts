@@ -637,6 +637,33 @@ export interface QueryRef {
   queryText: string;
 }
 
+/** One row of the report's "Not counted" list: what the model said, why it is not in any figure. */
+export interface NotCountedItem {
+  kind: 'inaccuracy_claim';
+  /** The model's own words, trimmed. Shown as unverified text, never as a finding. */
+  text: string;
+  reason: DiscardReason;
+}
+
+/** At most this many rows are kept in a report; the count of everything left out stays in `inaccuraciesDiscarded`. */
+export const MAX_NOT_COUNTED_ROWS = 20;
+
+/** The "Not counted" rows for discarded claims: the model's claimed fact (or a placeholder), trimmed. Pure. */
+export function notCountedItems(discarded: DiscardedClaim<{ claimedFact?: unknown }>[]): NotCountedItem[] {
+  return discarded.slice(0, MAX_NOT_COUNTED_ROWS).map(({ claim, reason }) => {
+    const raw = typeof claim?.claimedFact === 'string' ? claim.claimedFact.replace(/\s+/g, ' ').trim() : '';
+    return { kind: 'inaccuracy_claim' as const, text: raw ? (Array.from(raw).length > 300 ? `${Array.from(raw).slice(0, 297).join('')}...` : raw) : '(the analysis gave no text for this claim)', reason };
+  });
+}
+
+/** Why a model-reported claim was left out of the counted findings. */
+export type DiscardReason = 'no_such_question' | 'ambiguous_question' | 'engine_not_measured' | 'engine_not_identified' | 'answer_does_not_name_brand';
+
+export interface DiscardedClaim<T> {
+  claim: T;
+  reason: DiscardReason;
+}
+
 export interface AttributedInaccuracy<T> {
   claim: T;
   /** Index into the audit's query list. */
@@ -682,8 +709,9 @@ export function attributeInaccuracies<T extends { queryText?: unknown; engine?: 
   measuredEngines: string[],
   /** `${queryIndex}|${engine}` of every captured answer that names the brand. */
   answerKeys: Set<string>
-): { kept: AttributedInaccuracy<T>[]; discarded: number } {
+): { kept: AttributedInaccuracy<T>[]; discarded: number; discardedClaims: DiscardedClaim<T>[] } {
   const kept: AttributedInaccuracy<T>[] = [];
+  const discardedClaims: DiscardedClaim<T>[] = [];
   let discarded = 0;
   const normalisedQueries = queries.map((q) => normaliseQueryText(q.queryText || ''));
   for (const claim of Array.isArray(claims) ? claims : []) {
@@ -691,16 +719,19 @@ export function attributeInaccuracies<T extends { queryText?: unknown; engine?: 
     const number = typeof claim?.queryNumber === 'number' ? claim.queryNumber : Number.NaN;
     const byNumber = Number.isInteger(number) && number >= 1 && number <= queries.length ? number - 1 : -1;
     let byText = -1;
+    let ambiguousText = false;
     if (typeof claim?.queryText === 'string' && claim.queryText.trim()) {
       const wanted = normaliseQueryText(claim.queryText);
       const matches = normalisedQueries.reduce<number[]>((acc, q, i) => (q === wanted ? [...acc, i] : acc), []);
       // Two questions with the same text cannot be told apart by text.
       if (matches.length === 1) byText = matches[0];
+      else if (matches.length > 1) ambiguousText = true;
     }
     if (byNumber >= 0 && byText >= 0 && byNumber !== byText) {
       // The number and the text name different questions (an off-by-one, a 0-based
       // count): either could be the mistake, so the claim is not placed under a guess.
       discarded++;
+      discardedClaims.push({ claim, reason: 'ambiguous_question' });
       continue;
     }
     queryIndex = byNumber >= 0 ? byNumber : byText;
@@ -716,11 +747,20 @@ export function attributeInaccuracies<T extends { queryText?: unknown; engine?: 
 
     if (queryIndex < 0 || !engine || !answerKeys.has(`${queryIndex}|${engine}`)) {
       discarded++;
+      // Why, in the order the checks above can fail: no question it points at; a named engine that was never
+      // measured; no engine named while several answered that question; otherwise the answer it points at
+      // does not name the brand.
+      let reason: DiscardReason;
+      if (queryIndex < 0) reason = ambiguousText ? 'ambiguous_question' : 'no_such_question';
+      else if (named && !measuredEngines.some((e) => e.toLowerCase() === named)) reason = 'engine_not_measured';
+      else if (!named && measuredEngines.filter((e) => answerKeys.has(`${queryIndex}|${e}`)).length >= 2) reason = 'engine_not_identified';
+      else reason = 'answer_does_not_name_brand';
+      discardedClaims.push({ claim, reason });
       continue;
     }
     kept.push({ claim, queryIndex, engine });
   }
-  return { kept, discarded };
+  return { kept, discarded, discardedClaims };
 }
 
 /**

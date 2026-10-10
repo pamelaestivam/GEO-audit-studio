@@ -253,6 +253,9 @@ export function assertReportInvariants(report: any): string[] {
   if (report.inaccuraciesDiscarded !== undefined && (!isNum(report.inaccuraciesDiscarded) || report.inaccuraciesDiscarded < 0)) {
     v.push(`inaccuraciesDiscarded is ${JSON.stringify(report.inaccuraciesDiscarded)}, not a count`);
   }
+  if (Array.isArray(report.notCounted) && isNum(report.inaccuraciesDiscarded) && report.notCounted.length > report.inaccuraciesDiscarded) {
+    v.push(`${report.notCounted.length} items listed as not counted but only ${report.inaccuraciesDiscarded} claims were discarded`);
+  }
   for (const o of Array.isArray(report.omissions) ? report.omissions : []) {
     const n = o?.affectedQueriesCount;
     if (!isNum(n) || n < 0 || !Number.isInteger(n) || (isNum(report.queriesAttempted) && n > report.queriesAttempted)) {

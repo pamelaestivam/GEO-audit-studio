@@ -155,6 +155,12 @@ trigger on a finished **Production** deployment is now observed: Vercel's bot fi
 `main` after the merges of #33 and #34 (both runs executed and failed on the same two configuration
 checks, as expected). Dependabot opens a pull request per pinned action monthly.
 
+**Later still (PR for the "Not counted" list):** #39, the $0 guard, is merged (145ca8c): paid engines
+need `ALLOW_PAID_ENGINES=1`, Gemini calls are counted per UTC day with an optional operator cap that
+fails closed on an unreadable value, and a paid key alone now yields a precise reason. A mid-review
+failure was my own doing, not the product's: two full suites ran at once and one rebuilt `dist/` under
+the other (lesson: one suite at a time per checkout, see `docs/INSIGHTS.md` I-17).
+
 **Step e planned (docs/PLAN_STEP_E.md):** a read-only planning pass sliced the step-wise audit into seven
 small PRs with a boundary test each (counting real fake-Gemini hits, as `quotaEfficiencyE2E` does), the
 risks, and a list of what must not be claimed or built without the durable store or the owner. Its
