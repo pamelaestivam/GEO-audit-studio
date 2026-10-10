@@ -184,6 +184,8 @@ export function analyseEvidence(input: {
 export interface AssembledAudit {
   report: any;
   degraded?: true;
+  /** Set when the report broke its own consistency rules: the server records an incident and does not pass this on. */
+  invariantViolations?: string[];
 }
 
 /**
@@ -490,6 +492,8 @@ export function assembleReport(input: {
           'This audit finished, but its figures failed an internal consistency check, so none of them are shown. Nothing was guessed. Please run the audit again; if it happens twice, tell the owner.',
       },
       degraded: true,
+      // For the server to record as an incident: this is a bug in this code and the owner must be able to see it.
+      invariantViolations: violations,
     };
   }
 

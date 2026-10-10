@@ -116,6 +116,15 @@ export type ClaimResult =
 
 export type IncidentKind = 'lease_expired_midcall' | 'step_attempts_exceeded' | 'step_exception' | 'invariant';
 
+export interface JobOutcomes {
+  failed: Record<string, number>;
+  degraded: number;
+  succeeded: number;
+}
+
+/** The synthetic owner of the readiness probe's own job row, which is not an audit anyone ran. */
+export const READINESS_PROBE_OWNER = 'readiness@system';
+
 export interface Incident {
   id: number;
   jobId?: string;
@@ -255,6 +264,12 @@ export interface Store {
   recordIncident(incident: Omit<Incident, 'id'>): Promise<void>;
   /** Newest first. */
   listIncidents(opts?: { jobId?: string; limit?: number }): Promise<Incident[]>;
+  /**
+   * How audits that ENDED since `sinceMs` turned out (the readiness probe's own row excluded): `failed` ended in error,
+   * counted by failure code ('none' when none was recorded); `degraded` finished but produced no result (every answer
+   * engine failed, or the figures failed a check); `succeeded` finished with a real report.
+   */
+  countJobOutcomesSince(sinceMs: number): Promise<JobOutcomes>;
   /** Jobs still running that started within `maxAgeMs`. */
   /**
    * Jobs still running that started within `maxAgeMs`. With `staleAfterMs`, a job nobody has touched for that
@@ -465,6 +480,17 @@ export class MemoryStore implements Store {
       .sort((a, b) => b.id - a.id)
       .slice(0, clampLimit(opts.limit))
       .map((i) => ({ ...i }));
+  }
+  async countJobOutcomesSince(sinceMs: number) {
+    const failed: Record<string, number> = {};
+    let degraded = 0;
+    let succeeded = 0;
+    for (const j of this.jobs.values()) {
+      if (j.owner === READINESS_PROBE_OWNER || (j.finishedAt ?? j.startedAt) < sinceMs) continue;
+      if (j.status === 'error') failed[j.failCode ?? 'none'] = (failed[j.failCode ?? 'none'] ?? 0) + 1;
+      else if (j.status === 'done') j.billable === false ? degraded++ : succeeded++;
+    }
+    return { failed: Object.fromEntries(Object.entries(failed).sort(([a], [b]) => a.localeCompare(b))), degraded, succeeded };
   }
   async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     let n = 0;
@@ -898,6 +924,23 @@ export class SqliteStore implements Store {
       ? this.db.prepare('SELECT * FROM incidents WHERE job_id = ? ORDER BY id DESC LIMIT ?').all(opts.jobId, clampLimit(opts.limit))
       : this.db.prepare('SELECT * FROM incidents ORDER BY id DESC LIMIT ?').all(clampLimit(opts.limit));
     return rows.map((r: Row) => ({ id: r.id, jobId: r.job_id ?? undefined, at: r.at, kind: r.kind, detail: r.detail }) as Incident);
+  }
+  async countJobOutcomesSince(sinceMs: number) {
+    const rows = this.db
+      .prepare(
+        `SELECT status, COALESCE(fail_code, 'none') AS code, billable AS billable, COUNT(*) AS n FROM jobs
+         WHERE owner <> ? AND status IN ('error', 'done') AND COALESCE(finished_at, started_at) >= ? GROUP BY status, code, billable`
+      )
+      .all(READINESS_PROBE_OWNER, sinceMs) as { status: string; code: string; billable: number; n: number }[];
+    const failed: Record<string, number> = {};
+    let degraded = 0;
+    let succeeded = 0;
+    for (const r of rows) {
+      if (r.status === 'error') failed[r.code] = (failed[r.code] ?? 0) + Number(r.n);
+      else if (r.billable === 0) degraded += Number(r.n);
+      else succeeded += Number(r.n);
+    }
+    return { failed: Object.fromEntries(Object.entries(failed).sort(([a], [b]) => a.localeCompare(b))), degraded, succeeded };
   }
   async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     return staleAfterMs === undefined

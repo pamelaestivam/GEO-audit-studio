@@ -431,6 +431,27 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   check(t('releasing leases not held by this instance frees the other\'s and keeps this instance\'s'), [await rr.releaseLeasesNotHeldBy(rr.instanceId), (await rr.claimStep('rr-planned', 'inline:me:rr-planned', LEASE, NOW + 2, 3)).outcome, (await rr.claimStep('rr-planned-2', 'client:other:x', LEASE, NOW + 2, 3)).outcome], [1, 'claimed', 'busy']);
   check(t('...the step taken over after a release is attempt 2'), (await rr.getJobSteps('rr-planned'))[0].attempt, 2);
 
+  // --- how audits ended is counted inside a window that is about when they ENDED
+  const fc = await make();
+  const SINCE = NOW - DAY;
+  await fc.createJob(job({ id: 'fc-a', status: 'error', failCode: 'stuck', startedAt: NOW - 1000, finishedAt: NOW - 500 }));
+  await fc.createJob(job({ id: 'fc-b', status: 'error', failCode: 'stuck', startedAt: NOW - 2000, finishedAt: NOW - 500 }));
+  await fc.createJob(job({ id: 'fc-c', status: 'error', startedAt: NOW - 3000, finishedAt: NOW - 500 }));
+  await fc.createJob(job({ id: 'fc-old', status: 'error', failCode: 'restarted', startedAt: NOW - 10 * DAY, finishedAt: NOW - 10 * DAY + 1000 }));
+  await fc.createJob(job({ id: 'fc-ok', status: 'done', startedAt: NOW - 1000, finishedAt: NOW - 500, billable: true }));
+  await fc.createJob(job({ id: 'fc-ok2', status: 'done', startedAt: NOW - 1000, finishedAt: NOW - 500 }));
+  await fc.createJob(job({ id: 'fc-empty', status: 'done', startedAt: NOW - 1000, finishedAt: NOW - 500, billable: false }));
+  await fc.createJob(job({ id: 'fc-run', status: 'running', startedAt: NOW - 1000 }));
+  await fc.createJob(job({ id: 'fc-probe', owner: 'readiness@system', status: 'done', startedAt: NOW - 1000, finishedAt: NOW - 500, billable: false }));
+  check(t('outcomes: failures counted by reason (a missing reason reads "none"), empty and normal finishes counted, running, out-of-window and the readiness probe\'s own row not'), await fc.countJobOutcomesSince(SINCE), { failed: { none: 1, stuck: 2 }, degraded: 1, succeeded: 2 });
+  check(t('...an empty window counts nothing'), await fc.countJobOutcomesSince(NOW + DAY), { failed: {}, degraded: 0, succeeded: 0 });
+  // the window is about when an audit ENDED (started 25 hours ago, ended a minute ago: counted), and its edge is inclusive
+  await fc.createJob(job({ id: 'fc-long', status: 'error', failCode: 'stuck', startedAt: SINCE - 60_000, finishedAt: NOW - 60_000 }));
+  await fc.createJob(job({ id: 'fc-edge', status: 'error', failCode: 'edge', startedAt: SINCE - 5000, finishedAt: SINCE }));
+  await fc.createJob(job({ id: 'fc-just-outside', status: 'error', failCode: 'outside', startedAt: SINCE - 5000, finishedAt: SINCE - 1 }));
+  const w = await fc.countJobOutcomesSince(SINCE);
+  check(t('...an audit that started before the window but ended inside it counts, one ending exactly at the edge counts, one a millisecond outside does not'), [w.failed.stuck, w.failed.edge, w.failed.outside], [3, 1, undefined]);
+
   // --- pruning removes a pruned job's steps and old incidents
   const before = NOW + 1000;
   await s.createPlannedJob(job({ id: 'old1', startedAt: NOW - 10 * DAY }), PLAN);

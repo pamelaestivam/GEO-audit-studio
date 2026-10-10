@@ -750,6 +750,18 @@ those files is a re-run, not a regression, but it must be recorded here.
   is too small to hit from outside), and when it fires the page-driven request just answers `busy`. Jobs that end in
   error (a failed or exhausted step, a driver error) are not compacted, so their raw step answers stay for the
   seven-day retention; the person gets no report in those cases.
+- **Readiness `recent trouble` (step g, first slice) limits:** it only reaches the daily live check when the owner adds
+  the two repository secrets (PROGRAM O-3 step 4), and production has no sign-in at all until O-3 step 1 is done, so
+  today the daily run warns that it was skipped and nothing alerts anyone about failed audits. It reads the last 24
+  hours from the store: on a memory store (Vercel today) it says "Not checked" rather than a verdict; it counts audits
+  by when they ENDED; a fault stays red for up to 24 hours after it is fixed (every Production deployment re-runs the
+  live check and adds a comment to the one open issue; there is no acknowledge), and a durable database that holds
+  older error rows with no failure code (from before codes existed) would read them as "ended without a recorded
+  reason" for the first day after an upgrade. A hung server-driven audit is reaped as "took too long", which is
+  counted as expected; counts alone cannot tell it from an abandoned tab. The detail goes to any signed-in user
+  (counts, kind labels and one incident sentence; no ids, names or provider payloads); an incident sentence is built
+  from step keys and describeProviderError text only. The page that shows the owner the list is not built. It reads the newest 200 incidents; above that a burst of
+  minor ones could push a serious one out of the window (the failure counts, read separately, still show it).
 - **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper, so a job whose
   holder dies without the whole process dying (not a case the server has today) is not picked up until the next
   restart or, for a page-driven job, until the page asks again. The supported topology is ONE server process per
