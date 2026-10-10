@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -55,7 +55,11 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
           ? lookup('https://www.Acme-Widgets.com/menu')
           : wantsJson
             ? JSON.stringify({
-                executiveSummary: 'Narrative ok.',
+                executiveSummary:
+                  mode === 'narrative_invented_numbers'
+                    ? // One sentence of verified figures, one invented digit figure, one invented spelled-out figure, one plain sentence.
+                      'Poke House is named in 2 of 2 answers. Expect traffic to grow 47% after the fix. Revenue should double within three months. Pokeworks is the main rival.'
+                    : 'Narrative ok.',
                 // 'narrative_findings': two claims about the SAME real answer, one about a
                 // query that was never asked, one naming an engine that was never measured.
                 inaccuracies:

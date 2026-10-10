@@ -42,6 +42,7 @@ import {
 import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
+import { guardSummary, allowedFigures, assertReportInvariants } from './src/reportGuard.js';
 import {
   askEngine,
   configuredEngines,
@@ -1654,13 +1655,8 @@ Return valid JSON matching the schema.`;
         inaccuraciesDiscarded,
         avgProminence: clientScore.avgProminence,
 
-        executiveSummary:
-          narrative?.executiveSummary ||
-          `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.${
-            narrativeAvailable
-              ? ''
-              : ' The qualitative analysis (inaccuracies, omissions, remediation plan) could not be generated, so none of it is reported here.'
-          }`,
+        // Filled in below, once the figures it may state are known (see summariseSafely).
+        executiveSummary: '',
 
         // Whether the qualitative analysis ran. The three arrays below are
         // empty when it did not, and an empty array must not read as "none found".
@@ -1726,6 +1722,41 @@ Return valid JSON matching the schema.`;
         observationsMentioned: clientScore.timesMentioned,
         enginesRequested: engines,
       };
+
+      // The model writes the qualitative summary; the figures come from the measurements. A
+      // sentence stating a figure that is not in the computed set is removed and the removal
+      // is said, never hidden (docs/RELIABILITY.md section 4).
+      const factualSentence = `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.`;
+      const guarded = narrativeAvailable
+        ? guardSummary(String(narrative?.executiveSummary || ''), allowedFigures(report, [businessName, cleanDomain, ...competitorList, ...queryList.map((q: any) => q.queryText || '')]))
+        : null;
+      report.executiveSummary = [
+        factualSentence,
+        guarded ? guarded.text : 'The qualitative analysis (inaccuracies, omissions, remediation plan) could not be generated, so none of it is reported here.',
+      ]
+        .filter(Boolean)
+        .join(' ');
+      if (guarded && guarded.removed > 0) {
+        (report as any).summaryNote = `${guarded.removed} ${guarded.removed === 1 ? 'sentence' : 'sentences'} from the written summary ${guarded.removed === 1 ? 'was' : 'were'} removed because ${guarded.removed === 1 ? 'it' : 'they'} contained a figure we could not verify. Every figure on this page is measured.`;
+        console.warn(`[guard] removed ${guarded.removed} of ${guarded.total} summary sentences with unverified figures`);
+      }
+
+      // A report whose own figures contradict each other is a bug in this code, not a finding
+      // about the client. It is never shown as done: the person gets a failed audit that says
+      // so (not billable, not saved) and the violation is logged for the owner.
+      const violations = assertReportInvariants(report);
+      if (violations.length > 0) {
+        console.error(`[invariant] report failed ${violations.length} consistency check(s): ${violations.join('; ')}`);
+        return {
+          report: {
+            ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),
+            degraded: true,
+            degradedReason:
+              'This audit finished, but its figures failed an internal consistency check, so none of them are shown. Nothing was guessed. Please run the audit again; if it happens twice, tell the owner.',
+          },
+          degraded: true,
+        };
+      }
 
       return { report };
     } catch (err: any) {

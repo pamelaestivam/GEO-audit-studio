@@ -713,6 +713,24 @@ did not reproduce locally in three runs. A port collision is the suspected cause
 port back, and fail loudly on a bind error. Until then a single unexplained red in
 those files is a re-run, not a regression, but it must be recorded here.
 
+### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
+
+- **Report checks cover the summary, not the other written fields.** `src/reportGuard.ts` removes
+  sentences with unverified figures from the executive summary only. Omission descriptions and
+  remediation text (where "within 30 days" is ordinary advice) are not guarded; a figure there is
+  not claimed to be measured, but a reader may take it that way. A wider guard needs a decision
+  about which advice numbers are acceptable.
+- **The invariants check relations between figures, not the figures against the raw answers.**
+  It catches a report that contradicts itself (visibility not matching its own numerator and
+  denominator, an inaccuracy about an unmeasured engine). It cannot catch a wrong brand match.
+- **"Not counted" strip and panel, and cited-only as its own number** (RELIABILITY step c, second
+  half) are not built. Until they are, discarded items are only a count (`inaccuraciesDiscarded`).
+- **The summary-note line on screen and in the export has no browser test** (the API sets it and is
+  tested end to end; the rendering is a conditional paragraph).
+- **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
+  no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and
+  slice) has no test that fails if removed; three components each poll the status endpoint.
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer
