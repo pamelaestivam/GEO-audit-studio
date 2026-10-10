@@ -108,6 +108,8 @@ own deployment (section 6).
 | `GEMINI_API_KEY` | yes | Answers queries and writes the analysis |
 | `SESSION_SECRET` | yes (production) | Signs sessions. 32+ characters. Rotating it signs everyone out |
 | `ACCESS_CODES` | yes (production) | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
+| `AUDIT_FORCE_STEP_EXCEPTION` | **never in production** | Test-only: a step kind (`collect`, `narrative` or `finalize`) that is made to throw, to prove a broken step ends the audit as a failed audit with an incident. The server logs a warning at start-up if it is set |
+| `AUDIT_LEASE_MS` | no (600000) | How long one claim on an audit step lasts; it must be longer than the longest a single step can take |
 | `AUDIT_FORCE_INVARIANT_VIOLATION` | **never in production** | Test-only: `1` makes every audit fail its consistency check, to prove the failure path. The server logs a warning at start-up if it is set |
 | `TRUST_PROXY` | no (0) | Reverse proxies in front of the server (1 on Render/Fly/nginx). **Leave at 0 when exposed directly**: otherwise anyone can send their own `X-Forwarded-For` and dodge every per-IP limit. Too low behind a proxy = all visitors throttled together (safe, but wrong) |
 | `USER_LOOKUPS_PER_HOUR` | no (30) | Brand detection, query suggestions and added queries per person per hour (per process; resets on restart) |
