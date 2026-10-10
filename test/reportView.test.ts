@@ -6,6 +6,7 @@
  * single answer presented as a 100/100 score with no sample size.
  */
 import {
+  notCountedView,
   describeAccuracy,
   findingCounts,
   formatPercent,
@@ -185,6 +186,21 @@ check('accuracy with discarded claims is labelled an upper bound', /at most this
 check('accuracy without discards keeps the plain caption', /no flagged inaccuracy \(model judgement/.test(describeAccuracy({ degraded: false, narrativeAvailable: true, accuracyRate: 100 }).caption), true);
 
 check('discarded claims are carried as unattributed, never as a clean zero', findingCounts({ degraded: false, narrativeAvailable: true, inaccuracies: [], omissions: [], inaccuraciesDiscarded: 2 })?.unattributed, 2);
+
+// ---- the "Not counted" list --------------------------------------------------------------
+const nc = (over: any = {}) => ({ degraded: false, narrativeAvailable: true, inaccuraciesDiscarded: 2, notCounted: [
+  { kind: 'inaccuracy_claim' as const, text: 'Open until midnight', reason: 'no_such_question' as const },
+  { kind: 'inaccuracy_claim' as const, text: 'Ships free', reason: 'engine_not_measured' as const },
+], ...over });
+check('nothing left out, nothing shown', notCountedView(nc({ inaccuraciesDiscarded: 0, notCounted: [] })), null);
+check('a failed audit has no list (nothing was assessed)', [notCountedView(nc({ degraded: true })), notCountedView(nc({ narrativeAvailable: false }))], [null, null]);
+const view = notCountedView(nc());
+check('the strip says how many were not counted', view?.summary, '2 claims the analysis reported were not counted.');
+check('each row keeps the model\'s words and gets a plain reason', view?.rows.map((r) => [r.text, /did not ask/.test(r.reason) || /did not measure/.test(r.reason)]), [['Open until midnight', true], ['Ships free', true]]);
+check('the footer says none is verified and accuracy is an upper bound', /none of them is verified/.test(view?.footer || '') && /"at most"/.test(view?.footer || ''), true);
+check('the singular reads correctly', notCountedView(nc({ inaccuraciesDiscarded: 1, notCounted: [nc().notCounted[0]] }))?.summary, '1 claim the analysis reported was not counted.');
+check('rows are capped in the report, and the rest are still counted', [notCountedView(nc({ inaccuraciesDiscarded: 25, notCounted: Array(20).fill(nc().notCounted[0]) }))?.moreCount, notCountedView(nc())?.moreCount], [5, 0]);
+check('an old saved audit with a count but no rows still shows the strip (and no invented rows)', [notCountedView(nc({ notCounted: undefined }))?.summary, notCountedView(nc({ notCounted: undefined }))?.rows.length, notCountedView(nc({ notCounted: undefined }))?.moreCount], ['2 claims the analysis reported were not counted.', 0, 2]);
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

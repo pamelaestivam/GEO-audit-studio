@@ -133,6 +133,8 @@ export interface AuditReport {
   answersCapturedTo?: string;
   /** Model-reported inaccuracy claims that could not be tied to a captured answer and were left out. */
   inaccuraciesDiscarded?: number;
+  /** The claims behind `inaccuraciesDiscarded` (at most 20), in the model's words with the reason each was left out. */
+  notCounted?: { kind: 'inaccuracy_claim'; text: string; reason: 'no_such_question' | 'ambiguous_question' | 'engine_not_measured' | 'answer_does_not_name_brand' }[];
   executiveSummary: string;
   queriesTested: AuditQuery[];
   inaccuracies: InaccuracyItem[];

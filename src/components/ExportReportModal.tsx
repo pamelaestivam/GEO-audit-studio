@@ -15,6 +15,7 @@ import {
   rangeExplanation,
   visibilityRange,
   wasAssessed,
+  notCountedView,
 } from '../reportView';
 
 interface ExportReportModalProps {
@@ -48,6 +49,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
     ? `Answers captured ${new Date(audit.answersCapturedFrom).toUTCString()}${audit.answersCapturedTo && audit.answersCapturedTo !== audit.answersCapturedFrom ? ` to ${new Date(audit.answersCapturedTo).toUTCString()}` : ''}.`
     : null;
   const assessed = wasAssessed(audit);
+  const notCounted = notCountedView(audit);
   const enginesLine = (audit.measuredEngines || []).length
     ? (audit.measuredEngines || []).join(', ')
     : 'none';
@@ -84,7 +86,7 @@ Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoic
 Fact Accuracy Rate: ${accuracy.value} (${accuracy.caption})
 
 EXECUTIVE SUMMARY:
-${audit.executiveSummary}${audit.summaryNote ? `\n(${audit.summaryNote})` : ''}
+${audit.executiveSummary}${audit.summaryNote ? `\n(${audit.summaryNote})` : ''}${notCounted ? `\n\nNOT COUNTED: ${notCounted.summary} ${notCounted.footer}${notCounted.rows.map((r) => `\n- "${r.text}" (unverified): ${r.reason}`).join('')}${notCounted.moreCount > 0 ? `\n- ...and ${notCounted.moreCount} more not listed.` : ''}` : ''}
 ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.title} (${r.expectedGain})`).join('\n') || '(none proposed)'}` : '\nREMEDIATION: not generated for this audit.'}`;
 
     try {
@@ -198,6 +200,7 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
               {audit.executiveSummary}
             </p>
             {audit.summaryNote && <p className="mt-2 text-xs text-slate-400">{audit.summaryNote}</p>}
+            {notCounted && <p className="mt-2 text-xs text-slate-400">{notCounted.summary} {notCounted.footer}</p>}
           </div>
 
           {/* Top Remediation Action Plan */}

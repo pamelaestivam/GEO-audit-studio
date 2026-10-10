@@ -485,7 +485,16 @@ check(
   const onlyOne = attributeInaccuracies([{ queryText: 'Best poke in Austin?' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Perplexity']));
   check('...but if only one engine answered that query, an unnamed engine can only mean it', onlyOne.kept.map((k) => k.engine), ['Perplexity']);
   check('a claim about an answer that does not name the brand is discarded (the list and the accuracy rate must agree)', attr([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])).discarded, 1);
-  check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0 });
+  const reasons = (claims: any[], engines = ['Gemini'], keys = answers) => attr(claims, engines, keys).discardedClaims.map((d) => d.reason);
+  check('each discarded claim carries the reason: no such question / ambiguous question / engine never measured / answer does not name the brand', [
+    reasons([{ queryText: 'not a query we asked', engine: 'Gemini' }]),
+    reasons([{ queryText: 'poke cost', engine: 'Gemini' }]),
+    reasons([{ queryNumber: 2, queryText: 'Best poke in Austin?', engine: 'Gemini' }]),
+    reasons([{ queryText: 'Best poke in Austin?', engine: 'ChatGPT' }]),
+    reasons([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])),
+  ], [['no_such_question'], ['ambiguous_question'], ['ambiguous_question'], ['engine_not_measured'], ['answer_does_not_name_brand']]);
+  check('the discarded claim itself is kept so the report can show what was left out', attr([{ queryText: 'nope', claimedFact: 'Open until midnight' }]).discardedClaims[0].claim.claimedFact, 'Open until midnight');
+  check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0, discardedClaims: [] });
 
   const mentioned = new Set(['0|Gemini', '1|Gemini']);
   check('accuracy counts answers, not claims: two claims on one of two mentioning answers is 50%', computeAccuracyRate(mentioned, ['0|Gemini', '0|Gemini']), 50);

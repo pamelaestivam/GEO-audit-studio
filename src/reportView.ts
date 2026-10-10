@@ -267,3 +267,39 @@ export function findingCounts(
 export function wasAssessed(audit: Pick<AuditReport, 'degraded' | 'narrativeAvailable'>): boolean {
   return hasMeasurements(audit) && audit.narrativeAvailable !== false;
 }
+
+/** Plain-language reasons a reported claim is not in any counted figure. */
+export const NOT_COUNTED_REASONS: Record<string, string> = {
+  no_such_question: 'It pointed at a question this audit did not ask.',
+  ambiguous_question: 'It could not be tied to one question (two questions share its wording, or the number and the text disagreed).',
+  engine_not_measured: 'It named an engine this audit did not measure.',
+  answer_does_not_name_brand: 'The answer it points at does not name the brand, so there is nothing for it to be wrong about.',
+};
+
+export interface NotCountedView {
+  /** One sentence for the strip at the top of the report. */
+  summary: string;
+  rows: { text: string; reason: string }[];
+  /** Claims left out beyond the rows kept in the report (rows are capped). */
+  moreCount: number;
+  footer: string;
+}
+
+/**
+ * The "Not counted" strip and list: what the analysis reported that is in no figure, in its own words and
+ * with the reason. null when nothing was left out, or when no analysis was assessed (nothing to leave out).
+ */
+export function notCountedView(
+  audit: Pick<AuditReport, 'degraded' | 'narrativeAvailable' | 'inaccuraciesDiscarded' | 'notCounted'>
+): NotCountedView | null {
+  if (!hasMeasurements(audit) || audit.narrativeAvailable === false) return null;
+  const count = audit.inaccuraciesDiscarded ?? 0;
+  if (count <= 0) return null;
+  const rows = (audit.notCounted || []).map((r) => ({ text: r.text, reason: NOT_COUNTED_REASONS[r.reason] || 'It could not be tied to a captured answer.' }));
+  return {
+    summary: `${count} ${count === 1 ? 'claim' : 'claims'} the analysis reported ${count === 1 ? 'was' : 'were'} not counted.`,
+    rows,
+    moreCount: Math.max(0, count - rows.length),
+    footer: 'These are left out of every figure and every rate, and none of them is verified. Accuracy is shown as "at most" the number printed.',
+  };
+}

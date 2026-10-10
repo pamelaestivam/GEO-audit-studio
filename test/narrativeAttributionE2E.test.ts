@@ -97,6 +97,7 @@ async function main() {
     const claimSchema = (asked?.generationConfig ?? asked?.config)?.responseSchema?.properties?.inaccuracies?.items;
     check('the response schema requires engine and queryNumber, and queryNumber is an integer', [claimSchema?.required?.includes('engine'), claimSchema?.required?.includes('queryNumber'), claimSchema?.properties?.queryNumber?.type], [true, true, 'INTEGER']);
     check('accuracy counts answers: one of two mentioning answers was flagged, so 50%, not 0%', report?.accuracyRate, 50);
+    check('the discarded claims are listed, in the model\'s words, with the reason each was left out', (report?.notCounted || []).map((n: any) => [n.text, n.reason]), [['e', 'no_such_question'], ['g', 'engine_not_measured']]);
   } finally {
     app.kill();
     fake.close();
