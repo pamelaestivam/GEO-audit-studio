@@ -718,7 +718,8 @@ used to print FAIL and still exit 0 (`if (!up) return;` skipped the exit status)
 fails the run, so this flake turns a slow machine's `npm test` red instead of passing
 silently. That is the intended trade, but it makes the port fix above more worth doing:
 `retrySpendE2E` (3900-4100) failed once this way in a full local run and passed alone
-three times in a row. The cause of that start failure was not captured because the
+three times in a row; later, in another full run, `mvpHardeningE2E` failed once with "Could not reach
+Gemini" while other commands ran in parallel and passed alone three times and on a clean rerun. The cause of that start failure was not captured because the
 suites spawn the server with `stdio: 'ignore'`; capturing its output on a failed start
 belongs with the same fix. `test/testHarness.test.ts` guards the early-return shape.
 The guard is a tripwire for the shapes this repo's tests produce, not a proof. Known contrived
@@ -787,7 +788,27 @@ fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <
   (counts, kind labels and one incident sentence; no ids, names or provider payloads); an incident sentence is built
   from step keys and describeProviderError text only. The page that shows the owner the list is not built. It reads the newest 200 incidents; above that a burst of
   minor ones could push a serious one out of the window (the failure counts, read separately, still show it).
-- **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper, so a job whose
+- **A Gemini call that never settles wedges the process's Gemini queue (found 2026-10-10 in the S6 scoping review; code
+  reading and a simulation of the chain logic, NOT reproduced against the built server):** `scheduleGeminiCall` chains every
+  call behind the previous one and the Gemini client sets no HTTP timeout (see the S4 limits entry), so one call that
+  never settles blocks every later Gemini call in that process (brand lookup, query generation, the readiness probe, every
+  audit) until restart. `failStuck` only edits the job row, so each new audit is admitted once the 15-minute age frees its
+  slot, marks a call started (billable) before the queued call ever runs, and is reaped in turn. Node's own fetch timeouts
+  (about 300 s of silence) make a true wedge unlikely, but three attempts of that size (two retries) also exceed the 15-minute reaper, so
+  an audit the person was told "took too long" can keep spending: `decideClaim` still lets the inline driver finish a job
+  whose `failCode` is stuck. Fix: a per-call timeout (AbortSignal) shorter than the step lease, with a test whose fake
+  Gemini never answers and which expects the step to fail visibly and the next call to run. Not a sweeper.
+- **Breaker, call counter and pacer reset on restart (found 2026-10-10):** all three are in memory of one process, and S5
+  now re-drives interrupted inline audits after a restart, so a tripped daily breaker or a used `GEMINI_DAILY_CALL_CAP`
+  is forgotten and the first resumed call fires with no pacing gap. Bounded per step by `MAX_STEP_ATTEMPTS`; the real $0
+  control is the key's project having no billing (O-2). A store-backed version is the S6 persistence half.
+- **A hung audit nobody reads is not surfaced (found 2026-10-10 in the S6 scoping review):** the reaper runs on submit,
+  on `GET /api/audit/job/:id` and on `advance`, so a hung audit ends with a sentence the next time anyone touches it, but
+  `/api/audits` does not reap and the readiness `recent trouble` check reads only audits that have ended. Until someone
+  reads or submits, the audit sits as `running` and the owner health view stays green. Cheap fix, no S6 needed: a
+  readiness check that counts running jobs older than `JOB_MAX_RUN_MS` and reports them (not ok), with a test that
+  seeds an over-age running job and expects the check to name it.
+- **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper (deferred with S6, see `docs/PLAN_STEP_E.md`), so a job whose
   holder dies without the whole process dying (not a case the server has today) is not picked up until the next
   restart or, for a page-driven job, until the page asks again. The supported topology is ONE server process per
   database file: `releaseLeasesNotHeldBy(instanceId)` at boot frees every other holder's live claim, so two
