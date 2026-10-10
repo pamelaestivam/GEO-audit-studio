@@ -4,6 +4,7 @@
  *
  *   node scripts/smoke.mjs https://your-app.example.com
  *   node scripts/smoke.mjs https://your-app.example.com --email you@example.com --code YOUR_ACCESS_CODE
+ *   node scripts/smoke.mjs https://your-app.example.com --warn-non-durable   (report memory-only storage as a warning)
  *
  * Without credentials it checks everything a stranger can see, including that
  * protected routes REFUSE a stranger. With credentials it signs in and also
@@ -25,6 +26,9 @@ const flag = (name) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const email = flag('email');
+// A known, documented limit of a deployment (for example the preview's non-durable storage) can be
+// reported as a warning instead of a failure. It is still printed on every run, never hidden.
+const warnNonDurable = args.includes('--warn-non-durable');
 const code = flag('code');
 
 if (!base) {
@@ -39,7 +43,8 @@ function check(name, ok, detail = '') {
 }
 
 async function get(path, init) {
-  const res = await fetch(`${base}${path}`, { redirect: 'manual', ...init });
+  // A hung site must fail the check, not hang it: every request is bounded.
+  const res = await fetch(`${base}${path}`, { redirect: 'manual', signal: AbortSignal.timeout(20000), ...init });
   const text = await res.text();
   let json = null;
   try {
@@ -68,7 +73,11 @@ try {
   check('at least one answer engine is configured', (status.json?.engines || []).length > 0, 'No engine key is set, so no audit can measure anything.');
   check('sign-in is configured', status.json?.auth?.mode === 'configured', status.json?.auth?.problem || `mode: ${status.json?.auth?.mode}`);
   const durable = status.json?.storage?.durable === true;
-  check('storage is durable (audits survive a restart)', durable, status.json?.storage?.note || 'Audits are kept in memory only.');
+  if (!durable && warnNonDurable) {
+    console.log(`warn  storage is NOT durable (known limit of this deployment, see docs/PROGRAM.md): ${status.json?.storage?.note || 'audits are kept in memory only'}`);
+  } else {
+    check('storage is durable (audits survive a restart)', durable, status.json?.storage?.note || 'Audits are kept in memory only.');
+  }
 
   // --- strangers are refused
   const noToken = await get('/api/audit/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessName: 'Smoke Test' }) });
@@ -89,7 +98,7 @@ try {
       check('the session is accepted', me.status === 200, `status ${me.status}`);
       const list = await get('/api/audits', { headers: auth });
       check('saved audits can be listed', list.status === 200 && Array.isArray(list.json?.audits), `status ${list.status}`);
-      const ready = await get('/api/audit/readiness', { headers: auth });
+      const ready = await get('/api/audit/readiness', { headers: auth, signal: AbortSignal.timeout(90000) }); // makes a real model call
       check('deep readiness answers', ready.status === 200 && Array.isArray(ready.json?.checks), `status ${ready.status}: ${ready.text.slice(0, 120)}`);
       for (const c of ready.json?.checks || []) check(`readiness: ${c.name}${c.verified ? '' : ' (not verified by a live call)'}`, c.ok, c.detail);
     }

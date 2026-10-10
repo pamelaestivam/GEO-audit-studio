@@ -3,12 +3,17 @@
 # there (see docs/DEPLOYMENT.md). Runs on any host that runs a container
 # (Fly.io, Railway, a VPS, Cloud Run with a volume, ...).
 #
-# Verified by CI on every push: the `docker` job in .github/workflows/ci.yml
-# builds this image, runs it with a volume, and runs scripts/smoke.mjs against
+# Verified by CI when this file changes, weekly, and on demand: the `docker` job in
+# .github/workflows/docker.yml (NOT a merge gate) builds this image, runs it with a volume, and runs scripts/smoke.mjs against
 # the container. (It could not be built in the authoring environment, which had
 # the Docker CLI but no daemon.)
 
-FROM node:22-slim AS build
+# Docker Hub rate-limits anonymous pulls from shared CI runners. CI builds with the same
+# official image mirrored on AWS ECR Public (see .github/workflows/docker.yml); anyone else
+# gets the default.
+ARG NODE_IMAGE=node:22-slim
+
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 # Dev dependencies are needed to build (esbuild, typescript); they are pruned below.
@@ -16,7 +21,7 @@ RUN npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-FROM node:22-slim
+FROM ${NODE_IMAGE}
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data

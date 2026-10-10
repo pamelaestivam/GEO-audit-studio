@@ -143,11 +143,18 @@ review happened" a checkable claim instead of an assertion.
 clients see, so a merge is a release — which is the reason the review is
 mandatory, not a reason to skip the merge.
 
-**CI must be green before any merge** (`.github/workflows/ci.yml`: lint, audit,
-`npm test`, production-install check, and a Docker build + container smoke
-test), and a fresh-context **adversarial review** (`.claude/agents/`,
-`docs/ENGINEERING_STANDARDS.md` §10) must have been run on the diff. Do not
-merge on a self-review alone.
+**CI must be green before any merge** (`.github/workflows/ci.yml`, the one check
+named `test`: tracked-symlink guard, audit, lint, `npm test`, and the
+production-install check, which also boots the built server, restarts it on the same
+data directory, and proves the data file kept the state, the restarted server writes to
+the same file, and a backup holds the state). The Docker image build is a separate,
+non-gating workflow (`docker.yml`, runs when image files change and weekly) and
+`live-check.yml` tests the deployed site daily and when Vercel reports a successful
+production deployment,
+opening one tracking issue when it fails. Read their results; a red one is a
+finding to act on, not something to merge past silently. A fresh-context **adversarial review**
+(`.claude/agents/`, `docs/ENGINEERING_STANDARDS.md` §10) must also have been run
+on the diff. Do not merge on a self-review alone.
 
 **`npm test` must pass before any merge.** It builds, runs the deterministic
 analysis checks, then boots the real server and asserts the product's contract

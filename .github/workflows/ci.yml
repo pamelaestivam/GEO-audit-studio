@@ -3,6 +3,12 @@ name: CI
 # Every push and PR runs the same gate the owner's working notes require before
 # a merge: typecheck, then `npm test` (build + unit + real-server E2E + contract
 # checks). main auto-deploys, so a red run here is a red release.
+#
+# This workflow is the whole merge gate and needs no container registry (it still
+# downloads npm packages and the Playwright browser). The Docker image build is a separate, optional workflow
+# (docker.yml) because it depends on a third-party registry that rate-limits shared
+# runners, and a gate that fails for reasons outside the code teaches people to
+# ignore it. Whether the DEPLOYED site works is live-check.yml.
 on:
   push:
     branches: [main]
@@ -20,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # same pin as the confidenceHigh repository
       - name: No tracked symlinks
         # A symlink named node_modules (pointing at a path outside the checkout) was
         # committed once by `git add -A` and CI stayed green because npm ci replaced it.
@@ -32,9 +38,9 @@ jobs:
             echo "$links"
             exit 1
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # same pin as the confidenceHigh repository
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       # The browser tests drive the real built app in Chromium.
@@ -45,91 +51,9 @@ jobs:
         env:
           CI: 'true'
       # The built server must run from a clean directory with ONLY production
-      # dependencies - what a Docker/Render/VPS build actually has.
+      # dependencies - what a Docker/Render/VPS build actually has. It also boots the
+      # server, runs the smoke test, restarts it on the same data directory, proves the
+      # database file kept the data and that the restarted server writes to that same file,
+      # and takes and checks a backup. It does NOT prove the Docker image builds: that is
+      # docker.yml, which is not a merge gate.
       - run: bash scripts/prod-install-check.sh
-
-  # Builds the production image and runs the post-deploy smoke test against the
-  # running container, with a real volume - the same shape as a real deployment.
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build image
-        # Pulling node:22-slim from Docker Hub anonymously fails now and then from
-        # shared runners (429 Too Many Requests, 504 from auth.docker.io - both seen
-        # on this repo's PR runs, never a Dockerfile error). Retry the whole build; a
-        # real Dockerfile failure fails every attempt and still turns the job red.
-        run: |
-          for attempt in 1 2 3 4; do
-            docker build -t geo-audit-studio:ci . && exit 0
-            [ "$attempt" = 4 ] && break
-            echo "docker build attempt $attempt failed; retrying in $((attempt * 30))s"
-            sleep $((attempt * 30))
-          done
-          echo "docker build failed on every attempt"
-          exit 1
-      - name: Run container
-        run: |
-          docker volume create geo-data
-          docker run -d --name app -p 3000:3000 -v geo-data:/data \
-            -e SESSION_SECRET=ci-session-secret-0123456789abcdef0123456789 \
-            -e ACCESS_CODES=ci-access-code-1 \
-            -e GEMINI_API_KEY=not-a-real-key \
-            geo-audit-studio:ci
-          for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:3000/api/health && break
-            sleep 1
-          done
-      - name: Smoke test the container
-        # No credentials: checks everything a stranger sees, that protected
-        # routes refuse a stranger, and that storage on the volume is durable.
-        run: node scripts/smoke.mjs http://127.0.0.1:3000
-      - name: Write real state, restart, and prove it survived
-        # Deep readiness writes a probe row to the store BEFORE it calls Gemini,
-        # so signing in and calling it leaves durable state even though the fake
-        # key makes the Gemini check fail. We then restart the container and read
-        # the row back from the volume with a separate container.
-        run: |
-          TOKEN=$(curl -fsS -X POST http://127.0.0.1:3000/api/auth/login \
-            -H 'Content-Type: application/json' \
-            -d '{"email":"ci@example.com","accessCode":"ci-access-code-1"}' | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).token))")
-          curl -sS http://127.0.0.1:3000/api/audit/readiness -H "Authorization: Bearer $TOKEN" > /dev/null
-          docker restart app
-          for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:3000/api/health && break
-            sleep 1
-          done
-          docker run --rm -v geo-data:/data node:22-slim node -e "
-            const { DatabaseSync } = require('node:sqlite');
-            const db = new DatabaseSync('/data/geo-audit.sqlite');
-            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
-            console.log('probe rows surviving the restart:', n);
-            process.exit(n >= 1 ? 0 : 1);
-          "
-      - name: Back up the running database inside the container
-        # A plain copy of geo-audit.sqlite from a running server restores nothing
-        # (recent writes live in the WAL); scripts/backup.mjs makes a real snapshot.
-        run: |
-          docker exec app node scripts/backup.mjs /data /data/backups/ci.sqlite
-          # A second run to the same name must REFUSE, for the right reason (bash -e
-          # ignores a failing `!`, so this is an explicit if).
-          if docker exec app node scripts/backup.mjs /data /data/backups/ci.sqlite 2>/tmp/second.err; then
-            echo "second backup run did not refuse to overwrite"; exit 1
-          fi
-          grep -q "refusing to overwrite" /tmp/second.err || { echo "refused for the wrong reason:"; cat /tmp/second.err; exit 1; }
-          docker run --rm -v geo-data:/data node:22-slim node -e "
-            const { DatabaseSync } = require('node:sqlite');
-            const db = new DatabaseSync('/data/backups/ci.sqlite');
-            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
-            console.log('probe rows in the backup:', n);
-            process.exit(n >= 1 ? 0 : 1);
-          "
-      - name: Smoke test the restarted container
-        run: node scripts/smoke.mjs http://127.0.0.1:3000
-      - name: Container logs
-        if: always()
-        run: docker logs app
