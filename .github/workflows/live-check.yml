@@ -56,7 +56,7 @@ jobs:
       TRACK_ISSUE: ${{ inputs.url == '' && 'yes' || 'no' }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # same pin as the confidenceHigh repository
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # same pin as the confidenceHigh repository
         with:
           node-version-file: .nvmrc
