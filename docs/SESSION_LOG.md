@@ -166,3 +166,5 @@ small PRs with a boundary test each (counting real fake-Gemini hits, as `quotaEf
 risks, and a list of what must not be claimed or built without the durable store or the owner. Its
 honest conclusion: on Vercel with memory-only storage the step-wise design makes a lost audit visible
 (designed to give a sentence rather than a hang or a zero; not built) but cannot make it recoverable; that is row 8 (Supabase, owner O-4).
+
+**Step e, slice S2 (the store contract):** both stores gain ordered steps with leases, bounded attempts, first-writer-wins completion, a heartbeat/instance id and an incidents list; the claim rules are one function (`decideClaim`) that both stores call, and SQLite claims inside `BEGIN IMMEDIATE`. Proved with the same suite on both stores, with two connections to one file, and with eight real processes claiming one step at once (exactly one wins). Six deliberate breakages each fail a check. The server does not call any of it yet.
