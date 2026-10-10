@@ -725,6 +725,7 @@ those files is a re-run, not a regression, but it must be recorded here.
   corpus of bad and good phrasings in `test/reportGuard.test.ts` is the only recall evidence, and
   real model phrasing has not been sampled. It removes more than strictly needed (a sentence
   repeating a measured figure, "named twice" as prose), which is the safe direction.
+- **Known extraction misses and over-removals:** a bare 4-digit number is read as a year only after a preposition or month, or when it closes a clause or a list of years, so "in 2000 visitors" style phrasings are treated as figures (safe direction) and a year in an unusual position is removed; quantity words not in the lists ("several", "a handful", "most") are deliberately not figures, and others may be missing.
 - **The invariants check relations between the report's own figures, not the figures against the raw
   answers.** It cannot catch a wrong brand match, and on realistic reports it holds by construction
   today; it is a tripwire for future code changes, not evidence of correctness. A violation costs

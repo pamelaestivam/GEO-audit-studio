@@ -54,12 +54,15 @@ const BAD = [
   'Fifty buyers asked.', 'It rose by nine.', 'Acme is named in 1 of 2 answers.', 'Acme appears in 0% of answers.',
   'Acme is named in 67% of answers.', 'Expect gains within 2 weeks.', 'Expect 2x traffic.', 'Acme was named in only one answer.',
   'None of the answers named it.', 'Rank in the top 3.', 'Results improve in six months.',
+  'About 2000 visitors a month.', 'Traffic from 2000 visitors is flat.', 'Thrice as likely to be named.', 'Hundreds of buyers ask this.', 'A single answer named it.',
+  'A pair of answers agree.', 'Several dozens of sources.'.replace('Several dozens', 'Dozens'), 'A couple of answers differ.',
 ];
 for (const sentence of BAD) check(`known-bad phrasing is removed: "${sentence}"`, guardSummary(sentence, NAMES).removed, 1);
 
 const GOOD = [
   'Pokeworks leads the answers.', 'Competitors own the answer surface for comparison questions.', 'Acme 3M Widgets appears in the answers.',
   'In the B2B space the brand is rarely recommended.', '7-Eleven is the leading rival.', 'Reviews from 2026 dominate.',
+  'Founded in 2019, the brand is known locally.', 'Coverage since March 2025 is thin.', 'Reviews from 2024, 2025 and 2026 dominate.',
   'The highest-leverage move is to earn coverage on review sites.', 'One of the leading tools is missing from the answers.',
 ];
 for (const sentence of GOOD) check(`figure-free phrasing is kept: "${sentence}"`, guardSummary(sentence, NAMES).removed, 0);

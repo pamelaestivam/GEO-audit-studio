@@ -41,6 +41,9 @@ const SCALES: Record<string, number> = {
  */
 const MULTIPLIER_WORDS = ['double', 'doubled', 'doubles', 'doubling', 'twice', 'triple', 'tripled', 'triples', 'tripling', 'quadruple', 'quadrupled', 'quintuple', 'quintupled'];
 
+/** Quantity words with no exact value ("hundreds of buyers", "a pair of answers", "thrice as likely"). */
+const LOOSE_QUANTITY_WORDS = ['thrice', 'hundreds', 'thousands', 'millions', 'dozens', 'pair', 'pairs', 'couple', 'couples'];
+
 const UNIT_WORDS = Object.keys(UNITS).filter((w) => UNITS[w] <= 9).join('|');
 const TENS_WORDS = Object.keys(TENS).join('|');
 const ALL_UNIT_WORDS = Object.keys(UNITS).join('|');
@@ -53,7 +56,7 @@ const NUMBER_RE = new RegExp(
     String.raw`|\b(?:${ALL_UNIT_WORDS}|${TENS_WORDS}|hundred|thousand|million)[-\s]?fold\b` +
     String.raw`|\b(?:${MULTIPLIER_WORDS.join('|')})\b` +
     String.raw`|\b(?:${TENS_WORDS})(?:[-\s](?:${UNIT_WORDS}))?\b` +
-    String.raw`|\b(?:${ALL_UNIT_WORDS}|${SCALE_WORDS}|none)\b`,
+    String.raw`|\b(?:${ALL_UNIT_WORDS}|${SCALE_WORDS}|none|single|${LOOSE_QUANTITY_WORDS.join('|')})\b`,
   'gi'
 );
 
@@ -92,6 +95,14 @@ export function extractNumbers(text: string): number[] {
     }
     if (/fold$/.test(token) || MULTIPLIER_WORDS.includes(token)) {
       found.push(NaN);
+      continue;
+    }
+    if (LOOSE_QUANTITY_WORDS.includes(token)) {
+      found.push(NaN);
+      continue;
+    }
+    if (token === 'single') {
+      if (ONE_AS_COUNT.test(t.slice(end, end + 24))) found.push(1);
       continue;
     }
     if (token === 'none') {
@@ -133,9 +144,19 @@ function withoutIdentifiers(text: string, names: readonly string[]): string {
   let out = text;
   const list = names.map((n) => String(n ?? '').trim()).filter((n) => n.length >= 2).sort((a, b) => b.length - a.length);
   for (const n of list) out = out.replace(new RegExp(escapeRegExp(n), 'gi'), ' ');
-  return out
-    .replace(/\b[A-Za-z]+-?\d+[A-Za-z0-9]*\b/g, ' ')
-    .replace(/\b(?:19|20)\d{2}\b(?!\s?(?:%|percent|per\s?cent))/g, ' ');
+  return (
+    out
+      // Identifiers that start with letters ("B2B", "GPT-5", "Q3").
+      .replace(/\b[A-Za-z]+-?\d+[A-Za-z0-9]*\b/g, ' ')
+      // A year only where it reads as one. First a list of years or a year closing a clause
+      // ("2024, 2025 and", "founded in 2019,"), then a year after a preposition or month ("from
+      // 2019", "March 2025"). "About 2000 visitors" stays a figure.
+      .replace(/\b(?:19|20)\d{2}(?:,\s*(?:19|20)\d{2})*(?=\s*[,.;)](?:\s|$)|,?\s+and\s)/g, ' ')
+      .replace(
+        /\b(?:in|since|from|of|by|during|before|after|until|through|between|and|to|late|early|mid|January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[\s-]+(?:19|20)\d{2}\b(?!\s?(?:%|percent|per\s?cent|visitors|users|buyers|answers|queries|questions|views|clicks))/gi,
+        ' '
+      )
+  );
 }
 
 /** True if the sentence states a figure (see extractNumbers), ignoring identifiers. */
