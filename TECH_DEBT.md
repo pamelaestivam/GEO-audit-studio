@@ -760,6 +760,10 @@ those files is a re-run, not a regression, but it must be recorded here.
   and a step killed three times ends the audit (`step_attempts_exceeded`, not billable, calls capped at three).
   Jobs made before audits were stepped have no plan and cannot be resumed; they are failed at boot with a sentence.
   Memory stores (Vercel today) lose their jobs with the process: nothing here changes that (owner O-4).
+  Found in the S5 review and kept as limits: a restart during a pacing pause (before any call) still uses an attempt,
+  so three quick restarts within the 1.2 s / 0.6 s pauses end the audit with the three-tries sentence although no call
+  was repeated; and a kill in the ~1 ms between saving the report and marking the job done saves a second copy of
+  the report on resume (report ids are random). Neither spends beyond the plan.
 - **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
   HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
   says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). What a person actually sees if
@@ -864,10 +868,10 @@ Written 2026-10-09 so none of these is rediscovered:
 - **The limiter table is capped (50,000 keys)** and fails closed past that: a
   flood from many addresses can make new addresses wait. IPv6 clients are limited
   by /64 to make that hard. Acceptable against unbounded memory.
-- **Jobs are not resumable.** An audit cut off by a restart or deploy is marked
-  failed with a sentence (and is not counted against the daily budget); the
-  person re-runs it. A job reaped as stuck after 15 minutes that later finishes
-  is still recorded.
+- **Jobs are resumable only on a durable store, at boot.** An audit cut off by a restart or deploy is taken up
+  again from its step (step e, slice S5; see its limits below). Memory stores (Vercel today) lose their jobs with
+  the process; a job with no plan, or older than the maximum run time, is failed with a sentence. A job reaped
+  as stuck after 15 minutes that later finishes is still recorded.
 - **No automated backups.** `node scripts/backup.mjs` makes a consistent
   snapshot (a plain copy of `geo-audit.sqlite` alone loses recent writes - they
   are in the WAL), but nothing schedules it or copies it off the host. Use the

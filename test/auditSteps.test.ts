@@ -3,7 +3,7 @@
  * quota-breaker rule. The server-level proof is test/auditStepsE2E.test.ts; this pins the rules, including the
  * several-engine cases no end-to-end test can reach (only Gemini can be faked). Run: npx tsx test/auditSteps.test.ts
  */
-import { evidenceByQueryFromSteps, planSteps, skipForBreaker, startsQuestion, queryingProgress, analysingProgress, nextStepAfterMs, pauseBefore, summariseSteps, PAUSE_BETWEEN_QUESTIONS_MS, PAUSE_BEFORE_ANALYSIS_MS } from '../src/auditSteps';
+import { evidenceByQueryFromSteps, planSteps, skipForBreaker, startsQuestion, queryingProgress, analysingProgress, nextStepAfterMs, pauseBefore, summariseSteps, mayReleaseOtherHoldersAtBoot, PAUSE_BETWEEN_QUESTIONS_MS, PAUSE_BEFORE_ANALYSIS_MS } from '../src/auditSteps';
 import type { JobStep } from '../src/store';
 
 let failures = 0;
@@ -71,6 +71,10 @@ check('the summary counts steps in a final state, planned calls, and a call that
 started[2].repeatedCalls = 2;
 check('...and repeated calls', summariseSteps(started).repeatedCalls, 2);
 check('...skipped and failed steps count as finished but not as calls made', summariseSteps(steps({ 'collect:0:Gemini': 'skipped', 'collect:0:ChatGPT': 'failed' })), { done: 2, total: 6, plannedCalls: 5, callsMade: 0, repeatedCalls: 0 });
+
+// ---- a booting server releases other holders' claims only where it alone owns the database
+check('a durable store on a host that runs one process: other holders\' claims are released at boot', mayReleaseOtherHoldersAtBoot({ durable: true, serverless: false }), true);
+check('...never on a serverless host (many instances may share the store), nor with no durable store', [mayReleaseOtherHoldersAtBoot({ durable: true, serverless: true }), mayReleaseOtherHoldersAtBoot({ durable: false, serverless: false }), mayReleaseOtherHoldersAtBoot({ durable: false, serverless: true })], [false, false, false]);
 
 console.log(failures === 0 ? '\nAll audit step checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

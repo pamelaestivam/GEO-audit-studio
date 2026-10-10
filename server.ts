@@ -42,6 +42,7 @@ import {
   PAUSE_BETWEEN_QUESTIONS_MS,
   analysingProgress,
   evidenceByQueryFromSteps,
+  mayReleaseOtherHoldersAtBoot,
   nextStepAfterMs,
   planSteps,
   queryingProgress,
@@ -205,18 +206,12 @@ async function buildApp() {
   if (store.info().durable) {
     // No audit started by a previous process can still be running. A job made before audits were run as steps
     // cannot be resumed, so it is failed with a sentence instead of being left to hang. A planned job is resumed
-    // (resumeAfterRestart, at the end of this function): the supported topology is one process per database, so any
-    // lease a previous process held is released at once rather than waited out.
+    // once this server is listening (see afterListening): only then is it certain this process is the one that
+    // serves the database, so only then are a previous process's claims released and its audits taken up.
     const orphaned = await store.failRunningWithoutPlan(
       'The server restarted while this audit was running, so it was stopped. Please run it again.'
     );
     if (orphaned > 0) console.warn(`[store] marked ${orphaned} orphaned audit job(s) without a plan as failed after a restart.`);
-    // Only where one process owns the database. On a serverless host many instances may share one durable store,
-    // and releasing "everyone else's" claims at boot would take over steps that are being worked on right now.
-    if (!process.env.VERCEL) {
-      const released = await store.releaseLeasesNotHeldBy(store.instanceId);
-      if (released > 0) console.warn(`[store] released ${released} step lease(s) held by a previous process.`);
-    }
   }
 
   /**
@@ -1509,7 +1504,7 @@ Return valid JSON matching the schema.`;
 
   // ---- Audit jobs. State lives in the store (src/store.ts), not in process
   // memory, so a poll never depends on which request - or which process - began
-  // the job, and a restart fails orphaned jobs honestly instead of losing them.
+  // the job, and after a restart a durable store resumes them (or fails them with a sentence when they cannot be resumed).
 
   /**
    * An audit still "running" after this long is stuck (a provider call that
@@ -1648,10 +1643,13 @@ Return valid JSON matching the schema.`;
   async function closeJobAfterFailedStep(job: StoredJob, step: JobStep, outcome: 'exhausted' | 'failed') {
     const latest = await store.getJob(job.id);
     if (!latest || latest.status !== 'running') return;
+    // Engine calls that were started cost real quota: such an audit counts toward the allowance, and the sentence says so.
+    const spent = (await store.getJobSteps(job.id)).some((s) => s.callStartedAt !== undefined || s.repeatedCalls > 0);
+    const counted = spent ? 'Engine calls were made, so it counts toward your allowance.' : 'Nothing from it is counted.';
     const message =
       outcome === 'exhausted'
-        ? `The audit stopped because one of its steps did not finish after ${MAX_STEP_ATTEMPTS} tries. Nothing from it is counted. Please run it again.`
-        : 'The audit stopped because one of its steps failed. Nothing from it is counted. Please run it again.';
+        ? `The audit stopped because one of its steps did not finish after ${MAX_STEP_ATTEMPTS} tries. ${counted} Please run it again.`
+        : `The audit stopped because one of its steps failed. ${counted} Please run it again.`;
     console.error(`[job ${job.id}] step ${step.key} ended ${outcome} (${step.errorCode || 'no code'})`);
     await store.recordIncident({
       jobId: job.id,
@@ -1663,7 +1661,7 @@ Return valid JSON matching the schema.`;
       status: 'error',
       error: message,
       finishedAt: Date.now(),
-      billable: false,
+      billable: spent,
       failCode: step.errorCode ?? 'step_failed',
     });
   }
@@ -2092,19 +2090,33 @@ Return valid JSON matching the schema.`;
   });
 
   /**
-   * After a restart on a durable store, finish the audits the previous process left running: the ones this process
-   * drives (`inline`) continue from the step they were on. Audits the page drives (`client`) are left alone; the
-   * page asks for the next step. A step whose call had started is run again and recorded (see advanceJob).
+   * Run once the server is listening (a second process that cannot bind the port must never get here, or it would
+   * release the live process's claims on its steps and then die, leaving an audit nobody drives). After a restart
+   * on a durable store:
+   *  - the claims a previous process held are released, so its steps can be taken up at once instead of waiting
+   *    out the lease (only where one process owns the database: see mayReleaseOtherHoldersAtBoot);
+   *  - an audit that has been running longer than the maximum is stopped with a sentence, as the reaper would, and
+   *    is NOT resumed (the person was or will be told to run it again; finishing it would spend on an audit they
+   *    were told failed);
+   *  - the audits this process drives (`inline`) continue from the step they were on. Audits the page drives
+   *    (`client`) are left alone: the page asks for the next step. A step whose call had started is run again and
+   *    recorded (see advanceJob).
    */
-  async function resumeAfterRestart() {
+  async function afterListening() {
+    if (!store.info().durable) return;
+    if (mayReleaseOtherHoldersAtBoot({ durable: true, serverless: !!process.env.VERCEL })) {
+      const released = await store.releaseLeasesNotHeldBy(store.instanceId);
+      if (released > 0) console.warn(`[store] released ${released} step lease(s) held by a previous process.`);
+    }
+    const stale = await store.failStuck(JOB_MAX_RUN_MS, 'The audit took too long and was stopped. Please run it again.');
+    if (stale > 0) console.warn(`[store] stopped ${stale} audit job(s) that had been running longer than the maximum; they are not resumed.`);
     const jobs = await store.listRunningPlanned();
     const mine = jobs.filter((j) => (j.plan as StoredAuditPlan | undefined)?.driver === 'inline');
     if (jobs.length > 0) console.warn(`[store] ${jobs.length} audit job(s) were running when the previous process stopped; resuming ${mine.length} that this server drives.`);
     for (const j of mine) void driveInline(j.id);
   }
-  if (store.info().durable) {
-    resumeAfterRestart().catch((err) => console.error(`[store] could not resume interrupted audits: ${err?.message || err}`));
-  }
+  app.locals.afterListening = () =>
+    afterListening().catch((err) => console.error(`[store] could not resume interrupted audits: ${err?.message || err}`));
 
   return app;
 }
@@ -2114,6 +2126,7 @@ async function startServer() {
   const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    void app.locals.afterListening?.();
   });
 }
 

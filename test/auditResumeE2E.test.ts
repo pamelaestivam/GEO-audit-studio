@@ -46,7 +46,7 @@ async function main() {
   const dirs: string[] = [];
   const procs: ChildProcess[] = [];
 
-  const boot = async (dir: string, port: number, env: Record<string, string> = {}) => {
+  const spawnServer = (dir: string, port: number, env: Record<string, string> = {}) => {
     const proc = spawn('node', ['dist/server.cjs'], {
       env: {
         ...process.env,
@@ -68,6 +68,10 @@ async function main() {
       stdio: 'ignore',
     });
     procs.push(proc);
+    return proc;
+  };
+  const boot = async (dir: string, port: number, env: Record<string, string> = {}) => {
+    const proc = spawnServer(dir, port, env);
     for (let i = 0; i < 80; i++) {
       try {
         if ((await fetch(`http://127.0.0.1:${port}/api/health`)).ok) return proc;
@@ -184,10 +188,56 @@ async function main() {
       }
       const fin = await waitDone(`http://127.0.0.1:${port}`, jobId);
       const r = rows(dir, jobId);
-      check('a step killed three times is not tried a fourth time: the audit ends with a sentence', [fin.httpStatus, fin.body.status, /did not finish after 3 tries/.test(fin.body.error || '')], [500, 'error', true]);
+      check('a step killed three times is not tried a fourth time: the audit ends with a sentence that says the calls count', [fin.httpStatus, fin.body.status, /did not finish after 3 tries/.test(fin.body.error || ''), /counts toward your allowance/.test(fin.body.error || '')], [500, 'error', true, true]);
       check('...only three calls were ever made', fake.hits() - before, 3);
-      check('...the step is failed with a code, the job is not billable and says why', [r.steps[0].state, r.job.fail_code, r.job.billable], ['failed', 'step_attempts_exceeded', 0]);
+      check('...the step is failed with a code, and the job is billable because its calls were paid for', [r.steps[0].state, r.job.fail_code, r.job.billable], ['failed', 'step_attempts_exceeded', 1]);
       check('...and the owner has an incident for it', r.incidents.some((i) => i.kind === 'step_attempts_exceeded'), true);
+      mode = 'ok';
+      await kill(proc);
+    }
+
+    // ---- an audit older than the maximum run time is stopped with a sentence, never resumed
+    {
+      const dir = newDir();
+      const port = nextPort++;
+      mode = 'slow';
+      const before = fake.hits();
+      const env = { JOB_MAX_RUN_MS: '3000' };
+      let proc = await boot(dir, port, env);
+      const { jobId } = await submit(`http://127.0.0.1:${port}`, [Q1]);
+      await waitHits(before + 1);
+      await kill(proc);
+      await sleep(3500); // now older than the maximum
+      mode = 'ok';
+      proc = await boot(dir, port, env);
+      await sleep(2500);
+      const res = await fetch(`http://127.0.0.1:${port}/api/audit/job/${jobId}`);
+      const body: any = await res.json();
+      const r = rows(dir, jobId);
+      check('an audit that is older than the maximum run time at restart is stopped with a sentence', [body.status, /took too long/.test(body.error || '')], ['error', true]);
+      check('...and it is not resumed: no further paid call is made', fake.hits() - before, 1);
+      check('...it spent a call, so it still counts toward the allowance', r.job.billable, 1);
+      await kill(proc);
+    }
+
+    // ---- a second process that cannot bind the port leaves the live process's audit alone
+    {
+      const dir = newDir();
+      const port = nextPort++;
+      mode = 'slow';
+      const before = fake.hits();
+      const proc = await boot(dir, port);
+      const { jobId } = await submit(`http://127.0.0.1:${port}`, [Q1]);
+      await waitHits(before + 1); // the first process is in the middle of its call
+      const second = spawnServer(dir, port);
+      const exited = await new Promise<boolean>((resolve) => {
+        const t = setTimeout(() => resolve(false), 15000);
+        second.once('close', () => (clearTimeout(t), resolve(true)));
+      });
+      check('a second server on the same port and database exits', exited, true);
+      const fin = await waitDone(`http://127.0.0.1:${port}`, jobId);
+      const r = rows(dir, jobId);
+      check('...and the first one\'s audit still finishes, with exactly the planned calls and no repeat', [fin.body.status, fake.hits() - before, r.steps.map((s) => [s.key, s.attempt, s.repeated_calls]), r.incidents.length], ['done', 2, [['collect:0:Gemini', 1, 0], ['narrative', 1, 0], ['finalize', 1, 0]], 0]);
       mode = 'ok';
       await kill(proc);
     }

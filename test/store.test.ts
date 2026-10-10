@@ -397,7 +397,14 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   await rp.failStuck(15 * 60 * 1000, 'took too long', NOW);
   check(t('a reaped audit that never reached an engine is free'), [(await rp.getJob('rp-idle'))?.status, (await rp.getJob('rp-idle'))?.billable], ['error', false]);
   check(t('a reaped audit that had started an engine call stays billable'), [(await rp.getJob('rp-spent'))?.status, (await rp.getJob('rp-spent'))?.billable], ['error', true]);
-  check(t('...and so the daily count includes it and not the idle one'), await rp.countJobsSince(NOW - 24 * 60 * 60 * 1000 - 100 * 60 * 1000), 1);
+  // a call that was repeated after a takeover has cleared its start mark but still cost quota
+  await rp.createPlannedJob(job({ id: 'rp-repeated', startedAt: NOW - 100 * 60 * 1000, plan: { driver: 'client' } }), PLAN);
+  const rc1 = await rp.claimStep('rp-repeated', 'A', LEASE, NOW - 100 * 60 * 1000, 3);
+  await rp.markCallStarted('rp-repeated', 0, 'A', (rc1 as any).step.attempt, NOW - 100 * 60 * 1000);
+  const rc2 = await rp.claimStep('rp-repeated', 'B', LEASE, NOW - 100 * 60 * 1000 + 2 * LEASE, 3);
+  await rp.failStuck(15 * 60 * 1000, 'took too long', NOW);
+  check(t('a reaped audit whose call was repeated (start mark cleared on takeover) stays billable'), [(rc2 as any).reclaimedMidCall, (await rp.getJob('rp-repeated'))?.billable], [true, true]);
+  check(t('...and so the daily count includes the two that spent and not the idle one'), await rp.countJobsSince(NOW - 24 * 60 * 60 * 1000 - 100 * 60 * 1000), 2);
 
   // --- compacting a finished job drops the stored answers but keeps the rows
   await s.createPlannedJob(job({ id: 'cp1' }), PLAN);

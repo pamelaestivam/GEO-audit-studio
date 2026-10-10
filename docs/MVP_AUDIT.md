@@ -202,7 +202,7 @@ nothing before the first audit. All replaced with true statements or removed.
 |---|---|---|---|
 | 1 | **Pick one runtime that matches the job model**: an always-on Node service serving API + static, or keep Vercel and re-architect around a queue | A1. Every past incident was a host/lifecycle mismatch. | 🟡 chosen: always-on service + disk (`Dockerfile`, `render.yaml`); **you create the host** (`DECISIONS.md`) |
 | 2 | **Durable datastore** for jobs, idempotency keys, breaker state, audits, users, sessions | Replaces three process-global `Map`s; unlocks 3, 4, 5, 17, 19. | ✅ SQLite on a disk (one instance). Postgres when you need two |
-| 3 | **Durable job execution**: survives restart, resumable, safe with more than one instance | A1, A3. A poll must never depend on which process started the job. | 🟡 restart-safe; a job cut off by a restart is failed with a sentence, not resumed |
+| 3 | **Durable job execution**: survives restart, resumable, safe with more than one instance | A1, A3. A poll must never depend on which process started the job. | 🟡 restart-safe; on a durable store a job cut off by a restart is resumed from its step (step e, S5: boot-time, one process per database); on a memory store it is lost |
 | 4 | **Real authentication, enforced server-side on every `/api/audit/*` route, with per-user ownership of audits** | A2. | ✅ invite-code sign-in (chosen D3); Google sign-in later |
 | 5 | **Budgets and a kill switch**: per-user audits/day, a global daily spend cap, an admin switch | The owner's recurring pain is quota; this makes it a number you set, not a surprise. | 🟡 daily per-user + global audit budgets, lookup + IP limits; no admin kill switch yet |
 

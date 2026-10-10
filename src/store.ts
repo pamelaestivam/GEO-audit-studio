@@ -501,7 +501,7 @@ export class MemoryStore implements Store {
         j.finishedAt = now;
         // A reaped audit that had already made an engine call spent real quota: it keeps counting against the
         // person's allowance. Only one that never reached an engine is free.
-        j.billable = (this.steps.get(j.id) || []).some((st) => st.callStartedAt !== undefined);
+        j.billable = (this.steps.get(j.id) || []).some((st) => st.callStartedAt !== undefined || st.repeatedCalls > 0);
         j.failCode = STUCK_FAIL_CODE;
         n++;
       }
@@ -924,7 +924,7 @@ export class SqliteStore implements Store {
       this.db
         .prepare(
           `UPDATE jobs SET status = 'error', error = ?, finished_at = ?, fail_code = ?,
-             billable = CASE WHEN EXISTS (SELECT 1 FROM job_steps s WHERE s.job_id = jobs.id AND s.call_started_at IS NOT NULL) THEN 1 ELSE 0 END
+             billable = CASE WHEN EXISTS (SELECT 1 FROM job_steps s WHERE s.job_id = jobs.id AND (s.call_started_at IS NOT NULL OR s.repeated_calls > 0)) THEN 1 ELSE 0 END
            WHERE status = 'running' AND started_at < ?`
         )
         .run(reason, now, STUCK_FAIL_CODE, now - maxAgeMs).changes
