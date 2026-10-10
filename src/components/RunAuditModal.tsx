@@ -6,6 +6,7 @@ import { newIdempotencyKey } from '../idempotency';
 import { describeEngines, useAuditStatus } from '../useQuotaStatus';
 import { AuditReport, AuditQuery } from '../types';
 import { buildStandardQueries } from '../queries';
+import { hasNoEngine, noEngineNotice } from '../statusView';
 
 interface RunAuditModalProps {
   isOpen: boolean;
@@ -21,6 +22,8 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const { quota, engines } = useAuditStatus();
   const engineNames = describeEngines(engines);
+  const noEngine = hasNoEngine(engines);
+  const noEngineText = noEngineNotice(engines);
 
   // Step 1 State
   const [businessName, setBusinessName] = useState('');
@@ -302,6 +305,13 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
               </div>
             </div>
 
+            {noEngineText && (
+              <div role="status" data-testid="no-engine-notice" className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-200/90 leading-relaxed">{noEngineText}</p>
+              </div>
+            )}
+
             {quota && !quota.available && (
               <div className="flex items-start gap-2.5 bg-orange-500/10 border border-orange-500/30 rounded-lg p-3">
                 <ShieldAlert className="h-4 w-4 text-orange-400 shrink-0 mt-0.5" />
@@ -315,7 +325,7 @@ export const RunAuditModal: React.FC<RunAuditModalProps> = ({
             <div className="flex justify-end pt-4 border-t border-slate-800">
               <button
                 type="submit"
-                disabled={isGeneratingQueries || !businessName || (quota ? !quota.available : false)}
+                disabled={isGeneratingQueries || noEngine || !businessName || (quota ? !quota.available : false)}
                 className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-lg transition flex items-center gap-2 shadow-md shadow-indigo-600/20 disabled:opacity-50"
               >
                 {isGeneratingQueries ? (

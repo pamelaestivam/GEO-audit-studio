@@ -1,5 +1,15 @@
 /**
- * The three standard buyer-intent queries an audit runs when the person did
+ * How many questions an audit runs by default. Three is the ceiling the owner set
+ * (docs/OWNER_DIRECTIVES.md D-7). It is TWO until audits are persisted step by step
+ * and can resume after a failure (docs/DECISIONS.md 2026-10-10, decision D;
+ * docs/RELIABILITY.md section 2): today a frozen or restarted host loses the whole
+ * audit, so a shorter audit has less to lose, and fewer calls spend less of the free
+ * quota. When resumable steps ship, raise this to 3 and update the tests that read it.
+ */
+export const DEFAULT_QUERY_COUNT = 2;
+
+/**
+ * The standard buyer-intent queries an audit runs when the person did
  * not write their own (and the fallback when query generation is unavailable).
  *
  * These are the literal questions put to the answer engines, so a malformed one
@@ -10,10 +20,10 @@
  * limits and enterprise contract cost". Pure so it can be tested exhaustively.
  *
  * Nothing is guessed: a missing industry or competitor changes the wording
- * rather than being filled in. Two of the three questions necessarily name the
- * brand (a comparison and a price question are about it); the first is a
- * brand-neutral discovery question whenever one can be written honestly. Templates are inherently generic - they cannot
- * know a business - which is why writing your own queries (or the opt-in
+ * rather than being filled in. Of the standard questions, the comparison and
+ * price ones necessarily name the brand (they are about it); the discovery one
+ * is brand-neutral whenever one can be written honestly. Templates are
+ * inherently generic - they cannot know a business - which is why writing your own queries (or the opt-in
  * "Generate Query Matrix" step) is the better path for a real audit.
  */
 
@@ -57,9 +67,14 @@ export function buildStandardQueries(
     ? `${name} vs ${competitor}: which is better, and how do they compare?`
     : `Is ${name} any good? How does it compare with its alternatives?`;
 
-  return [
+  // In priority order: the discovery question first (the one that can be written
+  // without the brand), then the comparison, then price. The default takes the
+  // first DEFAULT_QUERY_COUNT, so shortening or lengthening the default never
+  // reorders what is asked.
+  const all: AuditQueryTemplate[] = [
     { id: 'q-gen-1', intent: 'alternatives_search', queryText: alternatives, targetPersona: 'Buyer comparing options' },
     { id: 'q-gen-2', intent: 'commercial_comparison', queryText: comparison, targetPersona: 'Buyer evaluating a choice' },
     { id: 'q-gen-3', intent: 'pricing_roi', queryText: `How much does ${name} cost?`, targetPersona: 'Buyer checking price' },
   ];
+  return all.slice(0, DEFAULT_QUERY_COUNT);
 }
