@@ -19,6 +19,8 @@
  * Exit code 0 only if every check passed. Prints one line per check.
  */
 
+import { classifyReadinessCheck } from './readinessLine.mjs';
+
 const args = process.argv.slice(2);
 const base = (args.find((a) => /^https?:\/\//.test(a)) || '').replace(/\/+$/, '');
 const flag = (name) => {
@@ -103,7 +105,13 @@ try {
       check('saved audits can be listed', list.status === 200 && Array.isArray(list.json?.audits), `status ${list.status}`);
       const ready = await get('/api/audit/readiness', { headers: auth, signal: AbortSignal.timeout(90000) }); // makes a real model call
       check('deep readiness answers', ready.status === 200 && Array.isArray(ready.json?.checks), `status ${ready.status}: ${ready.text.slice(0, 120)}`);
-      for (const c of ready.json?.checks || []) check(`readiness: ${c.name}${c.verified ? '' : ' (not verified by a live call)'}`, c.ok, c.detail);
+      for (const c of ready.json?.checks || []) {
+        // See scripts/readinessLine.mjs: a check that passed only because it could not look, or the storage entry on a
+        // deployment whose missing durable storage is a known flagged limit, is a printed warning, never a green line.
+        const kind = classifyReadinessCheck(c, { warnNonDurable, durable });
+        if (kind === 'warn') console.log(`warn  readiness: ${c.name} ${c.ok ? 'was NOT verified by a live call or a record' : 'is a known limit of this deployment (--warn-non-durable)'}: ${c.detail}`);
+        else check(`readiness: ${c.name}`, kind === 'pass', c.detail);
+      }
     }
   } else {
     console.log('skip  signed-in checks (pass --email and --code to include them, and the live Gemini readiness call)');
