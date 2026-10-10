@@ -115,7 +115,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `advanced` and one `busy` with a hit delta of exactly 1, a retried submit under another key is never
    advanced, a first advance that outlives the client timeout still makes exactly one hit, two memory-store processes give `job_not_found` with 0 hits, and `auditClient.test.ts`
    asserts the exact sentence.
-5. **S5 resume on a durable store.** *Delivered 2026-10-10 as a boot-time sweep, not a periodic one (the periodic sweeper every 15 s is recorded in TECH_DEBT and picked up with S6, whose shared pacer and breaker are what make several workers safe; S6's text below carries it); supported topology is one server process per database file, because boot releases the claims of every other holder, so the plan's two-process test ("one advanced, one busy") was not delivered for boot (the claim-race itself is covered by `test/store.test.ts`'s real-process race and the S4 E2E's two simultaneous advances); also not delivered: the short-lease test setup (the tests rely on the boot release against the default lease), the `invariant` incident (nothing records it yet; picked up in step g's health checks), and reading `repeatedCalls` through the API (the tests read the SQLite rows). Inline jobs are resumed by the booting process itself; page-driven jobs carry on when the page asks.* Replace the boot `failAllRunning` for stepwise jobs with a sweeper
+5. **S5 resume on a durable store.** *Delivered 2026-10-10 as a boot-time sweep, not a periodic one (the periodic sweeper every 15 s is recorded in TECH_DEBT and deferred with S6 (2026-10-10, see S6), whose shared pacer and breaker are what make several workers safe; S6's text below carries it); supported topology is one server process per database file, because boot releases the claims of every other holder, so the plan's two-process test ("one advanced, one busy") was not delivered for boot (the claim-race itself is covered by `test/store.test.ts`'s real-process race and the S4 E2E's two simultaneous advances); also not delivered: the short-lease test setup (the tests rely on the boot release against the default lease), the `invariant` incident (nothing records it yet; picked up in step g's health checks), and reading `repeatedCalls` through the API (the tests read the SQLite rows). Inline jobs are resumed by the booting process itself; page-driven jobs carry on when the page asks.* Replace the boot `failAllRunning` for stepwise jobs with a sweeper
    (boot, then every 15 s while inline jobs run; not `setInterval` on Vercel). Decide explicitly who
    resumes an INLINE-driver job after a restart (nobody is polling `advance` for it): either the sweeper
    takes the lease and drives it, with a SIGKILL test counting hits, or inline jobs keep the "restarted"
@@ -129,6 +129,27 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `spend.scope` becomes `'shared store'` when durable. Tests: two processes, every inter-hit gap at least
    the interval; a daily 429 tripped on A means 0 further hits from B; a cap of 2 over two processes gives
    exactly 2 hits.
+   *Scoped 2026-10-10, deferred on purpose (read before building).* Why it is not built now, and what that leaves open:
+   - **Bounded means the job row, not the process.** `failStuck(JOB_MAX_RUN_MS)` (15 minutes) runs on every submit, every
+     `GET /api/audit/job/:id` and every `advance`, so a hung audit ends with a sentence the next time anyone touches it and
+     stops holding a slot. It only edits the row. A Gemini call that never settles still blocks the in-process Gemini queue
+     (`scheduleGeminiCall` chains every call behind the previous one and the client sets no HTTP timeout) until the
+     process restarts. A periodic sweeper does not fix that; a per-call HTTP timeout does (the open S4 item in TECH_DEBT).
+   - **The breaker, the call counter and the pacer are in memory, so a restart resets them** even for one process, and S5
+     now re-drives interrupted inline audits after a restart. A store-backed version would help a single process too. It
+     is deferred for priority, not because it has no benefit: the cost of a repeat is capped per step by
+     `MAX_STEP_ATTEMPTS` and the real $0 control is the key's project having no billing (O-2).
+   - **The shared (two-process) part** would need a supported two-process topology. The supported one is one process per
+     database file (DEPLOYMENT.md), and the boot release of other holders' claims assumes it. A store-level version could
+     be tested with spawned processes (as `test/store.test.ts` already races real ones); an end-to-end test of it needs
+     two servers on one file. On Vercel with the memory store the pacer, breaker and counter stay per instance whatever
+     is built here.
+   - **Residual exposure, said plainly:** an audit that hangs and that NOBODY reads or submits after stays `running` in
+     the store until someone does, and the owner health view stays green meanwhile (`/api/audits` does not reap, the
+     readiness `recent trouble` check reads only audits that have ended). The person who started it sees the sentence
+     when they return. A cheap check that closes this without S6 is recorded in TECH_DEBT.
+   Build the store-backed breaker, counter and pacer together with step f (a hosted database with a transactional
+   claim), or when a two-process topology is wanted. The next slice that changes what a person sees is S7.
 7. **S7 stalled / Resume / Discard in the UI, visible retries.** Also adds the GET job-view fields S4 did not deliver (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). Boundary tests as well as browser ones:
    discard on a leased or running step makes 0 provider hits and is owner-scoped (another user's job gives
    404); resume never auto-resubmits (0 new POST `/api/audit/run`). Persist `{jobId, startedAt}` in
