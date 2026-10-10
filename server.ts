@@ -203,12 +203,20 @@ async function buildApp() {
   const store = await openStore({ dataDir, serverless: !!process.env.VERCEL });
   if (store.info().note) console.warn(`[store] ${store.info().note}`);
   if (store.info().durable) {
-    // No audit started by a previous process can still be running, so any job
-    // still marked running is orphaned. Say so instead of leaving it to hang.
-    const orphaned = await store.failAllRunning(
+    // No audit started by a previous process can still be running. A job made before audits were run as steps
+    // cannot be resumed, so it is failed with a sentence instead of being left to hang. A planned job is resumed
+    // (resumeAfterRestart, at the end of this function): the supported topology is one process per database, so any
+    // lease a previous process held is released at once rather than waited out.
+    const orphaned = await store.failRunningWithoutPlan(
       'The server restarted while this audit was running, so it was stopped. Please run it again.'
     );
-    if (orphaned > 0) console.warn(`[store] marked ${orphaned} orphaned audit job(s) as failed after a restart.`);
+    if (orphaned > 0) console.warn(`[store] marked ${orphaned} orphaned audit job(s) without a plan as failed after a restart.`);
+    // Only where one process owns the database. On a serverless host many instances may share one durable store,
+    // and releasing "everyone else's" claims at boot would take over steps that are being worked on right now.
+    if (!process.env.VERCEL) {
+      const released = await store.releaseLeasesNotHeldBy(store.instanceId);
+      if (released > 0) console.warn(`[store] released ${released} step lease(s) held by a previous process.`);
+    }
   }
 
   /**
@@ -1763,6 +1771,13 @@ Return valid JSON matching the schema.`;
     const claim = await store.claimStep(jobId, holder, AUDIT_LEASE_MS, Date.now(), MAX_STEP_ATTEMPTS);
     if (claim.outcome === 'none') return 'idle';
     if (claim.outcome === 'busy') return 'busy';
+    if (claim.outcome === 'claimed' && claim.reclaimedMidCall) {
+      // The previous worker had started this step's outside call and never finished it: the call may be made twice.
+      console.warn(`[job ${job.id}] step ${claim.step.key} was interrupted after its call started; running it again (attempt ${claim.step.attempt}).`);
+      await store
+        .recordIncident({ jobId: job.id, at: Date.now(), kind: 'lease_expired_midcall', detail: `Step ${claim.step.key} was interrupted after its call had started and was run again (attempt ${claim.step.attempt}), so that call may have been made twice.` })
+        .catch(() => undefined);
+    }
     if (claim.outcome === 'exhausted' || claim.outcome === 'failed') {
       await closeJobAfterFailedStep(job, claim.step, claim.outcome);
       return 'finished';
@@ -2075,6 +2090,21 @@ Return valid JSON matching the schema.`;
       error: 'Something went wrong on the server. Please try again; if it keeps happening, the server logs have the detail.',
     });
   });
+
+  /**
+   * After a restart on a durable store, finish the audits the previous process left running: the ones this process
+   * drives (`inline`) continue from the step they were on. Audits the page drives (`client`) are left alone; the
+   * page asks for the next step. A step whose call had started is run again and recorded (see advanceJob).
+   */
+  async function resumeAfterRestart() {
+    const jobs = await store.listRunningPlanned();
+    const mine = jobs.filter((j) => (j.plan as StoredAuditPlan | undefined)?.driver === 'inline');
+    if (jobs.length > 0) console.warn(`[store] ${jobs.length} audit job(s) were running when the previous process stopped; resuming ${mine.length} that this server drives.`);
+    for (const j of mine) void driveInline(j.id);
+  }
+  if (store.info().durable) {
+    resumeAfterRestart().catch((err) => console.error(`[store] could not resume interrupted audits: ${err?.message || err}`));
+  }
 
   return app;
 }

@@ -115,7 +115,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `advanced` and one `busy` with a hit delta of exactly 1, a retried submit under another key is never
    advanced, a first advance that outlives the client timeout still makes exactly one hit, two memory-store processes give `job_not_found` with 0 hits, and `auditClient.test.ts`
    asserts the exact sentence.
-5. **S5 resume on a durable store.** Replace the boot `failAllRunning` for stepwise jobs with a sweeper
+5. **S5 resume on a durable store.** *Delivered 2026-10-10 as a boot-time sweep, not a periodic one (a sweeper that runs every 15 s is S6's concern with the shared pacer); supported topology is one server process per database file, because boot releases the claims of every other holder. Inline jobs are resumed by the booting process itself; page-driven jobs carry on when the page asks.* Replace the boot `failAllRunning` for stepwise jobs with a sweeper
    (boot, then every 15 s while inline jobs run; not `setInterval` on Vercel). Decide explicitly who
    resumes an INLINE-driver job after a restart (nobody is polling `advance` for it): either the sweeper
    takes the lease and drives it, with a SIGKILL test counting hits, or inline jobs keep the "restarted"

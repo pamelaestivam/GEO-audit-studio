@@ -270,6 +270,19 @@ export interface Store {
   failStuck(maxAgeMs: number, reason: string, now?: number): Promise<number>;
   /** Mark EVERY running job failed - run once at boot, when none can still be alive. */
   failAllRunning(reason: string, now?: number): Promise<number>;
+  /**
+   * At boot of a durable store: mark running jobs that have NO plan (made before audits were stepped) failed, since
+   * nothing can resume them. Planned jobs are left for `resumeCandidates`.
+   */
+  failRunningWithoutPlan(reason: string, now?: number): Promise<number>;
+  /**
+   * At boot: make every step lease held by another running instance claimable at once. The supported topology is one
+   * process per database, so a lease held by any other instance belongs to a process that is gone. Returns how many.
+   * The holder name is `<kind>:<instanceId>:...`.
+   */
+  releaseLeasesNotHeldBy(instanceId: string): Promise<number>;
+  /** Running jobs that have a plan (candidates to resume), oldest first. */
+  listRunningPlanned(): Promise<StoredJob[]>;
   /** Delete jobs that started before `beforeMs`. */
   pruneJobs(beforeMs: number): Promise<number>;
 
@@ -508,6 +521,38 @@ export class MemoryStore implements Store {
       }
     }
     return n;
+  }
+  async failRunningWithoutPlan(reason: string, now = Date.now()) {
+    let n = 0;
+    for (const j of this.jobs.values()) {
+      if (j.status === 'running' && j.plan === undefined) {
+        j.status = 'error';
+        j.error = reason;
+        j.finishedAt = now;
+        j.billable = false;
+        j.failCode = RESTARTED_FAIL_CODE;
+        n++;
+      }
+    }
+    return n;
+  }
+  async releaseLeasesNotHeldBy(instanceId: string) {
+    let n = 0;
+    for (const list of this.steps.values()) {
+      for (const st of list) {
+        if (st.state === 'leased' && !(st.leaseHolder || '').includes(`:${instanceId}:`)) {
+          st.leaseUntil = 0;
+          n++;
+        }
+      }
+    }
+    return n;
+  }
+  async listRunningPlanned() {
+    return Array.from(this.jobs.values())
+      .filter((j) => j.status === 'running' && j.plan !== undefined)
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .map((j) => ({ ...j }));
   }
   async pruneJobs(beforeMs: number) {
     let n = 0;
@@ -891,6 +936,23 @@ export class SqliteStore implements Store {
         .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running'")
         .run(reason, now, RESTARTED_FAIL_CODE).changes
     );
+  }
+  async failRunningWithoutPlan(reason: string, now = Date.now()) {
+    return Number(
+      this.db
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running' AND plan IS NULL")
+        .run(reason, now, RESTARTED_FAIL_CODE).changes
+    );
+  }
+  async releaseLeasesNotHeldBy(instanceId: string) {
+    return Number(
+      this.db
+        .prepare("UPDATE job_steps SET lease_until = 0 WHERE state = 'leased' AND instr(COALESCE(lease_holder, ''), ?) = 0")
+        .run(`:${instanceId}:`).changes
+    );
+  }
+  async listRunningPlanned() {
+    return this.db.prepare("SELECT * FROM jobs WHERE status = 'running' AND plan IS NOT NULL ORDER BY started_at").all().map(rowToJob);
   }
   async pruneJobs(beforeMs: number) {
     return this.immediate(() => {
