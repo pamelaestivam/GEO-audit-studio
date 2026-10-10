@@ -4,8 +4,8 @@ name: CI
 # a merge: typecheck, then `npm test` (build + unit + real-server E2E + contract
 # checks). main auto-deploys, so a red run here is a red release.
 #
-# This workflow is the whole merge gate and needs nothing from the internet beyond
-# npm and GitHub. The Docker image build is a separate, optional workflow
+# This workflow is the whole merge gate and needs no container registry (it still
+# downloads npm packages and the Playwright browser). The Docker image build is a separate, optional workflow
 # (docker.yml) because it depends on a third-party registry that rate-limits shared
 # runners, and a gate that fails for reasons outside the code teaches people to
 # ignore it. Whether the DEPLOYED site works is live-check.yml.

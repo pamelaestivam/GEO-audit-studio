@@ -98,7 +98,7 @@ try {
       check('the session is accepted', me.status === 200, `status ${me.status}`);
       const list = await get('/api/audits', { headers: auth });
       check('saved audits can be listed', list.status === 200 && Array.isArray(list.json?.audits), `status ${list.status}`);
-      const ready = await get('/api/audit/readiness', { headers: auth });
+      const ready = await get('/api/audit/readiness', { headers: auth, signal: AbortSignal.timeout(90000) }); // makes a real model call
       check('deep readiness answers', ready.status === 200 && Array.isArray(ready.json?.checks), `status ${ready.status}: ${ready.text.slice(0, 120)}`);
       for (const c of ready.json?.checks || []) check(`readiness: ${c.name}${c.verified ? '' : ' (not verified by a live call)'}`, c.ok, c.detail);
     }

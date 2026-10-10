@@ -149,7 +149,8 @@ production-install check, which also boots the built server, restarts it on the 
 data directory, and proves the data file kept the state, the restarted server writes to
 the same file, and a backup holds the state). The Docker image build is a separate,
 non-gating workflow (`docker.yml`, runs when image files change and weekly) and
-`live-check.yml` tests the deployed site daily and after each push to `main`,
+`live-check.yml` tests the deployed site daily and when Vercel reports a successful
+production deployment,
 opening one tracking issue when it fails. Read their results; a red one is a
 finding to act on, not something to merge past silently. A fresh-context **adversarial review**
 (`.claude/agents/`, `docs/ENGINEERING_STANDARDS.md` §10) must also have been run
