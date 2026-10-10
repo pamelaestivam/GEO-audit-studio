@@ -142,11 +142,12 @@ async function main() {
       const r = rows(dir, jobId);
       check('an audit killed between two questions is resumed and finishes', [fin.body.status, fin.body.report?.degraded !== true], ['done', true]);
       check('...with exactly the planned calls (two answers and the analysis): nothing was made twice', fake.hits() - before, 3);
-      check('...the step that was waiting is taken over as attempt 2, and no call is counted as repeated', r.steps.map((s) => [s.key, s.state, s.attempt, s.repeated_calls]), [
-        ['collect:0:Gemini', 'done', 1, 0],
-        ['collect:1:Gemini', 'done', 2, 0],
-        ['narrative', 'done', 1, 0],
-        ['finalize', 'done', 1, 0],
+      // The kill lands either just before the next step is claimed (attempt 1) or while it waits out the pause between
+      // questions (taken over as attempt 2); both are "between steps" and neither repeats a call.
+      check('...no step repeated a call, the first answer was made once, and the waiting step needed at most one takeover', [r.steps.map((s) => [s.key, s.state, s.repeated_calls]), r.steps[0].attempt, r.steps[1].attempt <= 2], [
+        [['collect:0:Gemini', 'done', 0], ['collect:1:Gemini', 'done', 0], ['narrative', 'done', 0], ['finalize', 'done', 0]],
+        1,
+        true,
       ]);
       check('...no incident, and the audit is billable', [r.incidents.length, r.job.billable], [0, 1]);
       await kill(proc);
