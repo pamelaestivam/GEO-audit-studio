@@ -157,6 +157,8 @@ function intervalCounts(
   const answers = audit.observationsWithEvidence;
   const mentioned = audit.observationsMentioned;
   if (typeof answers !== 'number' || typeof mentioned !== 'number' || answers <= 0) return null;
+  // Impossible counts are corrupt data: no range at all rather than a clamped one.
+  if (!(mentioned >= 0 && mentioned <= answers)) return null;
   const n = independentReadings(audit) ?? answers;
   let k = Math.round((mentioned * n) / answers);
   // Rescaling should not turn "named in some answers" into "named in none" or "in all": keep k off

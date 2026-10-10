@@ -178,6 +178,8 @@ check('one question behind several answers reads "1 reading", not "1 readings"',
   check('the range always contains the headline percentage (no case in a 6 x 40 x all-mentions grid falls outside)', outside, 0);
 }
 check('2 of 3 answers from a single question: the range is wide (0%-80%) and still contains the 67% headline', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: 2, queriesAttempted: 1, questionsAnswered: 1 }), '0%-80%');
+check('more mentions than answers (corrupt counts) gives no range, not "20%-167%"', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: 5, queriesAttempted: 1 }), null);
+check('negative mentions give no range', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: -1, queriesAttempted: 1 }), null);
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
