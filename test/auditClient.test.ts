@@ -128,7 +128,7 @@ async function main() {
       return { status: 200, body: { status: 'done', report: REPORT, saved: false, outcome: 'finished', nextStepAfterMs: 0, steps: STEPS(4) } };
     });
     await runAuditJob({ businessName: 'X' });
-    check('the page waits the pause the server asked for before the next request', stamps[1] - stamps[0] >= 380, true);
+    check('the page waits the pause the server asked for (about 400 ms) before the next request, not the longer default poll', [stamps[1] - stamps[0] >= 380, stamps[1] - stamps[0] < 1500], [true, true]);
   }
 
   // ---- a gateway error is a blip, not the end of the audit
@@ -162,7 +162,9 @@ async function main() {
       return new Response(JSON.stringify({ status: 'done', report: REPORT, saved: false, outcome: 'finished', nextStepAfterMs: 0, steps: STEPS(4) }), { status: 200 });
     };
     await runAuditJob({ businessName: 'X' });
-    check('a failed advance request is counted once by the page (no hidden retry inside the request)', attempts, 2);
+    // The options passed to apiFetch (retries: 0, a long timeout) are not asserted here: a fake fetch cannot tell
+    // a retry inside the request from the page asking again. They are pinned by reading src/auditClient.ts.
+    check('a network failure on an advance is asked again by the page and the audit still finishes', attempts, 2);
   }
 
   console.log(failures === 0 ? '\nAll audit client checks passed.' : `\n${failures} check(s) failed.`);

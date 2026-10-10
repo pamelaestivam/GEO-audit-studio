@@ -772,8 +772,8 @@ those files is a re-run, not a regression, but it must be recorded here.
   page-driven audit nothing runs and it ends at its own timeout (spending nothing); a reload fixes it.
   `AUDIT_LEASE_MS` shorter than the longest step lets a second advance repeat the call (accounted: `attempt` 2,
   `repeated_calls`, a `lease_expired_midcall` incident); there is no floor on it. Not delivered in S4 and moved to
-  S7, where the page first needs them: the additive GET fields `phase`, `step`, `instanceId` (the advance reply
-  carries the `steps` summary already); the plan's `wait` outcome was replaced by `nextStepAfterMs` plus `idle`.
+  S7, where the page first needs them: the additive GET fields `phase`, `step`, `callsMade`, `repeatedCalls`, `storage`,
+  `instanceId` (the GET job view is unchanged; the advance reply carries the `steps` summary, `storage` is in the 404); the plan's `wait` outcome was replaced by `nextStepAfterMs` plus `idle`.
 - **Step e engine (slice S3) tests:** the several-engine path (steps for each paid engine, one after another) has
   no end-to-end test because only Gemini can be faked; `planSteps`, the ordering and the breaker rule have unit
   tests (`test/auditSteps.test.ts`). `closeJobAfterFailedStep` (a claim reporting an exhausted or failed step) cannot
