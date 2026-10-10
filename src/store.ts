@@ -114,12 +114,15 @@ export interface Incident {
   detail: string;
 }
 
+/** Set on a job the reaper stopped for running too long; see `decideClaim`. */
+export const STUCK_FAIL_CODE = 'stuck';
+
 /**
  * The one definition of "may this step be claimed now" (both stores call it, so they cannot drift).
  * Steps run in order: only the first step that is not finished is ever considered.
  */
 export function decideClaim(
-  jobStatus: JobStatus | undefined,
+  job: { status: JobStatus; failCode?: string | null } | undefined,
   steps: JobStep[],
   holder: string,
   leaseMs: number,
@@ -127,7 +130,11 @@ export function decideClaim(
   maxAttempts: number
 ): { result: ClaimResult; index: number; patch?: Partial<JobStep> } {
   const none = { result: { outcome: 'none' } as ClaimResult, index: -1 };
-  if (jobStatus !== 'running') return none;
+  // A job the reaper stopped as stuck (`failCode` STUCK_FAIL_CODE) may still be finished by the process that
+  // holds it: the evidence was paid for, and recording a late finish is the existing behaviour. Any other
+  // ended job has nothing to claim.
+  const advanceable = job !== undefined && (job.status === 'running' || (job.status === 'error' && job.failCode === STUCK_FAIL_CODE));
+  if (!advanceable) return none;
   if (steps.some((st) => st.state === 'failed')) return none;
   const index = steps.findIndex((st) => st.state === 'pending' || st.state === 'leased');
   if (index < 0) return none;
@@ -185,7 +192,7 @@ export interface Store {
   findJobByKey(owner: string, idemKey: string): Promise<StoredJob | null>;
   updateJob(
     id: string,
-    patch: Partial<Pick<StoredJob, 'status' | 'progress' | 'result' | 'error' | 'finishedAt' | 'billable' | 'phase' | 'failCode'>>
+    patch: Partial<Pick<StoredJob, 'status' | 'progress' | 'result' | 'error' | 'finishedAt' | 'billable' | 'phase'>> & { failCode?: string | null }
   ): Promise<void>;
   /** Record that something is working on the job now (and which instance), optionally with a phase. */
   touchJob(id: string, now: number, patch?: { phase?: string }): Promise<void>;
@@ -288,7 +295,11 @@ export class MemoryStore implements Store {
   }
   async updateJob(id: string, patch: Parameters<Store['updateJob']>[1]) {
     const j = this.jobs.get(id);
-    if (j) Object.assign(j, patch);
+    if (!j) return;
+    const { failCode, ...rest } = patch;
+    Object.assign(j, rest);
+    if (failCode === null) delete j.failCode;
+    else if (failCode !== undefined) j.failCode = failCode;
   }
   async touchJob(id: string, now: number, patch: { phase?: string } = {}) {
     const j = this.jobs.get(id);
@@ -309,7 +320,7 @@ export class MemoryStore implements Store {
   }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
     const list = this.steps.get(jobId) || [];
-    const d = decideClaim(this.jobs.get(jobId)?.status, list, holder, leaseMs, now, maxAttempts);
+    const d = decideClaim(this.jobs.get(jobId), list, holder, leaseMs, now, maxAttempts);
     if (d.patch) Object.assign(list[d.index], d.patch);
     return cloneClaim(d.result);
   }
@@ -370,6 +381,7 @@ export class MemoryStore implements Store {
         j.error = reason;
         j.finishedAt = now;
         j.billable = false;
+        j.failCode = STUCK_FAIL_CODE;
         n++;
       }
     }
@@ -657,9 +669,10 @@ export class SqliteStore implements Store {
   }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
     return this.immediate(() => {
-      const status = this.db.prepare('SELECT status FROM jobs WHERE id = ?').get(jobId)?.status as JobStatus | undefined;
+      const jr = this.db.prepare('SELECT status, fail_code FROM jobs WHERE id = ?').get(jobId);
+      const jobInfo = jr ? { status: jr.status as JobStatus, failCode: jr.fail_code ?? undefined } : undefined;
       const steps: JobStep[] = this.db.prepare('SELECT * FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId).map(rowToStep);
-      const d = decideClaim(status, steps, holder, leaseMs, now, maxAttempts);
+      const d = decideClaim(jobInfo, steps, holder, leaseMs, now, maxAttempts);
       if (d.patch) {
         const p = d.patch;
         const seq = steps[d.index].seq;
@@ -720,8 +733,8 @@ export class SqliteStore implements Store {
   async failStuck(maxAgeMs: number, reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0 WHERE status = 'running' AND started_at < ?")
-        .run(reason, now, now - maxAgeMs).changes
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running' AND started_at < ?")
+        .run(reason, now, STUCK_FAIL_CODE, now - maxAgeMs).changes
     );
   }
   async failAllRunning(reason: string, now = Date.now()) {
