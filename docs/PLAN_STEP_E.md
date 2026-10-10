@@ -49,8 +49,10 @@ text)` for pacer, breaker and call counter, and `incidents`.
 
 **New store methods:** `createPlannedJob` (atomic, same unique `(owner, idem_key)` rule),
 `getJobSteps`, `claimStep(jobId, holder, leaseMs, now, maxAttempts)` returning `claimed | busy |
-exhausted | none` (compare-and-set on state and lease), `markCallStarted`, `completeStep` (first
-writer wins, returns boolean), `touchJob`, `recordIncident` / `listIncidents`; later
+exhausted | failed | none` (compare-and-set on state and lease; `exhausted` and `failed` repeat on every
+claim until the caller closes the job), `markCallStarted` and `completeStep` (both fenced by the `attempt`
+number `claimStep` returned, so a stale invocation cannot touch a newer claim; `completeStep` stores one
+result per attempt and returns a boolean), `touchJob`, `recordIncident` / `listIncidents`; later
 `claimGeminiSlot`, `tripBreaker`, `getBreaker`, `recordCall`, `callsOn`; `info()` gains
 `instanceId`.
 
