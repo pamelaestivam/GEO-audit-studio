@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
-import { MIGRATIONS, MemoryStore, SqliteStore, openStore, type PlannedStep, type Store, type StoredJob } from '../src/store';
+import { MIGRATIONS, MemoryStore, SqliteStore, StoreBusyError, openStore, type PlannedStep, type Store, type StoredJob } from '../src/store';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -194,6 +194,8 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   const c2 = await s.claimStep('p1', 'B', LEASE, NOW + 1, 3);
   check(t('a second holder asking while the lease is live is told it is busy, on the same step'), [c2.outcome, (c2 as any).step?.seq, (c2 as any).step?.leaseHolder], ['busy', 0, 'A']);
   check(t('...and the stored attempt count did not move'), (await s.getJobSteps('p1'))[0].attempt, 1);
+  if (c2.outcome === 'busy') c2.step.attempt = 99;
+  check(t('a result handed back is a copy: changing it does not change the stored step'), (await s.getJobSteps('p1'))[0].attempt, 1);
   check(t('a claim on an unknown job is none'), (await s.claimStep('nope', 'A', LEASE, NOW, 3)).outcome, 'none');
 
   // two callers at the very same moment: exactly one wins
@@ -202,15 +204,15 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   check(t('two simultaneous claims give exactly one claimed and one busy'), race.map((r) => r.outcome).sort(), ['busy', 'claimed']);
 
   // --- completing: first writer wins, and the next claim moves on in order
-  check(t('only the holder of a live lease can mark the call as started'), [await s.markCallStarted('p1', 0, 'B', NOW + 2), await s.markCallStarted('p1', 0, 'A', NOW + 2)], [false, true]);
+  check(t('only the current holder can mark the call as started (it is allowed after the lease expired but before anyone reclaimed, so the count stays honest)'), [await s.markCallStarted('p1', 0, 'B', 1, NOW + 2), await s.markCallStarted('p1', 0, 'A', 1, NOW + 2)], [false, true]);
   check(t('the start of the call is recorded'), (await s.getJobSteps('p1'))[0].callStartedAt, NOW + 2);
-  check(t('a step is completed once, with its result'), await s.completeStep('p1', 0, { state: 'done', result: { answer: 'first' } }, NOW + 3), true);
-  check(t('a second completion of the same step is refused and changes nothing'), [await s.completeStep('p1', 0, { state: 'done', result: { answer: 'second' } }, NOW + 4), (await s.getJobSteps('p1'))[0].result], [false, { answer: 'first' }]);
+  check(t('a step is completed once, with its result'), await s.completeStep('p1', 0, 1, { state: 'done', result: { answer: 'first' } }, NOW + 3), true);
+  check(t('a second completion of the same step is refused and changes nothing'), [await s.completeStep('p1', 0, 1, { state: 'done', result: { answer: 'second' } }, NOW + 4), (await s.getJobSteps('p1'))[0].result], [false, { answer: 'first' }]);
   check(t('a finished step has no lease left'), [(await s.getJobSteps('p1'))[0].leaseHolder, (await s.getJobSteps('p1'))[0].leaseUntil, (await s.getJobSteps('p1'))[0].finishedAt], [undefined, undefined, NOW + 3]);
-  check(t('a pending step cannot be completed without being claimed'), await s.completeStep('p1', 1, { state: 'done' }, NOW + 4), false);
+  check(t('a pending step cannot be completed without being claimed'), await s.completeStep('p1', 1, 1, { state: 'done' }, NOW + 4), false);
   const c3 = await s.claimStep('p1', 'A', LEASE, NOW + 5, 3);
   check(t('the next claim is the next step in order'), [c3.outcome, (c3 as any).step?.key], ['claimed', 'narrative']);
-  check(t('a skipped step keeps its reason'), [await s.completeStep('p1', 1, { state: 'skipped', skipReason: 'breaker' }, NOW + 6), (await s.getJobSteps('p1'))[1].skipReason], [true, 'breaker']);
+  check(t('a skipped step keeps its reason'), [await s.completeStep('p1', 1, 1, { state: 'skipped', skipReason: 'breaker' }, NOW + 6), (await s.getJobSteps('p1'))[1].skipReason], [true, 'breaker']);
 
   // --- an expired lease is reclaimed, and a call that had started is counted as possibly repeated
   await s.createPlannedJob(job({ id: 'p3' }), PLAN);
@@ -219,20 +221,47 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   check(t('a lease is live until the instant it expires'), early.outcome, 'busy');
   const late = await s.claimStep('p3', 'B', LEASE, NOW + LEASE, 3);
   check(t('after expiry another holder takes the step as attempt 2; no call had started so nothing is repeated'), [late.outcome, (late as any).step?.attempt, (late as any).step?.leaseHolder, (late as any).reclaimedMidCall, (late as any).step?.repeatedCalls], ['claimed', 2, 'B', false, 0]);
-  await s.markCallStarted('p3', 0, 'B', NOW + LEASE + 2);
+  await s.markCallStarted('p3', 0, 'B', 2, NOW + LEASE + 2);
   const third = await s.claimStep('p3', 'C', LEASE, NOW + 3 * LEASE, 3);
   check(t('reclaiming a step whose call had started counts one possibly repeated call and clears the start'), [third.outcome, (third as any).step?.attempt, (third as any).reclaimedMidCall, (third as any).step?.repeatedCalls, (third as any).step?.callStartedAt], ['claimed', 3, true, 1, undefined]);
-  check(t('the old holder cannot mark a call started any more'), await s.markCallStarted('p3', 0, 'B', NOW + 3 * LEASE + 1), false);
-  check(t('...but its late result is stored if it arrives first (first writer wins)'), [await s.completeStep('p3', 0, { state: 'done', result: 'late' }, NOW + 3 * LEASE + 2), await s.completeStep('p3', 0, { state: 'done', result: 'newer' }, NOW + 3 * LEASE + 3), (await s.getJobSteps('p3'))[0].result], [true, false, 'late']);
+  check(t('the reclaim cleared the call start on the stored row too, not only in the returned claim'), (await s.getJobSteps('p3'))[0].callStartedAt, undefined);
+  check(t('the old holder cannot mark a call started any more'), await s.markCallStarted('p3', 0, 'B', 2, NOW + 3 * LEASE + 1), false);
+  check(t('a late result from the older attempt is refused (one attempt owns one result); the current attempt\'s is stored'), [await s.completeStep('p3', 0, 2, { state: 'done', result: 'late' }, NOW + 3 * LEASE + 2), await s.completeStep('p3', 0, 3, { state: 'done', result: 'newer' }, NOW + 3 * LEASE + 3), (await s.getJobSteps('p3'))[0].result], [false, true, 'newer']);
+
+  // --- the same holder name reclaiming after expiry is a different attempt: the stale invocation is fenced out
+  await s.createPlannedJob(job({ id: 'p3b' }), PLAN);
+  await s.claimStep('p3b', 'proc', LEASE, NOW, 3);
+  const again = await s.claimStep('p3b', 'proc', LEASE, NOW + LEASE, 3);
+  check(t('the same holder reclaiming after expiry gets attempt 2'), [again.outcome, (again as any).step?.attempt], ['claimed', 2]);
+  check(t('...and its earlier invocation (attempt 1) can neither mark a call started nor store a result'), [await s.markCallStarted('p3b', 0, 'proc', 1, NOW + LEASE + 1), await s.completeStep('p3b', 0, 1, { state: 'done', result: 'stale' }, NOW + LEASE + 2), (await s.getJobSteps('p3b'))[0].state], [false, false, 'leased']);
 
   // --- bounded attempts
   await s.createPlannedJob(job({ id: 'p4' }), PLAN);
   const outcomes: string[] = [];
-  for (let i = 0; i < 4; i++) outcomes.push((await s.claimStep('p4', `h${i}`, LEASE, NOW + i * (LEASE + 1), 3)).outcome);
+  for (let i = 0; i < 4; i++) {
+    const c = await s.claimStep('p4', `h${i}`, LEASE, NOW + i * (LEASE + 1), 3);
+    outcomes.push(c.outcome);
+    if (c.outcome === 'claimed') await s.markCallStarted('p4', 0, `h${i}`, i + 1, NOW + i * (LEASE + 1) + 1);
+  }
   check(t('a step is claimed three times and the fourth claim reports it exhausted'), outcomes, ['claimed', 'claimed', 'claimed', 'exhausted']);
   const st4 = await s.getJobSteps('p4');
   check(t('...the exhausted step is failed with a code, and the later steps stay pending'), [st4[0].state, st4[0].errorCode, st4[0].attempt, st4[1].state], ['failed', 'step_attempts_exceeded', 3, 'pending']);
-  check(t('...and nothing more can be claimed on that job'), (await s.claimStep('p4', 'z', LEASE, NOW + 10 * LEASE, 3)).outcome, 'none');
+  check(t('...and an exhausted step looks the same on both stores (no leftover call start, lease or holder)'), [st4[0].callStartedAt, st4[0].leaseHolder, st4[0].leaseUntil, st4[0].repeatedCalls], [undefined, undefined, undefined, 2]);
+  check(t('...and every later claim reports it again until the job is closed (a caller that crashed is reminded)'), [(await s.claimStep('p4', 'z', LEASE, NOW + 10 * LEASE, 3)).outcome, (await s.claimStep('p4', 'z', LEASE, NOW + 11 * LEASE, 3)).outcome], ['exhausted', 'exhausted']);
+  await s.updateJob('p4', { status: 'error', error: 'x', finishedAt: NOW, failCode: 'step_attempts_exceeded' });
+  check(t('...and once the job is closed there is nothing to claim'), (await s.claimStep('p4', 'z', LEASE, NOW + 12 * LEASE, 3)).outcome, 'none');
+
+  // --- a step failed on purpose is reported the same way, as 'failed'
+  await s.createPlannedJob(job({ id: 'p4b' }), PLAN);
+  const cf = await s.claimStep('p4b', 'A', LEASE, NOW, 3);
+  await s.completeStep('p4b', 0, (cf as any).step.attempt, { state: 'failed', errorCode: 'step_exception' }, NOW + 1);
+  check(t('a step completed as failed makes later claims report failed (job still running), not none'), [(await s.claimStep('p4b', 'A', LEASE, NOW + 2, 3)).outcome, ((await s.claimStep('p4b', 'A', LEASE, NOW + 2, 3)) as any).step?.errorCode], ['failed', 'step_exception']);
+
+  // --- a bad attempt limit never means unlimited retries
+  await s.createPlannedJob(job({ id: 'p4c' }), PLAN);
+  const nan: string[] = [];
+  for (let i = 0; i < 3; i++) nan.push((await s.claimStep('p4c', 'A', LEASE, NOW + i * (LEASE + 1), NaN)).outcome);
+  check(t('a limit that is not a whole number allows one try, then exhausted'), nan, ['claimed', 'exhausted', 'exhausted']);
 
   // --- a job that is not running has nothing to claim
   await s.createPlannedJob(job({ id: 'p5' }), PLAN);
@@ -241,11 +270,11 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   // all steps in a final state
   await s.createPlannedJob(job({ id: 'p6' }), [PLAN[0]]);
   await s.claimStep('p6', 'A', LEASE, NOW, 3);
-  await s.completeStep('p6', 0, { state: 'done' }, NOW);
+  await s.completeStep('p6', 0, 1, { state: 'done' }, NOW);
   check(t('when every step has a final state there is nothing to claim'), (await s.claimStep('p6', 'A', LEASE, NOW, 3)).outcome, 'none');
 
   // --- heartbeat and instance
-  const inst = s.info().instanceId;
+  const inst = s.instanceId;
   await s.touchJob('p1', NOW + 50, { phase: 'collecting' });
   const touched = await s.getJob('p1');
   check(t('touching a job records the time, the phase and the instance that did it'), [touched?.heartbeatAt, touched?.phase, touched?.instanceId === inst, typeof inst === 'string' && inst.length > 4], [NOW + 50, 'collecting', true, true]);
@@ -260,7 +289,52 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   await s.recordIncident({ jobId: 'p3', at: NOW + 2, kind: 'step_attempts_exceeded', detail: 'two' });
   await s.recordIncident({ at: NOW + 3, kind: 'invariant', detail: 'three' });
   check(t('incidents are listed newest first'), (await s.listIncidents()).map((i) => i.detail), ['three', 'two', 'one']);
-  check(t('...can be filtered to one job, and limited'), [(await s.listIncidents({ jobId: 'p3' })).map((i) => i.kind), (await s.listIncidents({ limit: 2 })).length], [['step_attempts_exceeded'], 2]);
+  await s.recordIncident({ jobId: 'p3', at: NOW + 4, kind: 'lease_expired_midcall', detail: 'four' });
+  check(t('...a job\'s own incidents are newest first too'), (await s.listIncidents({ jobId: 'p3' })).map((i) => i.detail), ['four', 'two']);
+  check(t('...can be filtered to one job, and limited'), [(await s.listIncidents({ jobId: 'p1' })).map((i) => i.kind), (await s.listIncidents({ limit: 2 })).length], [['lease_expired_midcall'], 2]);
+
+  // --- the two stores must accept and refuse the same things
+  let dupId = false;
+  try {
+    await s.createPlannedJob(job({ id: 'p7' }), PLAN);
+  } catch {
+    dupId = true;
+  }
+  check(t('a planned job whose id already exists is refused'), dupId, true);
+  check(t('...and the existing job\'s steps and lease state are untouched'), [(await s.getJobSteps('p7')).length, (await s.getJobSteps('p7'))[0].state], [3, 'pending']);
+  let bad = false;
+  try {
+    await s.createPlannedJob(job({ id: 'bad1' }), [PLAN[0], { key: '', kind: 'collect' } as any]);
+  } catch {
+    bad = true;
+  }
+  check(t('a plan with a malformed step is refused as a whole: no job, no steps'), [bad, await s.getJob('bad1'), (await s.getJobSteps('bad1')).length], [true, null, 0]);
+  check(t('the instance id is not part of the public info()'), Object.keys(s.info()).includes('instanceId'), false);
+
+  // a stored result is a copy in both directions, and reads back the way the database would
+  await s.createPlannedJob(job({ id: 'p8' }), PLAN);
+  const cl8 = await s.claimStep('p8', 'A', LEASE, NOW, 3);
+  const mine: any = { list: [1], n: NaN };
+  await s.completeStep('p8', 0, (cl8 as any).step.attempt, { state: 'done', result: mine }, NOW + 1);
+  mine.list.push(2);
+  const read: any = (await s.getJobSteps('p8'))[0].result;
+  read.list.push(3);
+  check(t('changing the object after storing it, or the object read back, does not change the stored result'), (await s.getJobSteps('p8'))[0].result, { list: [1], n: null });
+
+  // incidents are bounded sentences, and a limit that is not a whole number is not an error
+  await s.recordIncident({ jobId: 'p8', at: NOW + 9, kind: 'invariant', detail: 'x'.repeat(5000) });
+  check(t('an incident detail is cut to 500 characters'), (await s.listIncidents({ jobId: 'p8' }))[0].detail.length, 500);
+  const allCount = (await s.listIncidents()).length;
+  check(t('a negative, fractional or NaN limit means the default, on both stores'), [(await s.listIncidents({ limit: -1 })).length, (await s.listIncidents({ limit: 2.5 })).length, (await s.listIncidents({ limit: NaN })).length], [allCount, allCount, allCount]);
+
+  // job fields set at creation come back, and a touch without a phase still records the instance
+  await s.createPlannedJob(job({ id: 'p9', phase: 'planned', heartbeatAt: NOW, instanceId: 'inst-x', failCode: 'none-yet' }), PLAN);
+  const p9 = await s.getJob('p9');
+  check(t('phase, heartbeat, instance and failure code given at creation come back'), [p9?.phase, p9?.heartbeatAt, p9?.instanceId, p9?.failCode], ['planned', NOW, 'inst-x', 'none-yet']);
+  await s.touchJob('p9', NOW + 5);
+  check(t('a touch without a phase still records the time and this instance, and keeps the phase'), [(await s.getJob('p9'))?.heartbeatAt, (await s.getJob('p9'))?.instanceId === s.instanceId, (await s.getJob('p9'))?.phase], [NOW + 5, true, 'planned']);
+  await s.updateJob('p9', { phase: 'analysing', failCode: null });
+  check(t('a phase can be updated and a failure code cleared'), [(await s.getJob('p9'))?.phase, (await s.getJob('p9'))?.failCode], ['analysing', undefined]);
 
   // --- pruning removes a pruned job's steps and old incidents
   const before = NOW + 1000;
@@ -349,8 +423,8 @@ async function main() {
     await a.createPlannedJob(job({ id: 'x2' }), PLAN);
     const race = await Promise.all([a.claimStep('x2', 'A', LEASE, NOW, 3), b.claimStep('x2', 'B', LEASE, NOW, 3)]);
     check('two connections claiming at once give exactly one claimed', race.map((r) => r.outcome).sort(), ['busy', 'claimed']);
-    check('the two connections have different instance ids', a.info().instanceId !== b.info().instanceId, true);
-    check('a completion on one connection is the first writer; the other is refused', [await a.completeStep('x1', 0, { state: 'done', result: 1 }, NOW + 2), await b.completeStep('x1', 0, { state: 'done', result: 2 }, NOW + 3), (await b.getJobSteps('x1'))[0].result], [true, false, 1]);
+    check('the two connections have different instance ids', a.instanceId !== b.instanceId, true);
+    check('a completion on one connection is the first writer; the other is refused', [await a.completeStep('x1', 0, 1, { state: 'done', result: 1 }, NOW + 2), await b.completeStep('x1', 0, 1, { state: 'done', result: 2 }, NOW + 3), (await b.getJobSteps('x1'))[0].result], [true, false, 1]);
     // closing and reopening keeps steps, attempts and leases
     await a.claimStep('x1', 'A', LEASE, NOW + 4, 3);
     a.close();
@@ -395,6 +469,59 @@ async function main() {
     check('eight real processes claiming one step at once: exactly one claimed, the rest busy', [parsed.filter((r) => r.outcome === 'claimed').length, parsed.filter((r) => r.outcome === 'busy').length], [1, 7]);
     const after = new SqliteStore(DatabaseSync, file);
     check('...and the step was attempted exactly once', (await after.getJobSteps('race'))[0].attempt, 1);
+    after.close();
+  }
+
+  // --- a writer lock held by someone else is a typed, recoverable error, not a raw one or a half-written state
+  {
+    const lockFile = path.join(dir0(), 'busy.sqlite');
+    const holder = new SqliteStore(DatabaseSync, lockFile);
+    const waiter = new SqliteStore(DatabaseSync, lockFile);
+    await holder.createPlannedJob(job({ id: 'bz' }), PLAN);
+    (waiter as any).db.exec('PRAGMA busy_timeout = 50');
+    (holder as any).db.exec('BEGIN IMMEDIATE');
+    let err: any = null;
+    try {
+      await waiter.claimStep('bz', 'A', LEASE, NOW, 3);
+    } catch (e) {
+      err = e;
+    }
+    check('a held writer lock gives a typed store_busy error', [err instanceof StoreBusyError, err?.code, /database is busy/.test(err?.message || '')], [true, 'store_busy', true]);
+    (holder as any).db.exec('ROLLBACK');
+    check('...and nothing was half written: the next claim works as attempt 1', [(await waiter.claimStep('bz', 'A', LEASE, NOW, 3) as any).outcome, (await waiter.getJobSteps('bz'))[0].attempt], ['claimed', 1]);
+    holder.close();
+    waiter.close();
+  }
+
+  // --- four real processes opening one old database at the same moment: every one starts, the schema is upgraded once
+  {
+    const file = path.join(dir0(), 'upgrade-race.sqlite');
+    const raw = new DatabaseSync(file);
+    for (let i = 0; i < 3; i++) raw.exec(MIGRATIONS[i]);
+    raw.exec('PRAGMA user_version = 3');
+    raw.close();
+    const script = path.join(dir0(), 'open.mts');
+    fs.writeFileSync(
+      script,
+      `import { SqliteStore } from ${JSON.stringify(path.resolve('src/store.ts'))};
+       const { DatabaseSync } = await import('node:sqlite');
+       while (Date.now() < Number(process.argv[3])) {}
+       try { const st = new SqliteStore(DatabaseSync, process.argv[2]); st.close(); console.log('ok'); } catch (e) { console.log('FAILED ' + e.message); }`
+    );
+    const go = Date.now() + 2500;
+    const outs = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        new Promise<string>((resolve) => {
+          let out = '';
+          const child = spawn('node', ['--import', 'tsx', script, file, String(go)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, NODE_NO_WARNINGS: '1' } });
+          child.stdout.on('data', (d) => (out += d));
+          child.on('close', () => resolve(out.trim()));
+        })
+      )
+    );
+    check('four processes opening a version-3 database at once all start', outs, ['ok', 'ok', 'ok', 'ok']);
+    const after = new DatabaseSync(file);
+    check('...and the schema ends at the current version', after.prepare('PRAGMA user_version').get().user_version, MIGRATIONS.length);
     after.close();
   }
 
