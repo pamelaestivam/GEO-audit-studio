@@ -136,7 +136,7 @@ would have skipped the alert, and its restart proof did not exercise the restart
 
 **First measurement of the live site (MEASURED, GitHub Actions runner, the workspace cannot reach
 it):** run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38033024298 dispatched the
-new `live-check` workflow. The site loads and its API answers at every depth and refuses strangers.
+new `live-check` workflow. The site loads and its API answers at every depth. The refusal checks passed, but an unconfigured server answers 503 to everything, so that is not proof that sign-in enforcement works.
 It is **not configured**: `SESSION_SECRET` and `ACCESS_CODES` are not set (so sign-in is
 impossible) and no engine key is set (so no audit can run). The workflow opened issue #36 by
 itself; that is the check working. Storage is memory only (a warning, not a failure, until the

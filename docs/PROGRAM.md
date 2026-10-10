@@ -42,7 +42,7 @@ tell the owner or a client that it is dependable.
 | 2b | Session hygiene: branch-status script and test, `CLAUDE.md` rules, resume routine | in review | PR #31 |
 | 2c | Remove a stray `node_modules` symlink from `main`; CI fails on tracked symlinks | done | merged #29 (d851fb2) |
 | 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | done | merged #30 (19005fc); CI green, full suite and browser checks passed, review findings fixed. The branches `claude/honest-first-visit` (backup patch) and `claude/session-hygiene*` are obsolete leftovers |
-| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs`; daily live-site check | done | merged #32 (01c4049): `docker.yml` (informational, ran green), `live-check.yml` (first run 2026-10-10, see section 4), restart and backup proof in `prod-install-check.sh`. Dependabot keeps the action pins current |
+| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs`; daily live-site check | done | merged #32 (01c4049): `docker.yml` (informational; its run on the PR, https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38031734681, was read from the Actions tab and passed), `live-check.yml` (first run 2026-10-10, see section 4), restart and backup proof in `prod-install-check.sh`. Dependabot keeps the action pins current |
 | 5 | c. Invariants, number guard, "Not counted" panel, cited-only as its own number (decision A) | next | nothing |
 | 6 | d. Paid-engine refusal and call counters ($0 guard, per instance) | next | nothing |
 | 7 | e. Step-wise audit state machine, leases, incidents; default returns to 3 | next | nothing |
