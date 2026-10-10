@@ -145,5 +145,5 @@ durable store ships). The action this needs from the owner is O-3 and O-2 in `do
 **Also observed:** Vercel's bot emits `deployment_status` events for Preview deployments, which fire
 `live-check.yml` (skipped by its condition). A Production event has not been observed yet.
 
-**Open:** PR #33 (report invariants and the zero-figure guard) is in review; the rest of
-`docs/PROGRAM.md` rows 5 to 7.
+**Open:** PR #33 (report invariants and the zero-figure guard, `docs/PROGRAM.md` row 5, first half) is in
+review; then row 5's second half, row 6 (the $0 guard) and row 7 (the step-wise audit).

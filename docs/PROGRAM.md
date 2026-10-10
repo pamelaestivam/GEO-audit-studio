@@ -42,12 +42,12 @@ tell the owner or a client that it is dependable.
 | 2b | Session hygiene: branch-status script and test, `CLAUDE.md` rules, resume routine | in review | PR #31 |
 | 2c | Remove a stray `node_modules` symlink from `main`; CI fails on tracked symlinks | done | merged #29 (d851fb2) |
 | 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | done | merged #30 (19005fc); CI green, full suite and browser checks passed, review findings fixed. The branches `claude/honest-first-visit` (backup patch) and `claude/session-hygiene*` are obsolete leftovers |
-| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs`; daily live-site check | in review | PR #32 (`docker.yml`, `live-check.yml`, restart and backup proof in `prod-install-check.sh`) |
+| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs`; daily live-site check | done | merged #32 (01c4049): `docker.yml` (informational, ran green), `live-check.yml` (first run 2026-10-10, see section 4), restart and backup proof in `prod-install-check.sh`. Dependabot keeps the action pins current |
 | 5 | c. Invariants, number guard, "Not counted" panel, cited-only as its own number (decision A) | next | nothing |
 | 6 | d. Paid-engine refusal and call counters ($0 guard, per instance) | next | nothing |
 | 7 | e. Step-wise audit state machine, leases, incidents; default returns to 3 | next | nothing |
 | 8 | f. PostgresStore on Supabase | blocked | owner action O-4 |
-| 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | partly: the scheduled live check with one tracking issue (`live-check.yml`, PR #32) is built but has not run on GitHub yet, and its `deployment_status` trigger is unproven (only the daily run and manual dispatch can be exercised); deep health endpoint and owner health section are not built | O-3 for the live URL |
+| 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | partly | the scheduled live check with one tracking issue is built (`live-check.yml`, #32) and has run once by manual dispatch (it exposed the unconfigured site, issue #36); its trigger on a finished Production deployment has not been observed (Preview events were); the deep health endpoint and the owner health section are not built | O-3 for the live URL |
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
 
@@ -84,7 +84,7 @@ Google login; secrets must never be in the repo or in chat.
 3. Put the same key in the Vercel project (O-3).
 *Then:* record the date you confirmed "no billing" in the table in section 4.
 
-**O-3. Check the Vercel project.** *Why only you:* it needs your Vercel login. **Measured 2026-10-10 by the live check (issue #36): `SESSION_SECRET`, `ACCESS_CODES` and `GEMINI_API_KEY` are all missing on the live site, so sign-in is impossible today.**
+**O-3. Check the Vercel project.** *Why only you:* it needs your Vercel login. **Measured 2026-10-10 by the live check (issue #36), production URL only (Preview not measured): `SESSION_SECRET` and `ACCESS_CODES` are not set, and no engine key is set (so `GEMINI_API_KEY` is among the missing), so sign-in is impossible today.**
 1. `vercel.com` then project `geo-audit-studio` then **Settings** then **Environment
    Variables**. Confirm these exist for Production and Preview: `SESSION_SECRET`
    (32 or more random characters), `ACCESS_CODES` (`yourname=a-long-code`),
@@ -133,7 +133,7 @@ branch-protection, ruleset, repository-settings or delete-branch tool (searched
 | Full suite on `main` after the 2026-10-09 merges | verified | `npm run verify`: 1,092 checks passed, 0 failed, 0 vulnerabilities; 2026-10-10 |
 | Start-up with no key, dev sign-in, empty engine list | verified | run on merged tree; 2026-10-10 |
 | Anything a real answer engine returns | **not verified** | no key, no network in the sandbox |
-| Live site loads and its API answers at every depth; strangers are refused | verified | `live-check` run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38033024298 (2026-10-10, 07:02 UTC): every frontend, API and refusal check passed against `https://geo-audit-studio-five.vercel.app` |
+| Live site loads and its API answers at every depth | verified | `live-check` run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38033024298 (manual dispatch, 2026-10-10 about 07:02 UTC, against the workflow's default URL `https://geo-audit-studio-five.vercel.app`, production only; the date and time are from the run page): every frontend and API check passed, and only the two configuration checks below failed. The refusal checks passed, but they accept 503 as well as 401, and an unconfigured server answers 503 to everything, so this shows "an unconfigured server refuses everything", not that sign-in enforcement works (401 under real sign-in has not been exercised live) |
 | **Live site is configured: sign-in secrets and an engine key present** | **MEASURED: NOT CONFIGURED** | same run: `SESSION_SECRET` is not set, `ACCESS_CODES` is not set, no engine key is set (issue #36). Nobody can sign in to the live site and no audit can run until the owner sets these in Vercel (O-3, O-2). |
 | Live site storage | MEASURED: memory only | reported as a warning by the same run (`--warn-non-durable`) |
 | `live-check` trigger on a finished Production deployment | partly | Vercel's bot fires the workflow for Preview deployments (runs skipped by design, e.g. run 38032591841); a Production-environment event has not been observed yet |
