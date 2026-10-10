@@ -15,6 +15,8 @@ export const MAX_STEP_ATTEMPTS = 3;
 
 /** What is stored on the job at submit time: the cleaned request, and what could be measured then. */
 export interface StoredAuditPlan extends AuditPlan {
+  /** Who drives the steps: this server process (`inline`) or the page, one request per step (`client`). */
+  driver: 'inline' | 'client';
   /** Engines with a key configured (and allowed) when the audit was submitted, in query order. */
   engines: string[];
   /** Set when nothing can be measured at all; the audit then has a single finishing step. */
@@ -85,4 +87,47 @@ export function queryingProgress(queryIndex: number, total: number): AuditProgre
 /** Progress once collection is over. */
 export function analysingProgress(total: number): AuditProgress {
   return { phase: 'analysing', done: total, total };
+}
+
+/** The pause that belongs before `step` runs: between questions, and before the written analysis. */
+export function pauseBefore(step: Pick<JobStep, 'kind' | 'queryIndex'> | undefined, startsItsQuestion: boolean): number {
+  if (!step) return 0;
+  if (step.kind === 'collect') return startsItsQuestion && (step.queryIndex ?? 0) > 0 ? PAUSE_BETWEEN_QUESTIONS_MS : 0;
+  if (step.kind === 'narrative') return PAUSE_BEFORE_ANALYSIS_MS;
+  return 0;
+}
+
+/** The pause between one question and the next (spreads the calls out). */
+export const PAUSE_BETWEEN_QUESTIONS_MS = 1200;
+/** The pause before the written analysis call. */
+export const PAUSE_BEFORE_ANALYSIS_MS = 600;
+
+/** How long a client driver waits before asking for the next step, from the steps as they stand now. */
+export function nextStepAfterMs(steps: JobStep[]): number {
+  const next = steps.find((s) => s.state === 'pending' || s.state === 'leased');
+  return pauseBefore(next, next ? startsQuestion(steps, next) : false);
+}
+
+/** What a person can be told about how far an audit has got, from its steps alone. */
+export interface StepsSummary {
+  /** Steps in a final state, and all steps. */
+  done: number;
+  total: number;
+  /** Outside calls the audit will make if nothing is repeated: one per question and engine, plus the analysis. */
+  plannedCalls: number;
+  /** Outside calls that have started or finished: AT LEAST this many were made (a collector can retry inside one step). */
+  callsMade: number;
+  /** Steps re-claimed after a started call; a lower bound on repeated calls. */
+  repeatedCalls: number;
+}
+
+export function summariseSteps(steps: JobStep[]): StepsSummary {
+  const calls = (s: JobStep) => s.kind === 'collect' || s.kind === 'narrative';
+  return {
+    done: steps.filter((s) => s.state === 'done' || s.state === 'skipped' || s.state === 'failed').length,
+    total: steps.length,
+    plannedCalls: steps.filter(calls).length,
+    callsMade: steps.filter((s) => calls(s) && (s.callStartedAt !== undefined || s.state === 'done')).length,
+    repeatedCalls: steps.reduce((n, s) => n + s.repeatedCalls, 0),
+  };
 }

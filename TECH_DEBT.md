@@ -745,6 +745,15 @@ those files is a re-run, not a regression, but it must be recorded here.
   summary text carries the rows. The export wiring itself (modal calling `notCountedExportText`) has no browser test.
 - **The $0 guard counts per process.** `GEMINI_DAILY_CALL_CAP` and the call counter live in memory of one server process; on Vercel each function instance counts alone, so a cap is a brake against loops, not a ceiling on the day's spend, and a restart resets it. The money control is a Google project with no billing account (owner action O-2), which the app cannot see. A durable counter needs the database (PROGRAM row 8).
 - **Browser coverage:** the summary-note line on screen and in the export has no browser test.
+- **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
+  HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
+  says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). A step longer than the limit is
+  killed, its lease expires, the page asks again, and after three tries the audit ends with a sentence
+  (`step_attempts_exceeded`): visible, not silent. A hidden browser tab throttles timers, so a page-driven audit
+  slows in the background. On Vercel with the memory store most advances may land on a different instance
+  from the one that took the job, so `AuditInterrupted` may be common until the durable database (row 8).
+  A page-driven audit that is abandoned still counts toward the daily budget until the reaper stops it (it
+  spent nothing, and the reaper marks it not billable after `JOB_MAX_RUN_MS`).
 - **Step e engine (slice S3) limits:** engines now run one after another within a question (one step each),
   where they used to run in parallel; with only Gemini (the free engine) nothing changes, and with several paid
   engines a question takes longer. A crash between saving the audit and marking the job done can, on resume,

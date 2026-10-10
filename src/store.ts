@@ -249,7 +249,12 @@ export interface Store {
   /** Newest first. */
   listIncidents(opts?: { jobId?: string; limit?: number }): Promise<Incident[]>;
   /** Jobs still running that started within `maxAgeMs`. */
-  countRunning(maxAgeMs: number, now?: number): Promise<number>;
+  /**
+   * Jobs still running that started within `maxAgeMs`. With `staleAfterMs`, a job nobody has touched for that
+   * long (no heartbeat since it started, or since its last step) no longer counts: an audit its page abandoned
+   * must not hold a concurrency slot until the reaper stops it.
+   */
+  countRunning(maxAgeMs: number, now?: number, staleAfterMs?: number): Promise<number>;
   /** Billable jobs started at or after `sinceMs` under one budget key, or (omitted) everyone's. */
   countJobsSince(sinceMs: number, budgetKey?: string): Promise<number>;
   /** Start time of the oldest such job, for "try again at". */
@@ -438,9 +443,13 @@ export class MemoryStore implements Store {
       .slice(0, clampLimit(opts.limit))
       .map((i) => ({ ...i }));
   }
-  async countRunning(maxAgeMs: number, now = Date.now()) {
+  async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     let n = 0;
-    for (const j of this.jobs.values()) if (j.status === 'running' && now - j.startedAt <= maxAgeMs) n++;
+    for (const j of this.jobs.values()) {
+      if (j.status !== 'running' || now - j.startedAt > maxAgeMs) continue;
+      if (staleAfterMs !== undefined && now - (j.heartbeatAt ?? j.startedAt) > staleAfterMs) continue;
+      n++;
+    }
     return n;
   }
   async countJobsSince(sinceMs: number, owner?: string) {
@@ -828,10 +837,12 @@ export class SqliteStore implements Store {
       : this.db.prepare('SELECT * FROM incidents ORDER BY id DESC LIMIT ?').all(clampLimit(opts.limit));
     return rows.map((r: Row) => ({ id: r.id, jobId: r.job_id ?? undefined, at: r.at, kind: r.kind, detail: r.detail }) as Incident);
   }
-  async countRunning(maxAgeMs: number, now = Date.now()) {
-    return this.db
-      .prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ?")
-      .get(now - maxAgeMs).n;
+  async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
+    return staleAfterMs === undefined
+      ? this.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ?").get(now - maxAgeMs).n
+      : this.db
+          .prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ? AND COALESCE(heartbeat_at, started_at) >= ?")
+          .get(now - maxAgeMs, now - staleAfterMs).n;
   }
   async countJobsSince(sinceMs: number, owner?: string) {
     return owner

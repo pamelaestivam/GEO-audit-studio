@@ -57,6 +57,36 @@ export function progressPercent(progress: AuditProgress | null | undefined): num
 const POLL_INTERVAL_MS = 2500;
 const MAX_CONSECUTIVE_POLL_FAILURES = 4;
 
+/** How far an audit had got, as the server last reported it. */
+export interface AuditSteps {
+  done: number;
+  total: number;
+  plannedCalls: number;
+  callsMade: number;
+  repeatedCalls: number;
+}
+
+/**
+ * The audit stopped because the server instance that held it is gone and this deployment keeps no saved state:
+ * nothing can be resumed and nothing from the interrupted run is a measurement. It says how far it got.
+ */
+export class AuditInterrupted extends Error {
+  readonly reason = 'state_lost' as const;
+  constructor(readonly steps: AuditSteps | null) {
+    super(interruptedMessage(steps));
+    this.name = 'AuditInterrupted';
+  }
+}
+
+/** The sentence a person reads. Counts are "at least" because a call can be retried inside one step. */
+export function interruptedMessage(steps: AuditSteps | null): string {
+  const how = steps && steps.total > 0
+    ? ` It had finished ${steps.done} of ${steps.total} steps and made at least ${steps.callsMade} engine ${steps.callsMade === 1 ? 'call' : 'calls'}.`
+    : '';
+  const again = steps && steps.plannedCalls > 0 ? ` Running it again can use up to ${steps.plannedCalls} engine ${steps.plannedCalls === 1 ? 'call' : 'calls'}.` : '';
+  return `The server that was running your audit was replaced before it finished, and this deployment does not keep saved state, so the audit could not continue.${how} Nothing from the interrupted run is shown as a measurement.${again} Please run it again.`;
+}
+
 export async function runAuditJob(
   payload: AuditRequest,
   onProgress?: (message: string, progress?: AuditProgress | null) => void,
@@ -87,16 +117,25 @@ export async function runAuditJob(
 
   const startedAt = Date.now();
   let consecutivePollFailures = 0;
+  // `client`: nothing runs on the server unless this page asks for the next step; `inline`: the server runs it.
+  const driven = start.driver === 'client';
+  let lastSteps: AuditSteps | null = null;
+  let waitMs = driven ? 0 : POLL_INTERVAL_MS;
 
   while (Date.now() - startedAt < timeoutMs) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    waitMs = POLL_INTERVAL_MS;
 
     let res: Response;
     try {
       // A light retry budget here: the instance is already awake by now (we
       // got a job id), so a poll failure is more likely a blip than a cold
-      // start, and the outer loop is itself a retry every 2.5s.
-      res = await apiFetch(`/api/audit/job/${start.jobId}`, { retries: 1, timeoutMs: 15000 });
+      // start, and the outer loop is itself a retry every 2.5s. Advancing is never retried inside the
+      // request: asking again is safe (a step someone holds answers "busy"), and a long timeout lets a
+      // slow step finish rather than be abandoned and repeated.
+      res = driven
+        ? await apiFetch(`/api/audit/job/${start.jobId}/advance`, { method: 'POST', retries: 0, timeoutMs: 120000 })
+        : await apiFetch(`/api/audit/job/${start.jobId}`, { retries: 1, timeoutMs: 15000 });
       consecutivePollFailures = 0;
     } catch {
       consecutivePollFailures += 1;
@@ -111,11 +150,15 @@ export async function runAuditJob(
     const data = await res.json().catch(() => ({}));
 
     if (res.status === 404) {
+      // A driven audit whose job is not here, on a deployment that keeps no state, was lost with its instance.
+      if (driven && data.code === 'job_not_found' && data.storage?.durable === false) throw new AuditInterrupted(lastSteps);
       throw new Error(data.error || 'That audit expired before it finished. Please run it again.');
     }
+    if (data.steps) lastSteps = data.steps as AuditSteps;
     if (data.status === 'running') {
       const seconds = Math.round((data.elapsedMs || 0) / 1000);
       onProgress?.(describeProgress(data.progress, seconds), data.progress ?? null);
+      if (driven) waitMs = Math.max(0, Number(data.nextStepAfterMs) || 0);
       continue;
     }
     if (!res.ok || data.status === 'error') {
