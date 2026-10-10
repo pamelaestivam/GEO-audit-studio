@@ -22,7 +22,7 @@ never wait on them to do the others.
 | Storage on Vercel is process memory; the audit runs after the response is sent; limiters, quota breaker and pacer are per-process | READ in `server.ts` (`void runJob(...)` after the 202) and `src/store.ts`; consequence for reliability is INFERRED, not measured |
 | Merges so far ran under the owner's GitHub login; PR previews still built | READ |
 
-Until the durable store (item 7) ships, treat the deployment as a preview. Do not
+Until the durable store (item 8) ships, treat the deployment as a preview. Do not
 tell the owner or a client that it is dependable.
 
 ## 2. Roadmap
@@ -30,7 +30,8 @@ tell the owner or a client that it is dependable.
 | # | Item | Status | Waits on |
 |---|---|---|---|
 | 1 | Independent review (defects D1 to D8) and fixes #19 to #25 | done | merged to `main`; full suite 1,092 checks passed, 0 failed (MEASURED 2026-10-10) |
-| 2 | Records: owner directives, decisions, session log, insights, this file | in progress | the records PR |
+| 2 | Records: owner directives, decisions, session log, insights, this file | done | merged #27 (bddd7f9) |
+| 2b | Session hygiene: branch-status script, `CLAUDE.md` rules, resume routine | in progress | the hygiene PR |
 | 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | next | nothing |
 | 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs` | next | nothing |
 | 5 | c. Invariants, number guard, "Not counted" panel, cited-only as its own number (decision A) | next | nothing |
@@ -40,6 +41,10 @@ tell the owner or a client that it is dependable.
 | 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | next after 7 | O-3 for the live URL |
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
+
+**Stale remote branches:** merged branches are not deleted automatically (the session
+cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
+"Automatically delete head branches" (O-5, step 1) fixes this for good.
 
 ## 3. Owner actions (the session cannot do these; why, and the exact steps)
 

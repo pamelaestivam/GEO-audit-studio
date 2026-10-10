@@ -59,3 +59,31 @@ $0 guard, step-wise state machine.
 **How to resume:** read `docs/OWNER_DIRECTIVES.md`, `docs/PROGRAM.md`, then the
 2026-10-10 entry in `docs/DECISIONS.md`; run `npm ci && npm run verify`; pick the
 first "next" row in `docs/PROGRAM.md`.
+
+---
+
+## 2026-10-10 (later): records merged, hygiene pattern adopted, continuity routine
+
+**Done:** the records PR (#27) went through a fresh-context fact-check (it found a
+non-existent required check name, unbuilt behaviour written in the present tense, and
+stale "always-on service" text) and an EVAL PM (87, SHIP); both sets of findings were
+fixed before merge (bddd7f9). Team protocol outcome is in `docs/DECISIONS.md`
+(2026-10-10). First build step (honest first visit, default of two questions) is on
+branch `claude/honest-first-visit`: a status-driven "temporary storage" notice, a
+"no engine configured" notice that disables the run buttons, `DEFAULT_QUERY_COUNT = 2`.
+
+**Continuity routine (the owner asked that work continue as soon as the session is
+available after any limit):** trigger `trig_015EVqEooFHDy9HVc3KkL31j`, hourly at :37 UTC,
+bound to session `session_01QFrPVVXx3Yfr2MmgoQNy4D`. Its prompt tells the session to
+pull `main`, read the directives/program/log, finish any open PR under the gates, else
+take the first "next" row of `docs/PROGRAM.md`, and to do nothing outward when only
+owner actions remain. To stop it: `delete_trigger` with that id. A different session
+that finds this entry and the routine gone can recreate it from this description.
+
+**Learned:** the merge tool refused a guessed head hash (HTTP 409); the guard is
+useful, the hash must be read, not recalled (`CLAUDE.md` hygiene rule 7). The
+`scripts/branch-status.sh` first version reported a branch with zero commits as MERGED;
+fixed before shipping (an empty branch has nothing to merge).
+
+**Open (next session starts here):** merge `claude/honest-first-visit` once its suite,
+review and EVAL PM pass; then `docs/PROGRAM.md` items 4 to 7.
