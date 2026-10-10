@@ -11,6 +11,63 @@ learn into `docs/SESSION_LOG.md` and `docs/INSIGHTS.md` before the session ends.
 you must hand the owner a task, first try to do it yourself; if you cannot, say why
 and give numbered steps (`docs/OWNER_DIRECTIVES.md` D-8).
 
+## Session hygiene (adopted 2026-10-10 from the owner's confidenceHigh repo; hard rules)
+
+These are the rules that repo's owner set after sessions left work unmerged and
+unreported. They apply here with the same force.
+
+1. **Say the branch status at the end of EVERY reply that touches the repo, as one
+   line, written LAST.** Run `bash scripts/branch-status.sh` in that same turn and
+   copy its first line; add any open PR or red CI it cannot see. Shape:
+   `Branch: <name> | N commit(s) ahead of main, pushed | MERGED (merge commit <sha> is on main)`
+   or `Branch: <name> | ... | NOT merged (<what blocks it>)`. Never from memory of the plan.
+2. **Merge at the end of every round that contained development.** A round ends with
+   the change on `main` (a real GitHub pull request, merged as a merge commit), not
+   parked on a branch. The gates make that safe, they are not optional: green CI, a
+   fresh-context adversarial review, an EVAL PM SHIP. A red gate, a review finding that
+   could not be fixed in the round, or an explicit owner instruction to hold the merge are
+   the only legitimate reasons a round ends unmerged; then say which and what closes it.
+   Being late or the change being "mostly docs" is not a reason.
+3. **No stale branches.** One short-lived branch per change, merged the same round.
+   `scripts/branch-status.sh` lists merged remote branches that were never deleted (it
+   recognises merge-commit merges only; `test/branchStatus.test.sh` proves each state).
+   The session cannot delete them (the git proxy answers HTTP 403, and there is no
+   GitHub tool for it), so the repository setting "Automatically delete head
+   branches" must be on (`docs/PROGRAM.md` O-5); until it is, the script's `Stale:`
+   line is reported to the owner every time it is non-empty.
+4. **A work ledger so a dead session loses nothing.** Write what was tried and what
+   failed when it fails, not when the session ends. `docs/PROGRAM.md` (state and the
+   next action, executable by someone with no memory), `docs/SESSION_LOG.md`
+   (append-only), `docs/INSIGHTS.md` (what was learned, with how sure we are). A row is
+   closed only against evidence (a test, a run, a commit).
+5. **A review or agent run that was cut short is restarted, never resumed as final.**
+   A review that stopped halfway looks identical to one that found little. If a limit,
+   cap or interruption ended it, the next session reruns it from the start and keeps
+   whatever partial output exists only as an input.
+6. **Continuity.** A scheduled routine was created on 2026-10-10 (id in
+   `docs/SESSION_LOG.md`; check it still exists with `list_triggers` before relying on it) to
+   wake the session hourly with instructions to pick up `docs/PROGRAM.md`. It must do real work only
+   when there is some, and must never take outward actions that need the owner. Stop
+   it with `delete_trigger` once the program is complete or the owner asks.
+7. **Never fabricate an argument to a tool.** A merge guarded by an expected commit hash
+   takes the real hash from `git rev-parse` or the CI run, not a guess (a guessed hash was
+   refused on 2026-10-10; the guard did its job).
+8. **Stage explicit paths. Never `git add -A` or `git commit -a`.** A helper symlink in a
+   worktree (`node_modules` pointing at another checkout) was committed to `main` that way
+   (PR #29 removed it; CI now fails if any tracked file is a symlink).
+9. **Agents that review or experiment never touch the shared repository.** Worktrees share
+   one config and one set of refs, so a "scratch worktree" is not isolation: a review agent
+   once set `origin` to a dummy URL and committed to local `main`. Brief them to work only
+   in a `git init` inside `mktemp -d`. After any agent run, check
+   `git remote get-url origin` (it must be the github.com URL) and `git log origin/main..main`
+   (it must be empty).
+10. **If the harness blocks a git operation, stop and report; do not look for a variation.**
+    Changing a remote URL, moving a branch ref and cloning from a GitHub URL were each
+    refused on 2026-10-10. The GitHub tools (create_branch, create_or_update_file,
+    push_files, delete_file) remain a sanctioned route for small files; for anything else
+    ask the owner to authorise the exact commands, as happened the same day and worked
+    at once (`docs/INSIGHTS.md` I-14).
+
 ## Working dynamic with the owner (read this first in a new session)
 
 This project is built through repeated rounds of: ship something, the owner
@@ -53,7 +110,7 @@ that have held across every round so far:
   failure softer."
 - **Small, focused PRs, each merged after its own review.** One branch per
   fix, a specific commit message explaining the actual root cause (not just
-  what changed), squash-merged after `npm test` is green and the diff has
+  what changed), merged as a merge commit (see Session hygiene) after `npm test` is green and the diff has
   been read adversarially. `TECH_DEBT.md` gets a matching entry for anything
   left imperfect, written so a cold read explains why it's still open.
 - **User input is sacred; never invent what a lookup can't supply.** This
@@ -300,6 +357,8 @@ have to be rediscovered from scratch, not so it can be skipped.
   production-dependencies-only install
 - `npx tsx test/contract.test.ts` — full server contract checks (needs a
   current `dist/`)
+- `bash test/branchStatus.test.sh` — the branch-status script against a throwaway
+  repository (part of `npm test`)
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
 `server.ts`) to redirect the SDK at a local fake server — a no-op unless

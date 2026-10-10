@@ -8,6 +8,14 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 
 Last updated: 2026-10-10.
 
+**Check this first (a failure that happened once and is fixed):** run
+`git remote get-url origin` in `/home/user/GEO-audit-studio`. It must print
+`https://github.com/pamelaestivam/GEO-audit-studio`. On 2026-10-10 a review agent had
+changed it to a dummy address and left a stray empty commit on local `main`. The owner
+authorised the repair and it was done (set the URL back, fetch, reset `main` to
+`origin/main`). If it ever recurs, ask the owner to authorise those same commands rather
+than looking for another way round. History: `docs/SESSION_LOG.md`; lesson: I-13.
+
 **First action for a cold session:** run `npm ci && npm run verify` (it should report
 0 failures), then take the first row marked **next** in section 2 (currently item 3).
 The owner actions in section 3 run in parallel and block only the rows that name them;
@@ -22,7 +30,7 @@ never wait on them to do the others.
 | Storage on Vercel is process memory; the audit runs after the response is sent; limiters, quota breaker and pacer are per-process | READ in `server.ts` (`void runJob(...)` after the 202) and `src/store.ts`; consequence for reliability is INFERRED, not measured |
 | Merges so far ran under the owner's GitHub login; PR previews still built | READ |
 
-Until the durable store (item 7) ships, treat the deployment as a preview. Do not
+Until the durable store (item 8) ships, treat the deployment as a preview. Do not
 tell the owner or a client that it is dependable.
 
 ## 2. Roadmap
@@ -30,9 +38,11 @@ tell the owner or a client that it is dependable.
 | # | Item | Status | Waits on |
 |---|---|---|---|
 | 1 | Independent review (defects D1 to D8) and fixes #19 to #25 | done | merged to `main`; full suite 1,092 checks passed, 0 failed (MEASURED 2026-10-10) |
-| 2 | Records: owner directives, decisions, session log, insights, this file | in progress | the records PR |
-| 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | next | nothing |
-| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs` | next | nothing |
+| 2 | Records: owner directives, decisions, session log, insights, this file | done | merged #27 (bddd7f9) |
+| 2b | Session hygiene: branch-status script and test, `CLAUDE.md` rules, resume routine | in review | PR #31 |
+| 2c | Remove a stray `node_modules` symlink from `main`; CI fails on tracked symlinks | done | merged #29 (d851fb2) |
+| 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | done | merged #30 (19005fc); CI green, full suite and browser checks passed, review findings fixed. The branches `claude/honest-first-visit` (backup patch) and `claude/session-hygiene*` are obsolete leftovers |
+| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs`; daily live-site check | in review | PR #32 (`docker.yml`, `live-check.yml`, restart and backup proof in `prod-install-check.sh`) |
 | 5 | c. Invariants, number guard, "Not counted" panel, cited-only as its own number (decision A) | next | nothing |
 | 6 | d. Paid-engine refusal and call counters ($0 guard, per instance) | next | nothing |
 | 7 | e. Step-wise audit state machine, leases, incidents; default returns to 3 | next | nothing |
@@ -40,6 +50,10 @@ tell the owner or a client that it is dependable.
 | 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | next after 7 | O-3 for the live URL |
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
+
+**Stale remote branches:** merged branches are not deleted automatically (the session
+cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
+"Automatically delete head branches" (O-5, step 1) fixes this for good.
 
 ## 3. Owner actions (the session cannot do these; why, and the exact steps)
 
