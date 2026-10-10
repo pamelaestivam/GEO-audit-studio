@@ -12,6 +12,8 @@ import {
   dedupeMatchers,
   extractCandidateVendors,
   extractDomain,
+  attributeInaccuracies,
+  computeAccuracyRate,
   queryNamesBrand,
   sourcesForBrand,
   type QueryEvidence,
@@ -49,6 +51,80 @@ check('capitalised "Stripe" accepted', findFirstMention('We recommend Stripe her
 
 const archer = buildBrandMatcher('Archer Aviation', 'archeraviation.com');
 check('multiword brand matches full phrase', findFirstMention('Archer Aviation leads', archer), 0);
+
+// Accented vendor names are discovered whole (they used to be truncated at the
+// first non-ASCII letter: "Caf", "Nestl", and "Zoë Group" vanished).
+const accented = extractCandidateVendors(
+  'Top options:\n- **Café Lumière** is great.\n- **Nestlé Waters** too.\n- **Citroën Rental** and **Zoë Group**.\n',
+  []
+);
+check('accented vendor names are returned whole', accented.sort(), ['Café Lumière', 'Citroën Rental', 'Nestlé Waters', 'Zoë Group']);
+check('a Latin name with umlauts is discovered whole', extractCandidateVendors('- **Ünal Müller GmbH** liefert.', []), ['Ünal Müller GmbH']);
+check('a Cyrillic vendor name is discovered whole', extractCandidateVendors('- **Яндекс Маркет** и **Озон** лучшие.', []).sort(), ['Озон', 'Яндекс Маркет']);
+// Languages written without spaces: a Latin brand sits directly against CJK text
+// or a Korean particle and must still be found, and must not absorb them.
+check('Chinese: unspaced Latin brands are found', extractCandidateVendors('推荐Stripe和Adyen。Stripe适合开发者，Adyen适合大型企业。', []).sort(), ['Adyen', 'Stripe']);
+check('Japanese: unspaced Latin brands are found', extractCandidateVendors('決済ならStripeとAdyenがおすすめ。Stripeは開発者向け、Adyenは大企業向け。', []).sort(), ['Adyen', 'Stripe']);
+check('Korean: the particle is not glued onto the name', extractCandidateVendors('Stripe는 개발자에게 좋고 Adyen은 대기업에 좋습니다. Stripe는 빠릅니다. Adyen은 안정적입니다.', []).sort(), ['Adyen', 'Stripe']);
+check('a quoted name does not keep its closing quote', extractCandidateVendors("Popular: 'Stripe' and 'Adyen'. Many like 'Stripe' and 'Adyen' too.", []).sort(), ['Adyen', 'Stripe']);
+check('a possessive still counts as the plain name', extractCandidateVendors("Sweetfin's menu is big. Sweetfin is cheap. Try Sweetfin's bowls.", []), ['Sweetfin']);
+check('a name written with combining accents (NFD) is one whole name', extractCandidateVendors('- **Cafe\u0301 Lumie\u0300re** a\n- **Zoe\u0308 Group** c\n', []).sort(), ['Café Lumière', 'Zoë Group']);
+// Word boundaries are script-aware (same class as discovery), not ASCII \b.
+check('"iPhone" and "eBay" are not discovered as "Phone" and "Bay" (a lowercase letter before a capital is part of the word)', extractCandidateVendors('iPhone sales rose and the iPhone leads. eBay lists them and eBay sells them.', []), []);
+check('snake_case code is not a mention: "adyen_token" does not name Adyen, "acme_corp_id" does not name Acme', [findFirstMention('see acme_corp_id and adyen_token', buildBrandMatcher('Acme')), findFirstMention('use adyen_token here', buildBrandMatcher('Adyen'))], [-1, -1]);
+check('snake_case identifiers are not split into vendors ("Stripe_Billing", "Foo_Bar")', extractCandidateVendors('Stripe_Billing handles it. Foo_Bar and Foo_Bar again. API_Key rotation. API_Key too.', []), []);
+check('two labels typed identically but decomposed are one brand (dedupe)', dedupeMatchers([buildBrandMatcher('Nestle\u0301'), buildBrandMatcher('Nestle\u0301')]).length, 1);
+check('a name with digits is discovered whole', extractCandidateVendors('- **Ab3 Labs** and **B2B Hub** lead.', []).sort(), ['Ab3 Labs', 'B2B Hub']);
+check('"Nestlé" does not match inside "Nestléx"', findFirstMention('Try Nestléx today.', buildBrandMatcher('Nestlé')), -1);
+check('an accent-led brand ("Écoute") does not match inside "Réécoute"', findFirstMention('Le Réécoute Café', buildBrandMatcher('Écoute')), -1);
+check('...but is found on its own, and next to CJK text', [findFirstMention('Essayez Écoute ici.', buildBrandMatcher('Écoute')) > 0, findFirstMention('推荐Stripe和Adyen', buildBrandMatcher('Stripe')) > 0], [true, true]);
+const typedNfd = 'Cafe\u0301 Lumie\u0300re';
+check('a brand typed decomposed keeps its label exactly as typed (user input is never rewritten)', buildBrandMatcher(typedNfd).label, typedNfd);
+check('...and is still found in a composed answer', analyseAnswer(evidence({ answerText: 'Try Café Lumière today. Café Lumière wins.' }), [buildBrandMatcher(typedNfd)])[0].mentioned, true);
+check('...and a query typed with it counts as naming the brand', queryNamesBrand(`How much does ${typedNfd} cost?`, buildBrandMatcher(typedNfd)), true);
+const nfd = analyseAnswer(evidence({ answerText: 'Try Nestle\u0301 Waters today. Nestle\u0301 Waters leads.' }), [buildBrandMatcher('Nestlé Waters')])[0];
+check('a brand typed composed (Nestlé) is found in an answer written decomposed', [nfd.mentioned, nfd.rank], [true, 1]);
+// Short acronym brands (HP, 3M, EY, BP): a two-character brand the answer names
+// in every sentence used to be measured at 0% because every token under three
+// characters was skipped. Acronyms match exactly as written, with word boundaries.
+for (const [name, domain] of [['HP', 'hp.com'], ['3M', '3m.com'], ['EY', 'ey.com'], ['BP', 'bp.com'], ['HP', ''], ['3M', ''], ['EY', 'ey-global.com'], ['HP Inc', 'hp.com'], ['3M Company', '3m.com']] as const) {
+  const m = buildBrandMatcher(name, domain);
+  const acronym = name.split(' ')[0];
+  check(`${name} (domain "${domain}"): found in an answer that names ${acronym}`, findFirstMention(`The best choice is ${acronym}, followed by others.`, m) > 0, true);
+  const row = analyseAnswer(evidence({ answerText: `Top picks: ${acronym} and Acme. ${acronym} is widely recommended.` }), [m])[0];
+  check(`${name} (domain "${domain}"): mentioned and ranked, not reported as omitted`, [row.mentioned, row.rank], [true, 1]);
+}
+check('"HP" is not found inside other words or codes (HPE, OHP, HP2, 2HP, EnvHP)', findFirstMention('HPE and OHP and HP2 and 2HP and EnvHP lead.', buildBrandMatcher('HP', 'hp.com')), -1);
+check('"HP" does not match lowercase "hp" in the answer', findFirstMention('the hp of this engine', buildBrandMatcher('HP', 'hp.com')), -1);
+// A longer name is matched on its full name only unless its first word is the domain's own acronym.
+for (const [name, domain, text] of [
+  ['US Bank', 'usbank.com', 'Many US companies and the US market.'],
+  ['LA Fitness', 'lafitness.com', 'Gyms in LA and the LA area.'],
+  ['UK Power Networks', 'ukpowernetworks.co.uk', 'Prices in the UK rose.'],
+  ['AI Dungeon', 'aidungeon.com', 'Use AI for stories.'],
+  ['HP Inc', '', 'HP leads the printer market.'],
+] as const) {
+  check(`"${name}" is not credited with the bare "${name.split(' ')[0]}" in an answer`, findFirstMention(text, buildBrandMatcher(name, domain)), -1);
+}
+// Ordinary words and lowercase typing are never promoted to acronyms, whatever the domain.
+for (const [name, domain, text] of [
+  ['On', 'on.com', 'On balance, shoes from Nike lead. ON and OFF.'],
+  ['Go', '', 'Go with Nike.'],
+  ['It', 'it.com', 'It is Nike. IT teams buy it.'],
+  ['Us', '', 'Us versus them.'],
+  ['ai', 'ai.com', 'Companies use AI in the UK.'],
+  ['hp', 'hp.com', 'HP leads the market.'],
+  ['Hp', 'hp.com', 'HP leads the market.'],
+] as const) {
+  check(`"${name}" (domain "${domain}") is not treated as an acronym`, findFirstMention(text, buildBrandMatcher(name, domain)), -1);
+}
+check('queryNamesBrand sees the acronym of a longer name ("HP Inc" in "best HP printers")', queryNamesBrand('best HP printers for office', buildBrandMatcher('HP Inc', 'hp.com')), true);
+check('queryNamesBrand: "3M Company" in "is 3M respirator good"', queryNamesBrand('is 3M respirator good', buildBrandMatcher('3M Company', '3m.com')), true);
+check('queryNamesBrand: "US Bank" without a domain is not named by "the US market"', queryNamesBrand('best banks in the US market', buildBrandMatcher('US Bank', '')), false);
+check('an all-digit name is not an acronym ("76" is not matched inside "In 76 cases")', findFirstMention('In 76 cases the fuel was good.', buildBrandMatcher('76', '76.com')), -1);
+check('a lowercase two-letter name without a matching domain is never matched', findFirstMention('we ge there', buildBrandMatcher('ge', 'general.com')), -1);
+check('a one-character brand is still not matched', findFirstMention('X marks the spot', buildBrandMatcher('X', 'x.com')), -1);
+check('acronym boundaries are script-aware too: "HP" is not inside "HP_token", but is found next to CJK text', [findFirstMention('use HP_token here', buildBrandMatcher('HP', 'hp.com')), findFirstMention('推荐HP和Dell', buildBrandMatcher('HP', 'hp.com')) > 0], [-1, true]);
 check('non-common brand matches case-insensitively', findFirstMention('see archer aviation', archer), 4);
 
 // ---------------------------------------------------------------- ranking
@@ -374,6 +450,49 @@ check(
   // Documented limit: a brand that is also a category word is treated as named
   // (errs towards the caution appearing, not towards missing an inflated score).
   check('KNOWN LIMIT: a category-word brand ("Gym") counts as named by "best gym in Austin"', named('best gym in Austin', 'Gym'), true);
+}
+
+// ---------------------------------------------------------------- inaccuracy attribution
+{
+  const queries = [{ queryText: 'Best poke in Austin?' }, { queryText: 'poke cost' }, { queryText: 'poke cost' }];
+  const answers = new Set(['0|Gemini', '1|Gemini', '2|Gemini']); // answers that name the brand
+  const attr = (claims: any[], engines = ['Gemini'], keys = answers) => attributeInaccuracies(claims, queries, engines, keys);
+  const where = (r: ReturnType<typeof attr>) => r.kept.map((k) => [k.queryIndex, k.engine]);
+
+  check('an exact query text is matched', where(attr([{ queryText: 'Best poke in Austin?', engine: 'Gemini' }])), [[0, 'Gemini']]);
+  check('case, spacing, quotes and trailing punctuation do not lose a claim', where(attr([
+    { queryText: 'best poke in austin', engine: 'Gemini' },
+    { queryText: '  "Best  poke in Austin"  ', engine: 'gemini' },
+    { queryText: 'BEST POKE IN AUSTIN?!', engine: 'Gemini' },
+  ])), [[0, 'Gemini'], [0, 'Gemini'], [0, 'Gemini']]);
+  check('the query NUMBER wins, so duplicate or paraphrased query texts are not confused', where(attr([
+    { queryNumber: 3, queryText: 'poke cost', engine: 'Gemini' },
+    { queryNumber: 2, queryText: 'something else entirely', engine: 'Gemini' },
+  ])), [[2, 'Gemini'], [1, 'Gemini']]);
+  check('duplicate query text without a number is ambiguous and is discarded, not given to the first', attr([{ queryText: 'poke cost', engine: 'Gemini' }]).discarded, 1);
+  check('a number outside the audit falls back to the text', where(attr([{ queryNumber: 9, queryText: 'Best poke in Austin?', engine: 'Gemini' }])), [[0, 'Gemini']]);
+  check('a missing engine means the one engine that answered', where(attr([{ queryText: 'Best poke in Austin?' }])), [[0, 'Gemini']]);
+  check('a number and a text that name DIFFERENT questions are not placed under a guess', attr([
+    { queryNumber: 2, queryText: 'Best poke in Austin?', engine: 'Gemini' },
+    { queryNumber: 3, queryText: 'Best poke in Austin?', engine: 'Gemini' },
+  ]).discarded, 2);
+  check('a number and a text that agree are kept', where(attr([{ queryNumber: 1, queryText: 'best poke in austin', engine: 'Gemini' }])), [[0, 'Gemini']]);
+  check('a query never asked is discarded, not re-attributed', attr([{ queryText: 'not a query we asked', engine: 'Gemini' }]).discarded, 1);
+  check('an engine never measured is discarded', attr([{ queryText: 'Best poke in Austin?', engine: 'ChatGPT' }]).discarded, 1);
+  check('a non-string query and no number is discarded', attr([{ queryText: 42 as any, engine: 'Gemini' }]).discarded, 1);
+  const two = attributeInaccuracies([{ queryText: 'Best poke in Austin?' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Gemini', '0|Perplexity']));
+  check('with several engines having answered, an unnamed engine cannot be attributed and is discarded', [two.kept.length, two.discarded], [0, 1]);
+  const onlyOne = attributeInaccuracies([{ queryText: 'Best poke in Austin?' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Perplexity']));
+  check('...but if only one engine answered that query, an unnamed engine can only mean it', onlyOne.kept.map((k) => k.engine), ['Perplexity']);
+  check('a claim about an answer that does not name the brand is discarded (the list and the accuracy rate must agree)', attr([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])).discarded, 1);
+  check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0 });
+
+  const mentioned = new Set(['0|Gemini', '1|Gemini']);
+  check('accuracy counts answers, not claims: two claims on one of two mentioning answers is 50%', computeAccuracyRate(mentioned, ['0|Gemini', '0|Gemini']), 50);
+  check('accuracy with no flagged answer is 100%', computeAccuracyRate(mentioned, []), 100);
+  check('a flagged answer that did not mention the brand does not lower accuracy', computeAccuracyRate(mentioned, ['2|Gemini']), 100);
+  check('accuracy is null (nothing to check) when no answer mentions the brand', computeAccuracyRate(new Set(), ['0|Gemini']), null);
+  check('accuracy never goes below 0', computeAccuracyRate(new Set(['0|Gemini']), ['0|Gemini', '0|Gemini', '0|Gemini']), 0);
 }
 
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);

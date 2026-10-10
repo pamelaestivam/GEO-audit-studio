@@ -24,6 +24,8 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+# `docker exec <container> node scripts/backup.mjs` - the slim image has no sqlite3 CLI.
+COPY scripts/backup.mjs ./scripts/backup.mjs
 # The data directory must be writable by the runtime user.
 RUN mkdir -p /data && chown -R node:node /data /app
 USER node

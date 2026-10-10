@@ -122,8 +122,10 @@ export interface AuditReport {
   geoVisibilityScore: number; // 0 - 100 Generative Engine Optimization Score
   shareOfVoice: number; // % of ALL brand mentions across audited answers that belong to this business
   leaderShare: number; // % of queries where business was #1 recommended
-  /** % of mentions free of inaccuracies. null when the brand was never mentioned. */
+  /** % of mentioning answers with no flagged inaccuracy. null when the brand was never mentioned. */
   accuracyRate: number | null;
+  /** Model-reported inaccuracy claims that could not be tied to a captured answer and were left out. */
+  inaccuraciesDiscarded?: number;
   executiveSummary: string;
   queriesTested: AuditQuery[];
   inaccuracies: InaccuracyItem[];
