@@ -396,6 +396,20 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   await s.failAllRunning('The server restarted.', NOW);
   check(t('a job failed at boot says so with a code, and is not finishable by anyone'), [(await s.getJob('rs1'))?.failCode, (await s.claimStep('rs1', 'A', LEASE, NOW, 3)).outcome], ['restarted', 'none']);
 
+  // --- restart sweeps: a job with no plan cannot be resumed; leases of a dead process are released; planned jobs are listed
+  const rr = await make();
+  await rr.createPlannedJob(job({ id: 'rr-planned', startedAt: NOW - 2000, plan: { driver: 'inline' } }), PLAN);
+  await rr.createPlannedJob(job({ id: 'rr-planned-2', startedAt: NOW - 1000, plan: { driver: 'client' } }), PLAN);
+  await rr.createJob(job({ id: 'rr-legacy', startedAt: NOW - 3000 }));
+  await rr.createPlannedJob(job({ id: 'rr-done', status: 'done', plan: { driver: 'inline' } }), PLAN);
+  check(t('only running jobs that have a plan are listed for resuming, oldest first'), (await rr.listRunningPlanned()).map((j) => j.id), ['rr-planned', 'rr-planned-2']);
+  check(t('a running job without a plan is failed with the restart code, and planned or finished jobs are left alone'), [await rr.failRunningWithoutPlan('The server restarted.', NOW), (await rr.getJob('rr-legacy'))?.status, (await rr.getJob('rr-legacy'))?.failCode, (await rr.getJob('rr-legacy'))?.billable, (await rr.getJob('rr-planned'))?.status, (await rr.getJob('rr-done'))?.status], [1, 'error', 'restarted', false, 'running', 'done']);
+  await rr.claimStep('rr-planned', `inline:dead-process:rr-planned`, LEASE, NOW, 3);
+  await rr.claimStep('rr-planned-2', `client:${rr.instanceId}:abc`, LEASE, NOW, 3);
+  check(t('while the dead process\'s lease is live, the step is busy'), (await rr.claimStep('rr-planned', 'inline:me:rr-planned', LEASE, NOW + 1, 3)).outcome, 'busy');
+  check(t('releasing leases not held by this instance frees the other\'s and keeps this instance\'s'), [await rr.releaseLeasesNotHeldBy(rr.instanceId), (await rr.claimStep('rr-planned', 'inline:me:rr-planned', LEASE, NOW + 2, 3)).outcome, (await rr.claimStep('rr-planned-2', 'client:other:x', LEASE, NOW + 2, 3)).outcome], [1, 'claimed', 'busy']);
+  check(t('...the step taken over after a release is attempt 2'), (await rr.getJobSteps('rr-planned'))[0].attempt, 2);
+
   // --- pruning removes a pruned job's steps and old incidents
   const before = NOW + 1000;
   await s.createPlannedJob(job({ id: 'old1', startedAt: NOW - 10 * DAY }), PLAN);
