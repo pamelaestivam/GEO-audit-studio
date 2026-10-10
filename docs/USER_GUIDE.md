@@ -52,8 +52,10 @@ On the first screen:
   separately and shown on their own.
 - **Your own search queries** - optional, **one question per line**. This is the
   most important field: *write the questions your customers actually type.*
-  - Blank: three standard questions are built from the details above. They are
-    generic - fine for a first look, weak for a real client.
+  - Blank: two standard questions are built from the details above (a discovery
+    question, then a comparison). They are generic - fine for a first look, weak
+    for a real client. Two is a temporary default: it rises to three once an audit
+    can resume after a failure (`docs/DECISIONS.md`, 2026-10-10).
   - Filled: **only your questions are run** (up to eight).
 
 Click **Run Live GEO Search Audit**. It takes roughly 30-90 seconds; the screen
@@ -77,9 +79,11 @@ spends a request of a shared quota):
 
 | What you see | What it means |
 |---|---|
-| **GEO Visibility Index** `100 / 100` and *"Named in 3 of 3 answers (Gemini)"* | The share of captured answers that name your brand. The sentence under it is the arithmetic. |
-| *"Only 3 answers: indicative, not a stable rate"* | Under five answers, a percentage is a handful of data points. Add queries before quoting it. |
-| *"All 3 questions name your brand..."* | **Read this before quoting a 100.** If you ask an engine "How much does *X* cost?", it answers about X whatever it thinks of X - so a high score is near-guaranteed. That measures reputation, not discovery. Add a question that does not name you ("best poke in Austin"). |
+| **GEO Visibility Index** `100 / 100` and *"Named in 2 of 2 answers (Gemini)"* | The share of captured answers that name your brand. The sentence under it is the arithmetic. |
+| *"Only 2 answers: indicative, not a stable rate"* | Under five answers, a percentage is a handful of data points. Add queries before quoting it. |
+| *"All 2 questions name your brand..."* | **Read this before quoting a 100.** If you ask an engine "How much does *X* cost?", it answers about X whatever it thinks of X - so a high score is near-guaranteed. That measures reputation, not discovery. Add a question that does not name you ("best poke in Austin"). |
+| *"Temporary storage: audits are kept only while this server stays awake..."* (amber bar at the top) | This deployment does not keep audits across a reload or restart. Export your report to keep it. It disappears on a deployment with durable storage. |
+| *"No answer engine is configured on this server..."* | Nothing can be measured yet, so the run button is disabled. Nothing is simulated. |
 | **Share of Voice** | Of every brand mention across all the answers, the part that is yours. Needs rivals to mean anything. |
 | **#1 Recommendation Rate** | The share of answers that name you *first*. |
 | **Fact Accuracy Rate** | Mentions where the model found nothing wrong. **A model's judgement without a fact sheet** - indicative only. |

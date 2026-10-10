@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
+import { DeploymentNotice } from './components/DeploymentNotice';
 import { Sidebar, TabType } from './components/Sidebar';
 import { ExecutiveSummaryCard } from './components/ExecutiveSummaryCard';
 import { QueryMatrixTab } from './components/QueryMatrixTab';
@@ -307,6 +308,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white flex flex-col pb-12">
+      <DeploymentNotice />
       {/* Top Header */}
       <Header
         audits={audits}

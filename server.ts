@@ -41,7 +41,7 @@ import {
 } from './src/auth.js';
 import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
-import { buildStandardQueries } from './src/queries.js';
+import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import {
   askEngine,
   configuredEngines,
@@ -819,7 +819,7 @@ Return a valid JSON object matching the requested schema.`;
   const getFallbackQueries = (businessName: string, _domain?: string, industry?: string, _coreOfferings?: string, competitors?: any) =>
     buildStandardQueries(businessName, industry, competitors);
 
-  // POST: Generate viewer-intent query matrix for a business (3 top real-world queries)
+  // POST: Generate viewer-intent query matrix for a business (the top DEFAULT_QUERY_COUNT real-world queries)
   /**
    * Build the query matrix for a business. Shared by the endpoint and by the
    * audit job, so a browser never has to hold a request open for it.
@@ -834,7 +834,7 @@ Return a valid JSON object matching the requested schema.`;
       : 'none supplied - infer the real competitors from live search';
 
     const prompt = `You are a Generative Engine Optimization (GEO) & AI Search auditor.
-Using live web search grounding, generate the 3 most relevant, real-world search queries that target customers actually use when searching for or evaluating "${businessName}"${domain ? ` (Domain: ${domain})` : ''}${industry ? `, which operates in: "${industry}"` : ''}.
+Using live web search grounding, generate the ${DEFAULT_QUERY_COUNT} most relevant, real-world search queries that target customers actually use when searching for or evaluating "${businessName}"${domain ? ` (Domain: ${domain})` : ''}${industry ? `, which operates in: "${industry}"` : ''}.
 Write the queries the way a real buyer would type them into an AI assistant. If the business is local or physical, include the kind of location-aware phrasing buyers actually use.
 Competitors: ${competitorText}.
 
@@ -846,7 +846,7 @@ Categorize each query under one of these intents:
 - localized_vendor
 - pricing_roi
 
-Return a JSON array of exactly 3 query objects.`;
+Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
 
     try {
       const response = await generateContentWithRetry(aiInstance, {
@@ -873,7 +873,7 @@ Return a JSON array of exactly 3 query objects.`;
         }
       });
       const parsed = parseJsonText(response.text);
-      if (Array.isArray(parsed) && parsed.length > 0) return { queries: parsed.slice(0, 3), source: 'generated' };
+      if (Array.isArray(parsed) && parsed.length > 0) return { queries: parsed.slice(0, DEFAULT_QUERY_COUNT), source: 'generated' };
     } catch (genErr: any) {
       console.log(`Query generation failed: ${describeProviderError(genErr, 'Gemini').message}`);
     }

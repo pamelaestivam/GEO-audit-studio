@@ -3,6 +3,7 @@ import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, CheckCircle2, AlertCircl
 import { User } from '../types';
 import { apiFetch } from '../apiClient';
 import { useAuditStatus } from '../useQuotaStatus';
+import { DeploymentNotice } from './DeploymentNotice';
 
 export interface Session {
   user: User;
@@ -71,6 +72,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6 lg:p-8 font-sans relative overflow-hidden">
+      <div className="absolute top-0 inset-x-0 z-20">
+        <DeploymentNotice />
+      </div>
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-10 right-10 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 

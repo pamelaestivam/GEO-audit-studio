@@ -7,7 +7,7 @@
  * "Poke House vs  comparison" - an empty array interpolated into the question,
  * and "software" invented as the category of a restaurant.
  */
-import { buildStandardQueries } from '../src/queries';
+import { buildStandardQueries, DEFAULT_QUERY_COUNT } from '../src/queries';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -26,19 +26,20 @@ const clean = (q: ReturnType<typeof buildStandardQueries>) =>
 
 // --- the default case: just a name
 const bare = buildStandardQueries('Poke House', undefined, []);
-check('three queries', bare.length, 3);
-check('ids are distinct', new Set(bare.map((q) => q.id)).size, 3);
+check('the default is DEFAULT_QUERY_COUNT questions (two until audits can resume after a failure; never more than the ceiling of three the owner set)', [bare.length, DEFAULT_QUERY_COUNT, DEFAULT_QUERY_COUNT <= 3], [DEFAULT_QUERY_COUNT, 2, true]);
+check('ids are distinct', new Set(bare.map((q) => q.id)).size, DEFAULT_QUERY_COUNT);
+check('the discovery question always comes first (it is the one that can be written without the brand)', bare[0].intent, 'alternatives_search');
 check('no blanks, doubled spaces or stringified empties with no competitor and no industry', clean(bare), true);
 check('no category is invented for a business that gave none', texts(bare).some((t) => /software/i.test(t)), false);
 check('no enterprise/SaaS framing is imposed on every business', texts(bare).some((t) => /enterprise|free tier|contract|modern teams|CTO|procurement/i.test(t)), false);
 check('every query is a question', texts(bare).every((t) => t.endsWith('?')), true);
 check('with no industry and no competitor, every query names the business (nothing else to anchor on)', texts(bare).every((t) => t.includes('Poke House')), true);
 check('no competitor is named when none was given', texts(bare).some((t) => /\bvs\b/.test(t)), false);
-check('the wording for no competitor reads naturally', texts(bare), [
+check('the wording for no competitor reads naturally (the first DEFAULT_QUERY_COUNT of the priority order)', texts(bare), [
   'What are the best alternatives to Poke House?',
   'Is Poke House any good? How does it compare with its alternatives?',
   'How much does Poke House cost?',
-]);
+].slice(0, DEFAULT_QUERY_COUNT));
 
 // --- industry only
 const withIndustry = buildStandardQueries('Poke House', 'poke restaurants', []);
@@ -62,8 +63,8 @@ check('non-string competitor entries are ignored, not stringified', clean(buildS
 check('whitespace around an industry is trimmed', texts(buildStandardQueries('Acme', '  payments  ', []))[0], 'What are the best payments?');
 
 // --- awkward names pass through untouched
-check('punctuation in a name is preserved', texts(buildStandardQueries("Ben & Jerry's", '', []))[2], "How much does Ben & Jerry's cost?");
-check('an empty name does not throw', buildStandardQueries('', '', []).length, 3);
+check('punctuation in a name is preserved', texts(buildStandardQueries("Ben & Jerry's", '', []))[1], "Is Ben & Jerry's any good? How does it compare with its alternatives?");
+check('an empty name does not throw', buildStandardQueries('', '', []).length, DEFAULT_QUERY_COUNT);
 
 console.log(failures === 0 ? '\nAll standard-query checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

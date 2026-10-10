@@ -17,6 +17,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
+import { DEFAULT_QUERY_COUNT } from '../src/queries';
 import { TEST_ACCESS_CODE, TEST_AUTH_ENV, rawFetch } from './authHelper';
 
 let failures = 0;
@@ -590,10 +591,10 @@ async function main() {
       const t = (await login(BR, 'br@example.com')).body.token;
       const dflt = await startAudit(BR, t, { businessName: 'Poke House', domain: 'poke.house' });
       const dd = await pollJob(BR, t, dflt.body.jobId);
-      check('default queries with no industry: all three name the brand, and the report says so', [dd.body.report.queriesNamingBrand, dd.body.report.queriesAttempted], [3, 3]);
+      check('default queries with no industry: every default question names the brand, and the report says so', [dd.body.report.queriesNamingBrand, dd.body.report.queriesAttempted], [DEFAULT_QUERY_COUNT, DEFAULT_QUERY_COUNT]);
       const withIndustry = await startAudit(BR, t, { businessName: 'Poke House', domain: 'poke.house', industry: 'poke restaurants' });
       const wd = await pollJob(BR, t, withIndustry.body.jobId);
-      check('with an industry, the discovery question is brand-neutral', [wd.body.report.queriesNamingBrand, wd.body.report.queriesAttempted], [2, 3]);
+      check('with an industry, the discovery question is brand-neutral (the other default question still names the brand)', [wd.body.report.queriesNamingBrand, wd.body.report.queriesAttempted], [DEFAULT_QUERY_COUNT - 1, DEFAULT_QUERY_COUNT]);
       const own = await pollJob(BR, t, (await startAudit(BR, t, BIZ)).body.jobId);
       check('a person\'s own category question does not name the brand', [own.body.report.queriesNamingBrand, own.body.report.queriesAttempted], [0, 1]);
     }
