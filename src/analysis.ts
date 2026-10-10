@@ -111,8 +111,10 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
   // "coffee") is a category word that would match every answer about cargo or coffee, the false-mention class the
   // multi-word rule below exists to prevent. A single-word core adds nothing the domain root does not already give.
   const core = lower
-    .replace(/(?:[\s,]+(?:inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|gmbh|ag|plc|sa|bv|nv|pty|pte|oy|ab|as|srl|spa)\.?)+[\s,.]*$/iu, '')
-    .replace(/[\s,.]+$/u, '');
+    .replace(/(?:[\s,]+(?:(?:&|and)\s+)?(?:inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|gmbh|ag|plc|sa|bv|nv|pty|pte|oy|ab|as|srl|spa)\.?)+[\s,.&]*$/iu, '')
+    .replace(/[\s,.&]+$/u, '')
+    // A leading article is not part of a brand: "the coffee" would match any answer that says "the coffee shops".
+    .replace(/^(?:the|a|an)\s+/iu, '');
   if (core && core !== lower && core.split(/\s+/).filter(Boolean).length >= 2 && core.length >= 3) tokens.push(core);
 
   /*

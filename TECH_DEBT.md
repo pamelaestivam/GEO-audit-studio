@@ -750,7 +750,10 @@ those files is a re-run, not a regression, but it must be recorded here.
   is too small to hit from outside), and when it fires the page-driven request just answers `busy`. Jobs that end in
   error (a failed or exhausted step, a driver error) are not compacted, so their raw step answers stay for the
   seven-day retention; the person gets no report in those cases.
-- **Decision A (cited-only) limits:** a location suffix typed after the name ("Poke House Austin") is not matched, so an
+- **Decision A (cited-only) limits:** a typed name whose legal-suffix-free core is ONE word ("Apple Inc", "Cargo Co") adds
+  no plain-name token (a single category word would match every answer about the category): an answer that says just
+  "Apple" counts as cited-only unless the domain root is given and distinctive; a leading article is not counted toward
+  the two-word minimum. A location suffix typed after the name ("Poke House Austin") is not matched, so an
   answer that writes just "Poke House" counts as cited-only when the site is cited; the summary and explainer say
   "the name as typed did not appear". Only the executive card has a render test: the export text, the header and
   sidebar badges (covered by helper-level tests) and the matrix note have none. Competitor matchers built from a name
