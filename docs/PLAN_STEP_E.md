@@ -79,7 +79,10 @@ is impossible; only a server log line exists, and the sentence must not claim ot
 
 1. **S1 pure seams, no behaviour change.** New `src/auditPipeline.ts`: `planAudit`, `analyseEvidence`,
    `assembleReport` (layer 4, summary guard, invariants), `failedShape`; `performAudit` becomes a thin
-   sequential composition. Boundary test: fixed evidence in, report deep-equals a golden JSON captured
+   sequential composition. *Delivered 2026-10-10 except `failedShape`: `planAudit`, `analyseEvidence`,
+   `assembleReport` and `isUsableEvidence` are in `src/auditPipeline.ts`; the failed-audit shape stays
+   `generateSynthesizedAudit` in `server.ts` and is injected into `assembleReport`, because it is also used
+   by the fallback paths and moving it is not needed for the later slices.* Boundary test: fixed evidence in, report deep-equals a golden JSON captured
    from the pre-refactor server (strip `id`, `createdAt`); the whole suite unchanged, including the
    hit counts in `quotaEfficiencyE2E`. New modules are imported with explicit `.js` extensions
    (`test/vercelEsmImports.test.ts`).

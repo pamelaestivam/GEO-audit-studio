@@ -166,3 +166,5 @@ small PRs with a boundary test each (counting real fake-Gemini hits, as `quotaEf
 risks, and a list of what must not be claimed or built without the durable store or the owner. Its
 honest conclusion: on Vercel with memory-only storage the step-wise design makes a lost audit visible
 (designed to give a sentence rather than a hang or a zero; not built) but cannot make it recoverable; that is row 8 (Supabase, owner O-4).
+
+**Step e, slice S1 (PR for `src/auditPipeline.ts`):** #40 (the "Not counted" list, ac4ac15) and #41 (the step e plan, c1da3c4) are merged. Slice S1 moves the analysis and report assembly out of `performAudit` into pure functions with no behaviour change, proved by a golden-report test over twelve scenarios captured from the server before the move (INSIGHTS I-18); the independent reviews found it guarded less than first written, so three scenarios and a list of what it still does not guard were added. Nothing step-wise is built yet; S2 (the store contract) is next.
