@@ -72,7 +72,7 @@ d851fb2) removed a `node_modules` symlink my `git add -A` had put on `main` and 
 on any tracked symlink. The first build step (honest first visit: a temporary-storage
 notice, a no-engine notice that disables the run buttons, `DEFAULT_QUERY_COUNT = 2`) was built
 and tested (full suite and 81 browser checks passed), was held back for a few hours by incident 3
-below, and is now PR #30 (branch `claude/first-visit-notices`).
+below, and became PR #30 (branch `claude/first-visit-notices`, since merged as 19005fc).
 
 **Incidents, in order, with what is known:**
 1. *Symlink on main.* `git add -A` in the records worktree committed `node_modules` (a link to
@@ -105,13 +105,13 @@ repaired, see incident 3.)
 **Tested once, not repeated:** deleting a remote branch with `git push origin --delete`
 returned HTTP 403 from the git proxy (one attempt, 2026-10-10; I-4). Later the same day, on the
 owner's suggestion to rename instead, a delete and a rename through the GitHub API were each
-tried once and also answered 403 (a policy denial); no variations were tried. A search of the GitHub
+tried once and also answered 403; no variations were tried. A search of the GitHub
 tool list found no branch-protection, ruleset, repository-settings or delete-branch tool.
 
 **Learned:** the merge tool refuses a wrong head hash (HTTP 409); read it, never recall it
 (I-11). A status script that says MERGED must prove a merge commit exists; the first version
 could never print MERGED and called merged branches "nothing to merge" (the reviewer caught it;
-rewritten with a test that builds a throwaway repository and runs 23 state checks, I-10).
+rewritten with a test that builds a throwaway repository and runs 25 checks (23 at the time, 25 after the sync-merge case was added), I-10).
 
 **Open (the next session starts here):** PR #30 (first visit) is merged (19005fc). The hygiene PR
 (#31) and the CI-strategy PR (#32) are the open ones; then `docs/PROGRAM.md` items 5 to 7
