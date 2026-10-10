@@ -84,7 +84,7 @@ Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoic
 Fact Accuracy Rate: ${accuracy.value} (${accuracy.caption})
 
 EXECUTIVE SUMMARY:
-${audit.executiveSummary}
+${audit.executiveSummary}${audit.summaryNote ? `\n(${audit.summaryNote})` : ''}
 ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, i) => `${i + 1}. [${r.priority}] ${r.title} (${r.expectedGain})`).join('\n') || '(none proposed)'}` : '\nREMEDIATION: not generated for this audit.'}`;
 
     try {
@@ -197,6 +197,7 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
             <p className="leading-relaxed bg-slate-900/80 p-4 rounded-lg border border-slate-800 text-slate-200">
               {audit.executiveSummary}
             </p>
+            {audit.summaryNote && <p className="mt-2 text-xs text-slate-400">{audit.summaryNote}</p>}
           </div>
 
           {/* Top Remediation Action Plan */}

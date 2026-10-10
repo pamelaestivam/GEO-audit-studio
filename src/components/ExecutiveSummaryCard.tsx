@@ -309,6 +309,11 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
           <p className="text-sm text-slate-200 leading-relaxed bg-slate-950/40 p-4 rounded-xl border border-slate-800/60">
             {audit.executiveSummary}
           </p>
+          {audit.summaryNote && (
+            <p data-testid="summary-note" className="mt-2 text-xs text-slate-400">
+              {audit.summaryNote}
+            </p>
+          )}
         </div>
 
         <div className="md:w-72 bg-gradient-to-br from-indigo-950/40 to-slate-950/80 border border-indigo-500/20 p-4 rounded-xl">

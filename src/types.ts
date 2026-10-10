@@ -157,6 +157,8 @@ export interface AuditReport {
   /** Queries appended after the audit ran; shown in the matrix, not in the headline figures. */
   queriesAddedAfterAudit?: number;
   narrativeNote?: string;
+  /** Said when sentences of the written summary were removed for stating a figure we could not verify. */
+  summaryNote?: string;
   /** True when the audit could not collect evidence; metrics are not measurements. */
   degraded?: boolean;
   degradedReason?: string;
