@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -17,6 +17,25 @@ export const FAKE_ANSWER = `For poke in Austin, top picks are:
 * **Poke House** - solid fresh fish.
 
 According to Yelp and TripAdvisor, Pricing starts at $12. Key takeaways: Fresh fish matters. Why choose Pokeworks? Check Monday hours.`;
+
+/** 'many_vendors': a long ranked list, with name variants and accents, the brand last. */
+export const MANY_VENDORS_ANSWER = `For poke in Austin the leading options are:
+
+* **Pokeworks, Inc.** - best overall.
+* **Sweetfin** - great vegan bowls.
+* **Café Ñandú** - fusion bowls.
+* **Bowl Brothers** - big portions.
+* **Wild Tuna Co** - sustainable fish.
+* **Ocean Bowl** - quick service.
+* **Hula Poke** - classic recipes.
+* **Kona Fresh** - lots of toppings.
+* **Aloha Kitchen** - family owned.
+* **Maui Bowls** - late hours.
+* **Tide Poke** - downtown.
+* **Reef Kitchen** - patio seating.
+* **Poke House** - solid fresh fish.
+
+Pokeworks Inc. is also popular with students. POKEWORKS has the longest queue.`;
 
 export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 2500): Promise<http.Server & { hits: () => number; narrativeRequests: () => any[] }> {
   let hits = 0;
@@ -47,6 +66,12 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
         res.end(JSON.stringify({ error: { code: 500, message: 'internal SECRET_PAYLOAD_MARKER', status: 'INTERNAL' } }));
         return;
       }
+      // 'partial_failure': the question about the menu cannot be answered (a non-retried 401), the other can.
+      if (mode === 'partial_failure' && !wantsJson && body.includes('poke house menu')) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 401, message: 'API key not valid. SECRET_PAYLOAD_MARKER', status: 'UNAUTHENTICATED' } }));
+        return;
+      }
       const isLookup = body.includes('Analyze the brand/business');
       const lookup = (domain: string) => JSON.stringify({ businessName: 'Acme Widgets', domain, industry: 'widgets', coreOfferings: 'widgets', targetAudience: 'buyers', competitors: [] });
       const text = wantsJson && isLookup && mode === 'lookup_placeholder'
@@ -71,6 +96,9 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
                         { engine: 'Gemini', queryText: 'a question nobody asked', claimedFact: 'e', actualFact: 'f', impactSeverity: 'high' },
                         { engine: 'ChatGPT', queryText: 'best poke in Austin', claimedFact: 'g', actualFact: 'h', impactSeverity: 'high' },
                       ]
+                    : mode === 'narrative_odd_values'
+                      ? // one valid claim with a severity nobody defined, attributable to question 1
+                        [{ engine: 'Gemini', queryNumber: 1, queryText: 'best poke in Austin', claimedFact: 'a', actualFact: 'b', impactSeverity: 'catastrophic' }]
                     : mode === 'narrative_unattributable'
                       ? [
                           { engine: 'Gemini', queryNumber: 99, queryText: 'a question nobody asked', claimedFact: 'e', actualFact: 'f', impactSeverity: 'high' },
@@ -78,7 +106,10 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
                         ]
                       : [],
                 omissions:
-                  mode === 'narrative_invented_numbers'
+                  mode === 'narrative_odd_values'
+                    ? // counts at, above and below the allowed range, and a fraction (a 2-question audit allows 0 to 2)
+                      [2, 3, -1, 2.5].map((n, i) => ({ category: 'Schema & Entity Data', description: `Omission ${i + 1}`, affectedQueriesCount: n, rootCause: 'None', recommendation: 'Add markup' }))
+                    : mode === 'narrative_invented_numbers'
                     ? // an impossible count for a 2-question audit
                       [{ category: 'Schema & Entity Data', description: 'Missing markup', affectedQueriesCount: 47, rootCause: 'None', recommendation: 'Add markup' }]
                     : [],
@@ -89,7 +120,12 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
                     ? [{ title: 'Add schema', category: 'Schema & Entity Data', priority: 'P1 High', effort: 'Quick Win (< 2h)', description: 'Add JSON-LD', stepByStepInstructions: ['Add it'], targetUrls: [] }]
                     : [],
               })
-            : FAKE_ANSWER;
+            : mode === 'many_vendors'
+              ? // the second question's answer never names the brand, so "who took the answer" is exercised
+                body.includes('poke house menu')
+                ? MANY_VENDORS_ANSWER.replace('* **Poke House** - solid fresh fish.\n', '')
+                : MANY_VENDORS_ANSWER
+              : FAKE_ANSWER;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({

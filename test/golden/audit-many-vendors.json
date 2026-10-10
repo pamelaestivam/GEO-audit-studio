@@ -1,0 +1,289 @@
+{
+  "accuracyRate": 100,
+  "avgProminence": 19,
+  "businessName": "Poke House",
+  "citationSources": [
+    {
+      "citationCount": 2,
+      "domain": "yelp.com",
+      "isOwned": false,
+      "queryCount": 2,
+      "sampleTitle": "yelp.com",
+      "sampleUrl": "https://yelp.com/biz/x"
+    }
+  ],
+  "competitorBenchmarks": [
+    {
+      "discovered": false,
+      "domain": "poke.house",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Poke House (Your Business)",
+      "shareOfVoice": 4,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": false,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Pokeworks",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 2
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Sweetfin",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Café Ñandú",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Bowl Brothers",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Wild Tuna Co",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Ocean Bowl",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Hula Poke",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Kona Fresh",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Aloha Kitchen",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Maui Bowls",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Tide Poke",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Reef Kitchen",
+      "shareOfVoice": 8,
+      "topRecommendedCount": 0
+    }
+  ],
+  "competitors": [
+    "Pokeworks",
+    "Sweetgreen"
+  ],
+  "coreOfferings": "poke bowls",
+  "domain": "poke.house",
+  "engineModels": {
+    "Gemini": "gemini-3.6-flash"
+  },
+  "enginesRequested": [
+    "Gemini"
+  ],
+  "executiveSummary": "Poke House was named in 1 of 2 answers captured across Gemini (50% visibility), holding 4% share of voice against every vendor the engines named. Narrative ok.",
+  "geoVisibilityScore": 50,
+  "inaccuracies": [],
+  "inaccuraciesDiscarded": 0,
+  "industry": "Restaurants",
+  "leaderShare": 0,
+  "measuredEngines": [
+    "Gemini"
+  ],
+  "narrativeAvailable": true,
+  "notCounted": [],
+  "observationsAttempted": 2,
+  "observationsMentioned": 1,
+  "observationsWithEvidence": 2,
+  "omissions": [],
+  "queriesAttempted": 2,
+  "queriesNamingBrand": 1,
+  "queriesTested": [
+    {
+      "competitorsAhead": [
+        "Pokeworks",
+        "Sweetfin",
+        "Café Ñandú",
+        "Bowl Brothers",
+        "Wild Tuna Co",
+        "Ocean Bowl",
+        "Hula Poke",
+        "Kona Fresh",
+        "Aloha Kitchen",
+        "Maui Bowls",
+        "Tide Poke",
+        "Reef Kitchen"
+      ],
+      "engines": {
+        "Gemini": {
+          "citations": [
+            "https://yelp.com/biz/x"
+          ],
+          "engine": "Gemini",
+          "excerpt": "* **Poke House** - solid fresh fish.",
+          "position": 13,
+          "status": "secondary_mention"
+        }
+      },
+      "evidence": [
+        {
+          "answerText": "For poke in Austin the leading options are:\n\n* **Pokeworks, Inc.** - best overall.\n* **Sweetfin** - great vegan bowls.\n* **Café Ñandú** - fusion bowls.\n* **Bowl Brothers** - big portions.\n* **Wild Tuna Co** - sustainable fish.\n* **Ocean Bowl** - quick service.\n* **Hula Poke** - classic recipes.\n* **Kona Fresh** - lots of toppings.\n* **Aloha Kitchen** - family owned.\n* **Maui Bowls** - late hours.\n* **Tide Poke** - downtown.\n* **Reef Kitchen** - patio seating.\n* **Poke House** - solid fresh fish.\n\nPokeworks Inc. is also popular with students. POKEWORKS has the longest queue.",
+          "citations": [
+            {
+              "domain": "yelp.com",
+              "title": "yelp.com",
+              "url": "https://yelp.com/biz/x"
+            }
+          ],
+          "engine": "Gemini",
+          "searchQueries": [
+            "poke austin"
+          ]
+        }
+      ],
+      "id": "q1",
+      "intent": "direct_recommendation",
+      "prominence": 19,
+      "queryText": "best poke in Austin",
+      "targetPersona": "Buyer"
+    },
+    {
+      "competitorsAhead": [
+        "Pokeworks",
+        "Sweetfin",
+        "Café Ñandú",
+        "Bowl Brothers",
+        "Wild Tuna Co",
+        "Ocean Bowl",
+        "Hula Poke",
+        "Kona Fresh",
+        "Aloha Kitchen",
+        "Maui Bowls",
+        "Tide Poke",
+        "Reef Kitchen"
+      ],
+      "engines": {
+        "Gemini": {
+          "citations": [
+            "https://yelp.com/biz/x"
+          ],
+          "engine": "Gemini",
+          "excerpt": "Poke House was not named. Vendors named instead: Pokeworks, Sweetfin, Café Ñandú, Bowl Brothers, Wild Tuna Co, Ocean Bowl, Hula Poke, Kona Fresh, Aloha Kitchen, Maui Bowls, Tide Poke, Reef Kitchen.",
+          "keyOmissionReason": "Answer surface taken by: Pokeworks, Sweetfin, Café Ñandú, Bowl Brothers, Wild Tuna Co",
+          "position": null,
+          "status": "omitted"
+        }
+      },
+      "evidence": [
+        {
+          "answerText": "For poke in Austin the leading options are:\n\n* **Pokeworks, Inc.** - best overall.\n* **Sweetfin** - great vegan bowls.\n* **Café Ñandú** - fusion bowls.\n* **Bowl Brothers** - big portions.\n* **Wild Tuna Co** - sustainable fish.\n* **Ocean Bowl** - quick service.\n* **Hula Poke** - classic recipes.\n* **Kona Fresh** - lots of toppings.\n* **Aloha Kitchen** - family owned.\n* **Maui Bowls** - late hours.\n* **Tide Poke** - downtown.\n* **Reef Kitchen** - patio seating.\n\nPokeworks Inc. is also popular with students. POKEWORKS has the longest queue.",
+          "citations": [
+            {
+              "domain": "yelp.com",
+              "title": "yelp.com",
+              "url": "https://yelp.com/biz/x"
+            }
+          ],
+          "engine": "Gemini",
+          "searchQueries": [
+            "poke austin"
+          ]
+        }
+      ],
+      "id": "q2",
+      "intent": "direct_recommendation",
+      "prominence": 0,
+      "queryText": "poke house menu",
+      "targetPersona": "Buyer"
+    }
+  ],
+  "questionsAnswered": 2,
+  "remediationPlan": [],
+  "shareOfVoice": 4,
+  "targetAudience": "office workers",
+  "untrackedRivals": [
+    "Sweetfin",
+    "Café Ñandú",
+    "Bowl Brothers",
+    "Wild Tuna Co",
+    "Ocean Bowl",
+    "Hula Poke",
+    "Kona Fresh",
+    "Aloha Kitchen"
+  ]
+}

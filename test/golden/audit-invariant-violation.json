@@ -1,0 +1,81 @@
+{
+  "accuracyRate": null,
+  "businessName": "Poke House",
+  "competitorBenchmarks": [
+    {
+      "domain": "poke.house",
+      "mainCitationSources": [],
+      "name": "Poke House (Your Business)",
+      "shareOfVoice": 0,
+      "topRecommendedCount": 0
+    },
+    {
+      "domain": "",
+      "mainCitationSources": [],
+      "name": "Pokeworks",
+      "shareOfVoice": 0,
+      "topRecommendedCount": 0
+    },
+    {
+      "domain": "",
+      "mainCitationSources": [],
+      "name": "Sweetgreen",
+      "shareOfVoice": 0,
+      "topRecommendedCount": 0
+    }
+  ],
+  "competitors": [
+    "Pokeworks",
+    "Sweetgreen"
+  ],
+  "coreOfferings": "poke bowls",
+  "degraded": true,
+  "degradedReason": "This audit finished, but its figures failed an internal consistency check, so none of them are shown. Nothing was guessed. Please run the audit again; if it happens twice, tell the owner.",
+  "domain": "poke.house",
+  "enginesRequested": [
+    "Gemini"
+  ],
+  "executiveSummary": "This audit finished collecting answers, but its figures failed an internal consistency check, so none of them are shown and nothing here is a measurement.",
+  "geoVisibilityScore": 0,
+  "inaccuracies": [],
+  "industry": "Restaurants",
+  "leaderShare": 0,
+  "measuredEngines": [],
+  "narrativeAvailable": false,
+  "omissions": [],
+  "queriesTested": [
+    {
+      "engines": {
+        "Gemini": {
+          "citations": [],
+          "engine": "Gemini",
+          "excerpt": "Answers were collected from Gemini, but this audit's figures failed a consistency check, so no result is shown.",
+          "position": null,
+          "status": "retrieval_failed"
+        }
+      },
+      "id": "q1",
+      "intent": "direct_recommendation",
+      "queryText": "best poke in Austin",
+      "targetPersona": "Buyer"
+    },
+    {
+      "engines": {
+        "Gemini": {
+          "citations": [],
+          "engine": "Gemini",
+          "excerpt": "Answers were collected from Gemini, but this audit's figures failed a consistency check, so no result is shown.",
+          "position": null,
+          "status": "retrieval_failed"
+        }
+      },
+      "id": "q2",
+      "intent": "direct_recommendation",
+      "queryText": "poke house menu",
+      "targetPersona": "Buyer"
+    }
+  ],
+  "remediationPlan": [],
+  "shareOfVoice": 0,
+  "targetAudience": ""
+}

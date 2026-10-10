@@ -1,0 +1,161 @@
+{
+  "accuracyRate": 100,
+  "avgProminence": 58,
+  "businessName": "Poke House",
+  "citationSources": [
+    {
+      "citationCount": 2,
+      "domain": "yelp.com",
+      "isOwned": false,
+      "queryCount": 2,
+      "sampleTitle": "yelp.com",
+      "sampleUrl": "https://yelp.com/biz/x"
+    }
+  ],
+  "competitorBenchmarks": [
+    {
+      "discovered": false,
+      "domain": "poke.house",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Poke House (Your Business)",
+      "shareOfVoice": 33,
+      "topRecommendedCount": 0
+    },
+    {
+      "discovered": false,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Pokeworks",
+      "shareOfVoice": 33,
+      "topRecommendedCount": 2
+    },
+    {
+      "discovered": true,
+      "domain": "",
+      "mainCitationSources": [
+        "yelp.com"
+      ],
+      "name": "Sweetfin",
+      "shareOfVoice": 33,
+      "topRecommendedCount": 0
+    }
+  ],
+  "competitors": [
+    "Pokeworks",
+    "Sweetgreen"
+  ],
+  "coreOfferings": "poke bowls",
+  "domain": "poke.house",
+  "engineModels": {
+    "Gemini": "gemini-3.6-flash"
+  },
+  "enginesRequested": [
+    "Gemini"
+  ],
+  "executiveSummary": "Poke House was named in 2 of 2 answers captured across Gemini (100% visibility), holding 33% share of voice against every vendor the engines named. Narrative ok.",
+  "geoVisibilityScore": 100,
+  "inaccuracies": [],
+  "inaccuraciesDiscarded": 0,
+  "industry": "Restaurants",
+  "leaderShare": 0,
+  "measuredEngines": [
+    "Gemini"
+  ],
+  "narrativeAvailable": true,
+  "notCounted": [],
+  "observationsAttempted": 2,
+  "observationsMentioned": 2,
+  "observationsWithEvidence": 2,
+  "omissions": [],
+  "queriesAttempted": 2,
+  "queriesNamingBrand": 1,
+  "queriesTested": [
+    {
+      "competitorsAhead": [
+        "Pokeworks",
+        "Sweetfin"
+      ],
+      "engines": {
+        "Gemini": {
+          "citations": [
+            "https://yelp.com/biz/x"
+          ],
+          "engine": "Gemini",
+          "excerpt": "* **Poke House** - solid fresh fish.",
+          "position": 3,
+          "status": "secondary_mention"
+        }
+      },
+      "evidence": [
+        {
+          "answerText": "For poke in Austin, top picks are:\n\n* **Pokeworks** - consistently rated highest.\n* **Sweetfin** - great vegan bowls.\n* **Poke House** - solid fresh fish.\n\nAccording to Yelp and TripAdvisor, Pricing starts at $12. Key takeaways: Fresh fish matters. Why choose Pokeworks? Check Monday hours.",
+          "citations": [
+            {
+              "domain": "yelp.com",
+              "title": "yelp.com",
+              "url": "https://yelp.com/biz/x"
+            }
+          ],
+          "engine": "Gemini",
+          "searchQueries": [
+            "poke austin"
+          ]
+        }
+      ],
+      "id": "q1",
+      "intent": "direct_recommendation",
+      "prominence": 58,
+      "queryText": "best poke in Austin",
+      "targetPersona": "Buyer"
+    },
+    {
+      "competitorsAhead": [
+        "Pokeworks",
+        "Sweetfin"
+      ],
+      "engines": {
+        "Gemini": {
+          "citations": [
+            "https://yelp.com/biz/x"
+          ],
+          "engine": "Gemini",
+          "excerpt": "* **Poke House** - solid fresh fish.",
+          "position": 3,
+          "status": "secondary_mention"
+        }
+      },
+      "evidence": [
+        {
+          "answerText": "For poke in Austin, top picks are:\n\n* **Pokeworks** - consistently rated highest.\n* **Sweetfin** - great vegan bowls.\n* **Poke House** - solid fresh fish.\n\nAccording to Yelp and TripAdvisor, Pricing starts at $12. Key takeaways: Fresh fish matters. Why choose Pokeworks? Check Monday hours.",
+          "citations": [
+            {
+              "domain": "yelp.com",
+              "title": "yelp.com",
+              "url": "https://yelp.com/biz/x"
+            }
+          ],
+          "engine": "Gemini",
+          "searchQueries": [
+            "poke austin"
+          ]
+        }
+      ],
+      "id": "q2",
+      "intent": "direct_recommendation",
+      "prominence": 58,
+      "queryText": "poke house menu",
+      "targetPersona": "Buyer"
+    }
+  ],
+  "questionsAnswered": 2,
+  "remediationPlan": [],
+  "shareOfVoice": 33,
+  "targetAudience": "office workers",
+  "untrackedRivals": [
+    "Sweetfin"
+  ]
+}
