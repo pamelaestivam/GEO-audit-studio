@@ -44,14 +44,14 @@ not three independent people (see `docs/REVIEW_2026-10-09.md`, Part B 7).
   rate."). Every rate is printed "n of M", never bare. One question does not help
   robustness, it hides the failure; robustness comes from persisted steps.
 - **E. $0.** Provider: key from a project with billing never enabled (owner confirms
-  once; recorded in `docs/PROGRAM.md`). App: paid engines refused unless an explicit
-  flag is set, presence of a paid key is a red health check, a call counter stops the
-  app before the free limit (labelled "calls this app made", never "your quota"). The
+  once; recorded in `docs/PROGRAM.md`). App: paid engines **will be** refused unless an explicit
+  flag is set (step d, not built), presence of a paid key **will be** a red health
+  check, and a call counter **will** stop the app before the free limit (labelled "calls this app made", never "your quota"). The
   app cannot see billing and does not claim to prove $0.
 - **F. Hosting reverses the 2026-10-09 "always-on process, SQLite, Vercel unsupported"
   decision.** Vercel stays the host (auto-deploys every merge; the owner knows it),
-  Supabase Postgres becomes the durable store, and audits run as step-wise resumable
-  jobs. Until the store exists the deployment is labelled "Preview" and nothing
+  Supabase Postgres is to become the durable store (not built; blocked on the owner,
+  `docs/PROGRAM.md` O-4), and audits are to run as step-wise resumable jobs (not built). Until the store exists the deployment is labelled "Preview" and nothing
   claims durability. Docker leaves the required checks (CI smoke runs
   `dist/server.cjs`; `scripts/prod-install-check.sh` already exists); the Dockerfile
   stays as an optional, non-blocking self-host path. Docker Hub 429s therefore stop
@@ -59,7 +59,7 @@ not three independent people (see `docs/REVIEW_2026-10-09.md`, Part B 7).
 - **G. Branch protection.** A required human review is theatre for a solo owner who
   delegates merging (an author cannot approve their own PR, and the merges run under
   the owner's login). Instead: a ruleset on `main` requiring a pull request (0
-  approvals), the `lint` and `test` checks, no force-push, no deletion; a
+  approvals), the `test` check (which already runs lint, audit and the whole suite), no force-push, no deletion; a
   machine-checked "EVAL PM: SHIP" line in the PR body; "Automatically delete head
   branches" turned on; and this entry is the written standing delegation. A change
   to a metric definition, spend, or hosting still tells the owner in chat before merge

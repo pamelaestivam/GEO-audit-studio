@@ -38,7 +38,8 @@ tell the owner or a client that it is dependable.
 
 ## 3. Owner actions (the session cannot do these; why, and the exact steps)
 
-Steps are as of 2026-10 and the screens may be labelled slightly differently.
+Steps are as of 2026-10 and the screens may be labelled slightly differently. **Every
+menu label below is unverified**: the assistant could not open these sites to check.
 Never paste a key or token into chat; keys go in the places named below.
 
 **O-1. Let the assistant's workspace reach the web.** *Why only you:* the cloud
@@ -48,7 +49,8 @@ cannot edit it (tested: every outside host fails with "name not found").
 2. Under **Network access** choose a broader level, or under **Allowed domains**
    add: `geo-audit-studio-five.vercel.app`, `vercel.com`, `supabase.com`,
    `ai.google.dev`, `generativelanguage.googleapis.com`. Leave "Allow package
-   managers" ticked.
+   managers" ticked. (The database itself is reached by the deployed site, not by the
+   assistant's workspace, so `*.supabase.co` is not needed for that.)
 3. Start a new session (the setting applies to new sessions).
 *Unblocks:* opening the live site from the assistant's side, reading vendor docs,
 and (with O-2) a real audit.
@@ -68,8 +70,10 @@ Google login; secrets must never be in the repo or in chat.
    Variables**. Confirm these exist for Production and Preview: `SESSION_SECRET`
    (32 or more random characters), `ACCESS_CODES` (`yourname=a-long-code`),
    `GEMINI_API_KEY`.
-2. **Settings** then **Functions**: note the maximum duration (the design assumes
-   up to 300 s; if it says 10 s, tell the assistant).
+2. **Settings** then **Functions**: note the default and maximum duration (the design
+   assumes up to 300 s; if it says 10 s, tell the assistant). Note `vercel.json` sets no
+   `maxDuration` of its own, so what the dashboard shows is what the functions get; the
+   first step-wise PR will set it explicitly.
 3. **Deployments**: confirm the latest Production deployment says Ready.
 Optional and faster: connect the **Vercel** connector in claude.ai (Settings then
 Connectors). It gives the assistant read access to projects and deployments, so the
@@ -89,14 +93,15 @@ Vercel logins and creates an account-level resource.
 Know before you start: the Supabase free plan pauses a project after about a week
 without activity (AGENT); the scheduled canary (item 9) is what keeps it awake.
 
-**O-5. Branch rules.** *Why only you:* the assistant has no tool for repository
-settings, and the git proxy refuses to delete branches (HTTP 403, tested).
+**O-5. Branch rules.** *Why only you:* the assistant's GitHub tools include no
+branch-protection, ruleset, repository-settings or delete-branch tool (searched
+2026-10-10), and the git proxy refuses to delete branches (HTTP 403, tested).
 1. GitHub, repository **Settings**, **General**: tick **Automatically delete head
    branches**. (This removes merged branches by itself, which fixes the 403 problem.)
 2. **Settings**, **Rules**, **Rulesets**, **New branch ruleset**: target the default
    branch; enforcement **Active**; tick **Restrict deletions**, **Block force pushes**,
    **Require a pull request before merging** (0 approvals), **Require status checks**
-   (add `test`; a check only appears in the list after it has run once). Leave the
+   (add `test`, which already includes lint; a check only appears in the list after it has run once; do not add a check named `lint`, it does not exist). Leave the
    bypass list empty.
 3. If GitHub says rulesets are not available for a private repo on your plan, tell
    the assistant; the fallback is to rely on the CI workflow and the standing

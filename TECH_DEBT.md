@@ -209,7 +209,13 @@ directly (which every other test in this file does) cannot detect this
 failure mode at all - it bypasses Vercel's own routing layer entirely,
 which is exactly where this bug lived.
 
-### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured; the supported deployment is now an always-on service)
+### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured)
+
+> **Superseded 2026-10-10 (`docs/DECISIONS.md`, decision F):** the earlier call that the
+> supported deployment is an always-on service (D1 below) was reversed at the owner's
+> direction. Vercel stays the host; the fix is a step-wise resumable audit job plus a
+> durable store (`docs/RELIABILITY.md`), not a different host. The analysis below is
+> still the description of the problem.
 
 Found in the 2026-10-09 MVP audit (`docs/MVP_AUDIT.md` A1). `POST
 /api/audit/run` answers `202` and then keeps working after the response;

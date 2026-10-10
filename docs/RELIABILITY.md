@@ -42,8 +42,9 @@ queued -> collecting(query_i, engine) -> analysing -> narrating -> done
   (`last_call_at`, `tripped_until`) so every instance sees one truth.
 - `stalled` means nobody advanced the job (the tab was closed). The user sees
   "paused, reopen to continue", never an error and never a zero.
-- At $0 there is no server clock: the free hosting plan runs scheduled jobs at most
-  once a day (AGENT). Continuation therefore depends on the page being open; a daily
+- At $0 there is no server clock that can act for a user: the free hosting plan runs
+  scheduled jobs at most once a day (AGENT), and a free GitHub schedule cannot advance a
+  user's job without a session. Continuation therefore depends on the page being open; a daily
   job only reaps stalled jobs and writes incidents. This is a stated limit, not a
   hidden one.
 
@@ -104,7 +105,7 @@ what is still valid, what to do next. A failure is never a zero and never a blan
 
 | Step | Size | Built? |
 |---|---|---|
-| a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" wording | S | no |
+| a. Honest first visit: a visible storage-mode line, "no engine configured", default 2 questions. (The status endpoint already reports storage and the engines, and the app already asks before leaving a page with an unsaved audit; no visible line existed.) | S | in progress |
 | b. Docker removed from the required checks; CI smoke runs `dist/server.cjs` | S | no |
 | c. `assertReportInvariants`, number guard, "Not counted" strip and panel; cited-only as its own number | M | no |
 | d. Paid-engine refusal and per-instance call counters (labelled "this instance" until the durable store exists) | S | no |
@@ -123,6 +124,7 @@ Until then they are labelled "in-store" and the storage mode is shown.
 - Fuzz `assertReportInvariants` with random evidence and prove a report it accepts has
   consistent denominators.
 - Mutation-test `src/analysis.ts` and the guard in CI (13 of 14 sampled mutations were
-  caught in the 2026-10-09 review; the adapters had none).
+  caught in the 2026-10-09 review; that harness was not committed, so the figure is
+  not re-runnable; the adapters had none).
 - A canary test that fails closed: break the health endpoint on purpose and assert the
   workflow goes red.

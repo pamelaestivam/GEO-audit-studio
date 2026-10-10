@@ -14,18 +14,20 @@ speaks with the same authority. Source of every quote below: the session of
 
 > "0 dollars for now."
 
-Meaning, as the team read it (`docs/DECISIONS.md`, 2026-10-10):
+Meaning, as the team read it (`docs/DECISIONS.md`, 2026-10-10). The app-side items
+below are the **plan** (step d in `docs/PROGRAM.md`) and are not built yet; only the
+provider-side rule is something the owner can act on today:
 
 - The Gemini key must come from a Google AI Studio project with **billing never
   enabled**. A project without billing answers 429 when the free limit is hit; it
   cannot charge (AGENT-level evidence from web search, to be confirmed by the
   owner in the Google console once and recorded in `docs/PROGRAM.md`).
-- No ChatGPT, Perplexity or Claude key is configured. The app refuses to query a
-  paid engine unless an explicit environment flag is set, and treats the presence
-  of such a key as a configuration alarm.
-- The app also keeps its own call counter and stops before the free limit. That
-  counter is a safeguard, not the money control; the money control is the missing
-  billing account.
+- No ChatGPT, Perplexity or Claude key is configured. **Plan (not built):** the app
+  will refuse to query a paid engine unless an explicit environment flag is set, and
+  will treat the presence of such a key as a configuration alarm.
+- **Plan (not built):** the app will also keep its own call counter and stop before
+  the free limit. That counter will be a safeguard, not the money control; the money
+  control is the missing billing account.
 - Any new feature that adds a recurring call (a canary, a health probe) must count
   against that same budget.
 
@@ -35,7 +37,8 @@ Meaning, as the team read it (`docs/DECISIONS.md`, 2026-10-10):
 > fails, if must be uncovered. Seriously, think strongly on how to implement a
 > product in a style that does not fail. Independent on how the user uses it."
 
-Meaning: the design target is "every audit ends in exactly one visible state:
+Meaning: this is the **design target** (nothing in `docs/RELIABILITY.md` section 6
+is built yet): "every audit ends in exactly one visible state:
 measured, partially measured with stated reasons, or failed with a sentence".
 Nothing is dropped without being counted and shown; nothing runs only after a
 response is sent; state that matters is stored, not held in memory; a failure
@@ -51,11 +54,13 @@ there.
 
 > "I used Vercel and Supabase in other projects."
 
-Meaning: merge to `main` deploys to a URL the owner opens, with no manual steps
-and nothing that needs a developer's laptop. The existing Vercel project
-(`geo-audit-studio`) is the vehicle; Supabase is the durable store. Anything the
-assistant cannot do itself (account actions, secrets) is written as numbered
-click-by-click steps in `docs/PROGRAM.md` and nothing else is blocked on it.
+Meaning (the **target**): merge to `main` deploys to a URL the owner opens, with no
+manual steps and nothing that needs a developer's laptop. The existing Vercel
+project (`geo-audit-studio`) is the vehicle; Supabase is to become the durable store
+(not yet: see `docs/PROGRAM.md` section 1 for what is true today, including that
+production deployments from this repo have not been checked). Anything the assistant
+cannot do itself (account actions, secrets) is written as numbered click-by-click
+steps in `docs/PROGRAM.md` and nothing else is blocked on it.
 
 ## D-4. State of the art
 
