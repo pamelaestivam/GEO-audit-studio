@@ -96,6 +96,11 @@ async function main() {
   const odd = path.join(dir, "o'; DROP TABLE audits; -- x.sqlite");
   const oddRun = spawnSync('node', ['scripts/backup.mjs', dir, odd], { encoding: 'utf8' });
   check('a quote/semicolon/space in the output path is only a path', [oddRun.status, fs.existsSync(odd)], [0, true]);
+  // `file:` is a SQLite URI prefix: it must stay a file NAME, not redirect the write elsewhere.
+  const uriDir = path.join(dir, 'uri-cwd');
+  fs.mkdirSync(uriDir);
+  const uriRun = spawnSync('node', [path.resolve('scripts/backup.mjs'), dir, 'file:uri-name.sqlite'], { encoding: 'utf8', cwd: uriDir });
+  check('an output name starting with "file:" is a file name: written there, nothing stray elsewhere', [uriRun.status, fs.existsSync(path.join(uriDir, 'file:uri-name.sqlite')), fs.readdirSync(uriDir).filter((f) => f.includes('.tmp-')), fs.readdirSync(dir).filter((f) => f.includes('uri-name'))], [0, true, [], []]);
   const missing = spawnSync('node', ['scripts/backup.mjs', path.join(dir, 'nope'), path.join(dir, 'x.sqlite')], { encoding: 'utf8' });
   check('a wrong DATA_DIR is a sentence, not a stack trace', [missing.status, /no database at/.test(missing.stderr), /\n\s+at /.test(missing.stderr)], [1, true, false]);
   fs.writeFileSync(path.join(dir, 'a-file'), 'x');

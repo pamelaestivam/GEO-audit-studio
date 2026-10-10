@@ -55,9 +55,11 @@ jobs:
         run: |
           for attempt in 1 2 3 4; do
             docker build -t geo-audit-studio:ci . && exit 0
+            [ "$attempt" = 4 ] && break
             echo "docker build attempt $attempt failed; retrying in $((attempt * 30))s"
             sleep $((attempt * 30))
           done
+          echo "docker build failed on every attempt"
           exit 1
       - name: Run container
         run: |

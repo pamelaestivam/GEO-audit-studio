@@ -23,7 +23,8 @@ import { DatabaseSync } from 'node:sqlite';
 const dataDir = process.argv[2] || process.env.DATA_DIR || './data';
 const source = path.join(dataDir, 'geo-audit.sqlite');
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-const out = process.argv[3] || path.join(dataDir, 'backups', `geo-audit-${stamp}.sqlite`);
+// Absolute, so a path such as `file:x.sqlite` is a file name here and never a SQLite URI.
+const out = path.resolve(process.argv[3] || path.join(dataDir, 'backups', `geo-audit-${stamp}.sqlite`));
 
 let tmp = '';
 /** Remove the temporary copy; never throws (the directory may not even exist). */
@@ -47,7 +48,8 @@ if (fs.existsSync(out)) fail(`${out} already exists; refusing to overwrite a bac
 // Written to a temporary name this process alone owns, checked, and only then
 // given its final name with link() - which, unlike rename(), refuses to replace an
 // existing file. So a failed or racing run can never delete or overwrite a good
-// backup, and a half-written file never sits under a backup's name.
+// backup. (The hard-link path never leaves a half-written file under the final name; the
+// no-hard-link fallback is a plain copy and can, if the process is killed mid-copy.)
 tmp = `${out}.tmp-${process.pid}`;
 try {
   fs.mkdirSync(path.dirname(out), { recursive: true });
