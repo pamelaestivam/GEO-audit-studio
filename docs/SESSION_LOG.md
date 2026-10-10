@@ -165,4 +165,4 @@ the other (lesson: one suite at a time per checkout, see `docs/INSIGHTS.md` I-17
 small PRs with a boundary test each (counting real fake-Gemini hits, as `quotaEfficiencyE2E` does), the
 risks, and a list of what must not be claimed or built without the durable store or the owner. Its
 honest conclusion: on Vercel with memory-only storage the step-wise design makes a lost audit visible
-(a sentence, never a hang or a zero) but cannot make it recoverable; that is row 8 (Supabase, owner O-4).
+(designed to give a sentence rather than a hang or a zero; not built) but cannot make it recoverable; that is row 8 (Supabase, owner O-4).
