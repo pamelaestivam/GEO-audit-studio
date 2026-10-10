@@ -1,5 +1,16 @@
 # GEO Audit Studio — working notes
 
+## Start here (added 2026-10-10)
+
+Before anything else read, in this order: `docs/OWNER_DIRECTIVES.md` (the owner's
+standing instructions: **$0 spend, must not fail silently, automatic deployment,
+keep records**), `docs/PROGRAM.md` (what is done, next, blocked, and the steps only
+the owner can do), the newest entry in `docs/DECISIONS.md`, and
+`docs/RELIABILITY.md` (the design for "failure is always visible"). Write what you
+learn into `docs/SESSION_LOG.md` and `docs/INSIGHTS.md` before the session ends. When
+you must hand the owner a task, first try to do it yourself; if you cannot, say why
+and give numbered steps (`docs/OWNER_DIRECTIVES.md` D-8).
+
 ## Working dynamic with the owner (read this first in a new session)
 
 This project is built through repeated rounds of: ship something, the owner

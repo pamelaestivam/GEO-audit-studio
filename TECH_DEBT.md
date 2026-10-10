@@ -696,6 +696,17 @@ boundaries. **Still true, and not fixed:**
 - A tracked competitor whose name contains the client's ("BP Pulse" beside "BP")
   is dropped by `dedupeMatchers`, the same as "Stripe Atlas" beside "Stripe".
 
+### 2.14 End-to-end tests draw random ports from overlapping ranges (low-medium)
+
+Found 2026-10-10. `test/quotaBreakerE2E.test.ts` (3400-4000) and
+`test/quotaEfficiencyE2E.test.ts` (3500-3900) overlap, as do other pairs, and none
+handles a collision. One CI run failed in `quotaEfficiencyE2E` ("Could not reach
+Gemini", zero requests seen by the fake) and passed on re-run of the same commit; it
+did not reproduce locally in three runs. A port collision is the suspected cause
+(INFERRED, not proven). Fix: have each test listen on port 0 and read the assigned
+port back, and fail loudly on a bind error. Until then a single unexplained red in
+those files is a re-run, not a regression, but it must be recorded here.
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer

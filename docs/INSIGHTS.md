@@ -1,0 +1,19 @@
+# Insights register
+
+Non-obvious things learned while building this, each with how sure we are, so a
+later session neither re-derives them nor trusts them more than they deserve.
+Confidence: **MEASURED** (run and seen), **READ** (read in code or docs), **INFERRED**
+(reasoned, not observed), **AGENT** (reported by a search snippet, not opened).
+Add new entries at the bottom; correct an old one by adding a dated note to it.
+
+| ID | Date | Insight | Confidence | Consequence |
+|---|---|---|---|---|
+| I-1 | 2026-10-10 | On Vercel the audit starts with `void runJob(...)` after the 202 response, the job table is process memory, and the pacer, breaker, idempotency table and limiters are per-process. A poll can reach a different instance, and work after a response can be frozen. | READ (code); the failure itself INFERRED | The audit must become a persisted step-wise state machine before any durability claim (`docs/RELIABILITY.md`). |
+| I-2 | 2026-10-10 | The real $0 control is a Google project without billing (it answers 429 at the free limit instead of charging). The app cannot see billing, so its own counter is a safeguard, not the money control. | AGENT | Owner confirms "no billing" once (`docs/PROGRAM.md` O-2); never describe the app counter as a guarantee. |
+| I-3 | 2026-10-10 | The cloud workspace has no outbound DNS except through the git proxy and web search; direct fetches of vendor docs and the live site fail with "name not found". | MEASURED | Anything that needs the web is an owner action (O-1); web search gives snippet-level evidence only. |
+| I-4 | 2026-10-10 | The git proxy refuses to delete remote branches (HTTP 403). | MEASURED | Use GitHub's "Automatically delete head branches" setting (O-5); do not retry deletion. |
+| I-5 | 2026-10-10 | CI failures seen on this repo came from two infrastructure sources: anonymous Docker Hub pulls on shared runners (100 per 6 h per IP, AGENT) and a suspected overlap of random test ports across E2E files. | MEASURED (the failures); causes AGENT and INFERRED | Docker leaves the required checks; E2E tests should bind port 0 and read the port back (`TECH_DEBT.md` 2.14). |
+| I-6 | 2026-10-10 | Same-model reviewers found a real defect in the first version of every fix and in later amendments; they never found nothing. | MEASURED (this session) | Keep fresh-context review mandatory, but do not treat "reviewed" as independent; add machine checks (mutation tests, invariants). |
+| I-7 | 2026-10-10 | Vercel builds PR previews fine for commits made under the owner's login. Another repo of the owner's records that Vercel Hobby blocked production deploys for a commit author without a team seat; whether that applies to production here is untested. | READ | After the next merge, check the production deployment state; the Vercel connector (O-3) lets the assistant do it. |
+| I-8 | 2026-10-10 | Free-plan platform limits that shape the design: Vercel Hobby allows scheduled jobs at most daily and long functions only with fluid compute; Supabase free pauses after about a week idle. | AGENT | There is no free server clock: jobs advance while the page is open; a daily job reaps stalled work and keeps the database awake. |
+| I-9 | 2026-10-10 | A metric label that says one thing while the code counts another (visibility "named" counted cited-only answers) is invisible to tests that check arithmetic. | MEASURED (function level) | Metric definitions are decisions, recorded with a `metricVersion` so history is not reinterpreted. |
