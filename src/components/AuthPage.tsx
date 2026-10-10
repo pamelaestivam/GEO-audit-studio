@@ -72,7 +72,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4 sm:p-6 lg:p-8 font-sans relative overflow-hidden">
-      <div className="absolute top-0 inset-x-0 z-20">
+      <div className="max-w-4xl w-full mb-4 relative z-20 rounded-xl overflow-hidden">
         <DeploymentNotice />
       </div>
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />

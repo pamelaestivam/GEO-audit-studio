@@ -20,10 +20,10 @@ export const DEFAULT_QUERY_COUNT = 2;
  * limits and enterprise contract cost". Pure so it can be tested exhaustively.
  *
  * Nothing is guessed: a missing industry or competitor changes the wording
- * rather than being filled in. Two of the three questions necessarily name the
- * brand (a comparison and a price question are about it); the first is a
- * brand-neutral discovery question whenever one can be written honestly. Templates are inherently generic - they cannot
- * know a business - which is why writing your own queries (or the opt-in
+ * rather than being filled in. Of the standard questions, the comparison and
+ * price ones necessarily name the brand (they are about it); the discovery one
+ * is brand-neutral whenever one can be written honestly. Templates are
+ * inherently generic - they cannot know a business - which is why writing your own queries (or the opt-in
  * "Generate Query Matrix" step) is the better path for a real audit.
  */
 

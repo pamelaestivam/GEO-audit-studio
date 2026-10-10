@@ -153,7 +153,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
 
     try {
       // Only the user's own queries are sent; with none, the server runs its
-      // three standard buyer-intent queries. One query per line - a comma is
+      // standard buyer-intent queries (DEFAULT_QUERY_COUNT of them). One query per line - a comma is
       // ordinary punctuation inside a question and used to split it in two.
       const combinedQueries = manualQueriesInput
         .split('\n')
@@ -262,7 +262,7 @@ export const CleanStartDashboard: React.FC<CleanStartDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => handleAutoDetectUrl(businessName)}
-                  disabled={isDetecting || isLoading}
+                  disabled={isDetecting || isLoading || noEngine}
                   className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 transition disabled:opacity-50"
                 >
                   {isDetecting ? (

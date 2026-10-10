@@ -116,7 +116,14 @@ async function main() {
     assert('there is no demo / one-click bypass', (await page.locator('text=Quick Demo').count()) === 0);
 
     // --- the deployment notices come from the server's own status, never hardcoded
-    assert('a deployment with durable storage shows no temporary-storage notice', (await page.locator('[data-testid=storage-notice]').count()) === 0);
+    const STATUS_OK = { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: ['Gemini'], auth: { mode: 'configured' } };
+    const durablePage = await ctx.newPage();
+    await durablePage.route('**/api/audit/status', (route) => route.fulfill({ json: { ...STATUS_OK, storage: { kind: 'sqlite', durable: true } } }));
+    // Wait for the status answer to actually arrive: an absence checked before it does passes for free.
+    await Promise.all([durablePage.waitForResponse('**/api/audit/status'), durablePage.goto(BASE)]);
+    await durablePage.waitForTimeout(300);
+    assert('a deployment with durable storage shows no temporary-storage notice (checked after the status answered)', (await durablePage.locator('[data-testid=storage-notice]').count()) === 0);
+    await durablePage.close();
     const tempPage = await ctx.newPage();
     await tempPage.route('**/api/audit/status', (route) =>
       route.fulfill({
@@ -126,6 +133,10 @@ async function main() {
     await tempPage.goto(BASE);
     assert('when the server reports temporary storage, the sign-in page says so', await appears(tempPage, '[data-testid=storage-notice]'));
     assert('...and tells the person what to do', /Export your report/.test(await tempPage.locator('[data-testid=storage-notice]').innerText()));
+    await signIn(tempPage, 'tester@example.com', TEST_ACCESS_CODE);
+    await tempPage.waitForSelector('#business-name-input');
+    assert('...and the same notice stays on screen after signing in (the app header carries it too)', await appears(tempPage, '[data-testid=storage-notice]'));
+    await tempPage.evaluate(() => localStorage.clear()); // pages share one browser context; leave no session behind
     await tempPage.close();
 
     await signIn(page, 'tester@example.com', 'definitely-wrong-code');
@@ -215,6 +226,17 @@ async function main() {
     assert('...and are well-formed', /What are the best alternatives to Acme Bowls\?/.test(modalText));
     await page.locator('.fixed button:has-text("✕")').click();
 
+    // --- the same modal with no engine configured must not offer a dead click
+    // (a fresh page on the same signed-in browser context, so the modal starts from its first step)
+    const modalNoEngine = await ctx.newPage();
+    await modalNoEngine.route('**/api/audit/status', (route) => route.fulfill({ json: { ...STATUS_OK, engines: [], storage: { kind: 'sqlite', durable: true } } }));
+    await modalNoEngine.goto(BASE);
+    await modalNoEngine.click('#run-new-audit-btn');
+    await modalNoEngine.fill('.fixed input[placeholder^="e.g. Acme SaaS"]', 'Acme Bowls');
+    assert('the Run Audit modal says nothing can be measured when no engine is configured', await appears(modalNoEngine, '.fixed [data-testid=no-engine-notice]'));
+    assert('...and its Generate button is disabled even with a business name entered', await modalNoEngine.locator('.fixed button:has-text("Generate Viewer-Intent Queries")').isDisabled());
+    await modalNoEngine.close();
+
     // --- export
     await page.click('#export-report-btn');
     assert('the export modal opens', await appears(page, 'text=Executive Audit Report Export'));
@@ -302,12 +324,16 @@ async function main() {
         json: { quota: { available: true, reason: null, resetAt: null, msRemaining: 0 }, engines: [], storage: { kind: 'sqlite', durable: true }, auth: { mode: 'configured' } },
       })
     );
+    let statusAnswers = 0;
+    noEnginePage.on('response', (r) => { if (r.url().includes('/api/audit/status')) statusAnswers++; });
     await noEnginePage.goto(BASE);
     await signIn(noEnginePage, 'tester@example.com', TEST_ACCESS_CODE);
     await noEnginePage.waitForSelector('#business-name-input');
     await noEnginePage.fill('#business-name-input', 'Acme Bowls');
     assert('with no engine configured the form says nothing can be measured', await appears(noEnginePage, '[data-testid=no-engine-notice]'));
     assert('...and the run button is disabled even though a business name is entered, not a dead click', await noEnginePage.locator('button:has-text("Run Live GEO Search Audit")').isDisabled());
+    // sign-in page + app header + dashboard each ask once; wait for all of them before asserting an absence
+    for (let i = 0; i < 50 && statusAnswers < 3; i++) await noEnginePage.waitForTimeout(100);
     assert('...and the temporary-storage notice is absent (storage is fine here)', (await noEnginePage.locator('[data-testid=storage-notice]').count()) === 0);
     await noEnginePage.close();
 
