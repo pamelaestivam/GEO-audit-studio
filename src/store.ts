@@ -333,7 +333,7 @@ function newInstanceId(): string {
 
 /** A claim result that shares no object with the stored rows. */
 function cloneClaim(r: ClaimResult): ClaimResult {
-  return r.outcome === 'none' ? r : { ...r, step: { ...r.step } };
+  return r.outcome === 'none' ? r : { ...r, step: { ...r.step, result: jsonCopy(r.step.result) } };
 }
 
 // ---------------------------------------------------------------------------

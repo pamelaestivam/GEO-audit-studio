@@ -257,6 +257,14 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   await s.completeStep('p4b', 0, (cf as any).step.attempt, { state: 'failed', errorCode: 'step_exception' }, NOW + 1);
   check(t('a step completed as failed makes later claims report failed (job still running), not none'), [(await s.claimStep('p4b', 'A', LEASE, NOW + 2, 3)).outcome, ((await s.claimStep('p4b', 'A', LEASE, NOW + 2, 3)) as any).step?.errorCode], ['failed', 'step_exception']);
 
+  // a failed step can carry a result; the claim hands back a copy of it, never the stored object
+  await s.createPlannedJob(job({ id: 'p4d' }), PLAN);
+  const cd = await s.claimStep('p4d', 'A', LEASE, NOW, 3);
+  await s.completeStep('p4d', 0, (cd as any).step.attempt, { state: 'failed', errorCode: 'x', result: { n: 1 } }, NOW + 1);
+  const failedClaim: any = await s.claimStep('p4d', 'A', LEASE, NOW + 2, 3);
+  failedClaim.step.result.n = 99;
+  check(t('a failed step\'s result handed back by a claim is a copy'), [failedClaim.outcome, (await s.getJobSteps('p4d'))[0].result], ['failed', { n: 1 }]);
+
   // --- a bad attempt limit never means unlimited retries
   await s.createPlannedJob(job({ id: 'p4c' }), PLAN);
   const nan: string[] = [];
