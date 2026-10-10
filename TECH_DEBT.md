@@ -629,6 +629,31 @@ matching uses its composed (NFC) form; an underscore stays a word character, so
 - Extraction is quadratic on a single very long line (about 9 s for 200 KB of
   table cells, unchanged by the Unicode work); real answers are far smaller.
 
+### 2.6c Two-character brands: acronyms are measured, other short names are not (medium)
+
+Found in the 2026-10-09 independent review. Every brand token under three
+characters used to be skipped, so a brand such as HP was measured at 0% and
+reported as "omitted" on every engine. Now a name that is **entirely** a
+two-character acronym in capitals or digits (HP, 3M, EY, BP), or a longer name
+(HP Inc, 3M Company) whose first word is that acronym **and** equals the root of
+the domain the user gave (hp.com), is matched exactly as written, with word
+boundaries. **Still true, and not fixed:**
+
+- Everything else short still reads 0%: a one-character name; an ordinary word
+  (On, Go, It, Us); a name typed in lowercase or mixed case ("hp", "Hp", "hp
+  inc"); "HP Inc" with no domain or a different one; a punctuated legal name
+  ("HP, Inc."); hyphenated names ("EY-Parthenon"). A domain equal to a dictionary word proves nothing, so none of
+  these is promoted. The honest end state is a visible "cannot be measured" state
+  instead of a zero; not built.
+- An acronym matches by spelling, so it can match another sense of the same
+  letters: "$3M" (three million), "200 HP" (horsepower), "BP" (blood pressure), and
+  a brand whose whole name is a common acronym ("AI", "IT", "US") is credited with
+  every occurrence. Read the evidence for any quoted figure.
+- The word boundary is ASCII-only: "éHP" matches, and "HP-UX" matches (a hyphen is
+  a boundary).
+- A tracked competitor whose name contains the client's ("BP Pulse" beside "BP")
+  is dropped by `dedupeMatchers`, the same as "Stripe Atlas" beside "Stripe".
+
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
 Discovery is guarded — every extracted name must literally occur in the answer
@@ -679,8 +704,10 @@ Written 2026-10-09 so none of these is rediscovered:
   failed with a sentence (and is not counted against the daily budget); the
   person re-runs it. A job reaped as stuck after 15 minutes that later finishes
   is still recorded.
-- **No automated backups.** Copy `DATA_DIR/geo-audit.sqlite` or use the host's
-  disk snapshots. Deleting an access code does not delete that person's saved
+- **No automated backups.** `node scripts/backup.mjs` makes a consistent
+  snapshot (a plain copy of `geo-audit.sqlite` alone loses recent writes - they
+  are in the WAL), but nothing schedules it or copies it off the host. Use the
+  host's disk snapshots too. Deleting an access code does not delete that person's saved
   audits.
 - **`node:sqlite` is marked experimental by Node 22** (it prints a warning at
   start). It is stable in practice but the API could change; `engines` pins
