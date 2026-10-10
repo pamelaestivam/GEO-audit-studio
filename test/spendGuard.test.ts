@@ -66,12 +66,12 @@ for (let d = 0; d < 12; d++) {
   counter.record();
 }
 check('old days are dropped (memory stays bounded)', (counter as any).byDay.size <= 7, true);
-check('the cap sentence says what happened, what was kept and what to do', /at most 2 .* calls a day \(UTC\).*Nothing was lost.*GEMINI_DAILY_CALL_CAP/.test(capReachedMessage(2)), true);
+check('the cap sentence says what happened, what was kept and what to do', /at most 2 .* calls a day \(UTC\).*measured results were kept.*GEMINI_DAILY_CALL_CAP/.test(capReachedMessage(2)), true);
 
 // ---- the notice ---------------------------------------------------------------------------
 check('no notice when nothing is blocked or unknown', [paidEngineNotice([]), paidEngineNotice(null), paidEngineNotice(undefined)], [null, null, null]);
-check('one blocked engine is named', paidEngineNotice(['ChatGPT']), 'ChatGPT is set up on this server but switched off, because it is a paid service and this server is set to spend nothing. Nothing from it is measured or simulated.');
-check('several are named in a list', paidEngineNotice(['ChatGPT', 'Perplexity', 'Claude']), 'ChatGPT, Perplexity and Claude are set up on this server but switched off, because they are paid services and this server is set to spend nothing. Nothing from them is measured or simulated.');
+check('one blocked engine is named', paidEngineNotice(['ChatGPT']), 'ChatGPT is set up on this server but switched off, because it is a paid service and paid engines are not switched on for this server. Nothing from it is measured or simulated.');
+check('several are named in a list', paidEngineNotice(['ChatGPT', 'Perplexity', 'Claude']), 'ChatGPT, Perplexity and Claude are set up on this server but switched off, because they are paid services and paid engines are not switched on for this server. Nothing from them is measured or simulated.');
 
 console.log(failures === 0 ? '\nAll spend guard checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

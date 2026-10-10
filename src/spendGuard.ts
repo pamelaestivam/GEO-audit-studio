@@ -74,7 +74,7 @@ export class CallCounter {
 
 /** The sentence a person reads when the cap stops a call. */
 export function capReachedMessage(cap: number): string {
-  return `This server is set to make at most ${cap} answer-engine calls a day (UTC), and that limit has been reached. Nothing was lost; try again after 00:00 UTC, or ask the operator to raise GEMINI_DAILY_CALL_CAP.`;
+  return `This server is set to make at most ${cap} answer-engine calls a day (UTC), and that limit has been reached. The measured results were kept; try again after 00:00 UTC, or ask the operator to raise GEMINI_DAILY_CALL_CAP.`;
 }
 
 /** What /api/audit/status says about spending. */

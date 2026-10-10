@@ -60,7 +60,7 @@ say if a field needs adjusting.)*
 2. When prompted for the secrets (`sync: false` values), enter:
    - `ACCESS_CODES` - e.g. `anna=7Kx9mQ2vLp,ben=4Tz8pL1wQa`
    - `GEMINI_API_KEY`
-   - optionally `PERPLEXITY_API_KEY`
+   - optionally `PERPLEXITY_API_KEY` **plus `ALLOW_PAID_ENGINES=1`** (Perplexity costs money per call; a key alone is ignored)
    `SESSION_SECRET` is generated for you.
 3. Check the plan on the blueprint screen. It asks for a **paid** instance with
    a **1 GB disk**, because a persistent disk is not available on the free plan

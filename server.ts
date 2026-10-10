@@ -98,6 +98,13 @@ const NARRATIVE_MAX_ANSWERS = Math.max(40, MAX_AUDIT_QUERIES * 4);
  * never call `app.listen`).
  */
 async function buildApp() {
+  // Misconfigured spend settings must not be silent: an unreadable cap means NO cap, and anything but 1 means paid engines stay off.
+  if ((process.env.GEMINI_DAILY_CALL_CAP ?? '') !== '' && dailyCallCap(process.env) === null) {
+    console.warn(`[config] GEMINI_DAILY_CALL_CAP=${JSON.stringify(process.env.GEMINI_DAILY_CALL_CAP)} is not a positive whole number, so NO daily call cap is in force.`);
+  }
+  if ((process.env.ALLOW_PAID_ENGINES ?? '') !== '' && process.env.ALLOW_PAID_ENGINES !== '1') {
+    console.warn(`[config] ALLOW_PAID_ENGINES=${JSON.stringify(process.env.ALLOW_PAID_ENGINES)} is ignored: only the value 1 switches paid engines on.`);
+  }
   if (process.env.AUDIT_FORCE_INVARIANT_VIOLATION === '1') {
     // A test-only switch: set on a real deployment it makes EVERY audit fail its consistency check. Say so loudly.
     console.warn('[config] AUDIT_FORCE_INVARIANT_VIOLATION=1 is set: every audit will fail its consistency check. This is a test-only switch; unset it.');

@@ -26,7 +26,7 @@ export function storageNotice(storage: { durable: boolean } | null | undefined):
 export function paidEngineNotice(blocked: string[] | null | undefined): string | null {
   if (!Array.isArray(blocked) || blocked.length === 0) return null;
   const names = blocked.length === 1 ? blocked[0] : `${blocked.slice(0, -1).join(', ')} and ${blocked[blocked.length - 1]}`;
-  return `${names} ${blocked.length === 1 ? 'is' : 'are'} set up on this server but switched off, because ${blocked.length === 1 ? 'it is a paid service' : 'they are paid services'} and this server is set to spend nothing. Nothing from ${blocked.length === 1 ? 'it' : 'them'} is measured or simulated.`;
+  return `${names} ${blocked.length === 1 ? 'is' : 'are'} set up on this server but switched off, because ${blocked.length === 1 ? 'it is a paid service' : 'they are paid services'} and paid engines are not switched on for this server. Nothing from ${blocked.length === 1 ? 'it' : 'them'} is measured or simulated.`;
 }
 
 /** True only when the server has told us it queries no engine (unknown is not "none"). */

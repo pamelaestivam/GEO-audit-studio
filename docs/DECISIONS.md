@@ -44,10 +44,12 @@ not three independent people (see `docs/REVIEW_2026-10-09.md`, Part B 7).
   rate."). Every rate is printed "n of M", never bare. One question does not help
   robustness, it hides the failure; robustness comes from persisted steps.
 - **E. $0.** Provider: key from a project with billing never enabled (owner confirms
-  once; recorded in `docs/PROGRAM.md`). App: paid engines **will be** refused unless an explicit
-  flag is set (step d, not built), presence of a paid key **will be** a red health
-  check, and a call counter **will** stop the app before the free limit (labelled "calls this app made", never "your quota"). The
-  app cannot see billing and does not claim to prove $0.
+  once; recorded in `docs/PROGRAM.md`). App: paid engines are refused unless an explicit
+  flag is set (step d, built in PR #39), the presence of a paid key **will be** a red health
+  check (not built: PROGRAM row 9), and a call counter with an optional operator cap bounds what
+  the app itself can spend (built, per process; it is not tied to Google's free limit and is
+  labelled "calls this app made", never "your quota"). The app cannot see billing and does not
+  claim to prove $0.
 - **F. Hosting reverses the 2026-10-09 "always-on process, SQLite, Vercel unsupported"
   decision.** Vercel stays the host (auto-deploys every merge; the owner knows it),
   Supabase Postgres is to become the durable store (not built; blocked on the owner,

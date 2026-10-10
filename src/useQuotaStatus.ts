@@ -10,7 +10,7 @@ export interface AuditStatus {
   storage: { kind: string; durable: boolean; note?: string } | null;
   /** Whether people can sign in at all, and if not, what the operator must fix. */
   auth: { mode: 'configured' | 'dev' | 'unconfigured'; problem?: string } | null;
-  /** Paid engines that have a key but are switched off because this server is set to spend nothing. null until known. */
+  /** Paid engines that have a key but are switched off because paid engines are not switched on for this server. null until known. */
   paidBlocked: string[] | null;
 }
 
