@@ -107,11 +107,13 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
   // A name typed with its legal-entity suffix ("Acme Analytics, Inc.", "Hula Poke LLC") is almost never how an answer
   // writes it. The name without that suffix is matched too, so a brand an engine names plainly is not reported as
   // "cited without being named" (decision A made that distinction matter: a citation no longer rescues a miss).
+  // ONLY when what is left is two or more words: a single word left over ("Cargo Co" -> "cargo", "Coffee Company" ->
+  // "coffee") is a category word that would match every answer about cargo or coffee, the false-mention class the
+  // multi-word rule below exists to prevent. A single-word core adds nothing the domain root does not already give.
   const core = lower
-    .replace(/[\s,.]+$/u, '')
-    .replace(/(?:[\s,]+(?:inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|gmbh|ag|plc|sa|bv|nv|pty|pte|oy|ab|as|srl|spa))+\.?$/iu, '')
+    .replace(/(?:[\s,]+(?:inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|gmbh|ag|plc|sa|bv|nv|pty|pte|oy|ab|as|srl|spa)\.?)+[\s,.]*$/iu, '')
     .replace(/[\s,.]+$/u, '');
-  if (core && core !== lower && core.length >= 3) tokens.push(core);
+  if (core && core !== lower && core.split(/\s+/).filter(Boolean).length >= 2 && core.length >= 3) tokens.push(core);
 
   /*
    * A multi-word brand is matched on its full name only.

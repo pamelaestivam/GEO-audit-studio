@@ -551,6 +551,15 @@ check(
     check(`"${typed}" is found when the answer writes "Acme Analytics"`, findFirstMention(plain, buildBrandMatcher(typed, 'acme.com')) >= 0, true);
   }
   check('...and a brand that is only a prefix of another name is still not matched on a different company', findFirstMention('Try Acme Cars for a ride.', buildBrandMatcher('Acme Analytics Inc', 'acme.com')), -1);
+  // A single word left over after the suffix is a category word, not a brand: it must NOT become a token.
+  for (const typed of ['Cargo Co', 'Coffee Company', 'Pizza Co.', 'Gym Ltd', 'Bar AS', 'Cars As', 'Orange SA']) {
+    const mm = buildBrandMatcher(typed);
+    check(`"${typed}" adds no single-word token (it would match every answer about the category)`, mm.tokens.every((t) => t.split(/\s+/).length >= 2 || t === typed.toLowerCase()), true);
+  }
+  check('"Cargo Co" is not credited with an answer that only mentions cargo', findFirstMention('Cargo ships carry most freight; air cargo is faster.', buildBrandMatcher('Cargo Co')), -1);
+  check('"Coffee Company" is not credited with an answer that only mentions coffee', findFirstMention('Many coffee shops in Austin serve pour-over.', buildBrandMatcher('Coffee Company')), -1);
+  check('a query about the category does not "name" a brand called "Cargo Co"', queryNamesBrand('best cargo shipping and coffee pizza', buildBrandMatcher('Cargo Co')), false);
+  check('repeated suffixes with punctuation are all stripped ("Acme Analytics Co., Ltd." -> "acme analytics")', buildBrandMatcher('Acme Analytics Co., Ltd.').tokens.includes('acme analytics'), true);
   check('a name that is nothing but a suffix word adds no token (no empty or tiny match)', buildBrandMatcher('Inc', 'inc.com').tokens.every((t) => t.length >= 3), true);
   const m = buildBrandMatcher('Hula Poke Co.', 'hula.com');
   check('the name as typed and the name without its suffix are both matched, and nothing else is invented', m.tokens, ['hula poke co.', 'hula poke']);

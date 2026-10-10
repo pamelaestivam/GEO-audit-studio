@@ -750,6 +750,12 @@ those files is a re-run, not a regression, but it must be recorded here.
   is too small to hit from outside), and when it fires the page-driven request just answers `busy`. Jobs that end in
   error (a failed or exhausted step, a driver error) are not compacted, so their raw step answers stay for the
   seven-day retention; the person gets no report in those cases.
+- **Decision A (cited-only) limits:** a location suffix typed after the name ("Poke House Austin") is not matched, so an
+  answer that writes just "Poke House" counts as cited-only when the site is cited; the summary and explainer say
+  "the name as typed did not appear". Only the executive card has a render test: the export text, the header and
+  sidebar badges (covered by helper-level tests) and the matrix note have none. Competitor matchers built from a name
+  with a legal suffix get the same two-word core as the client. The multi-engine path is not exercised (only Gemini can
+  be faked).
 - **Readiness `recent trouble` (step g, first slice) limits:** it only reaches the daily live check when the owner adds
   the two repository secrets (PROGRAM O-3 step 4), and production has no sign-in at all until O-3 step 1 is done, so
   today the daily run warns that it was skipped and nothing alerts anyone about failed audits. It reads the last 24

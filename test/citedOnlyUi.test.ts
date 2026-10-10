@@ -27,7 +27,7 @@ const base: any = {
 const render = (audit: any) => renderToStaticMarkup(React.createElement(ExecutiveSummaryCard, { audit, onNavigate: () => undefined, onDelete: () => undefined } as any));
 
 const current = render({ ...base, observationsCitedOnly: 1, metricVersion: 2 });
-check('a current report with a cited-only answer shows the sub-line and its explainer', [/\+1 cite your site without naming you/.test(current), /A cited source is not a mention/.test(current)], [true, true]);
+check('a current report with a cited-only answer shows the sub-line and its explainer (once as a tooltip, once in the visible text)', [/\+1 cite your site without naming you/.test(current), (current.match(/A cited source is not a mention/g) || []).length], [true, 2]);
 check('...and no old-rule note', /earlier rule/.test(current), false);
 
 const none = render({ ...base, observationsCitedOnly: 0, metricVersion: 2 });
