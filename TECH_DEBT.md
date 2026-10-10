@@ -601,6 +601,34 @@ is a labelled golden set of real answers with precision/recall asserted in CI,
 and an explicit decision on whether one *batched* extraction call per audit is
 worth its cost (roadmap item 6).
 
+### 2.6d Vendor-name discovery still truncates some names (low-medium)
+
+Found in the 2026-10-09 independent review. Accented Latin, Cyrillic and Greek
+names are now discovered whole, Latin brands inside Chinese, Japanese and Korean
+text are found without absorbing the surrounding characters, and word boundaries
+in the brand matcher use the same script-aware class instead of ASCII `\b` (so
+"Nestléx" no longer matches "Nestlé"). A brand's label is kept exactly as typed;
+matching uses its composed (NFC) form; an underscore stays a word character, so
+`adyen_token` is code and not a mention. **Still true:**
+
+- Hyphenated names and names with a leading digit are cut ("Coca-Cola" becomes
+  "Coca", "Mercedes-Benz" "Mercedes", "Studio 54 Fitness" "Studio", "3M" is
+  dropped). Same class of defect as the accents; not fixed here. Add such a rival
+  as a tracked competitor and it is measured correctly.
+- Vendors written in CJK, Arabic or other caseless scripts are never discovered
+  (there is no capital letter to anchor on); tracked competitors still are.
+- Turkish dotted İ does not survive lower-casing in the matcher, so a discovered
+  name containing it is dropped at scoring time (a missed rival, not a fabricated
+  one). Title-case letters (U+01C5) are not capitals to the discovery pattern.
+- A client typed without accents ("Nestle") does not match "Nestlé" in answers.
+- A mixed-script look-alike ("Stripe" with a Cyrillic е) is a separate candidate
+  from "Stripe"; invisible variation selectors can split one name into two (both
+  collapse later in `dedupeMatchers`).
+- Answer text is compared in NFC, so an excerpt of a decomposed answer is cut from
+  the composed copy and is not a byte-for-byte slice of the stored text.
+- Extraction is quadratic on a single very long line (about 9 s for 200 KB of
+  table cells, unchanged by the Unicode work); real answers are far smaller.
+
 ### 2.6c Two-character brands: acronyms are measured, other short names are not (medium)
 
 Found in the 2026-10-09 independent review. Every brand token under three
