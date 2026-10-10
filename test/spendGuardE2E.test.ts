@@ -119,6 +119,7 @@ async function main() {
     check('with a cap of 2, exactly 2 requests reached Gemini', cappedMade, 2);
     check('...the counter says 2 of a cap of 2', [(await status(capped)).spend.geminiCallsToday, (await status(capped)).spend.geminiDailyCap], [2, 2]);
     check('...the measured part is kept and the missing analysis says why, in a sentence', [cappedReport?.degraded !== true, cappedReport?.narrativeAvailable, /at most 2 .* calls a day \(UTC\)/.test(cappedReport?.narrativeNote || '')], [true, false, true]);
+    check('...and the note is a run of whole sentences (no run-on after the cap sentence, no double stop)', [/GEMINI_DAILY_CALL_CAP\. Visibility, share of voice/.test(cappedReport?.narrativeNote || ''), /\.\./.test(cappedReport?.narrativeNote || '')], [true, false]);
     const hitsAfter = fake.hits();
     await runAudit(capped);
     check('once the cap is reached no further request is made at all', fake.hits() - hitsAfter, 0);

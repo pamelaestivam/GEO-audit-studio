@@ -20,6 +20,7 @@ import {
 import {
   computeQuotaCooldownMs,
   describeProviderError,
+  endSentence,
   formatDuration,
   summariseFailures,
   type ReadableError,
@@ -107,7 +108,7 @@ function noEngineReason(consequence: string): string {
 }
 
 async function buildApp() {
-  // Misconfigured spend settings must not be silent: an unreadable cap means NO cap, and anything but 1 means paid engines stay off.
+  // Misconfigured spend settings must not be silent: an unreadable cap blocks every Gemini call (and is reported), and anything but 1 means paid engines stay off.
   if (capProblem(process.env)) console.warn(`[config] ${capProblem(process.env)}`);
   if ((process.env.ALLOW_PAID_ENGINES ?? '') !== '' && process.env.ALLOW_PAID_ENGINES !== '1') {
     console.warn(`[config] ALLOW_PAID_ENGINES=${JSON.stringify(process.env.ALLOW_PAID_ENGINES)} is ignored: only the value 1 switches paid engines on.`);
@@ -1596,7 +1597,7 @@ Return valid JSON matching the schema.`;
               engine: ev.engine,
               status: 'retrieval_failed',
               position: null,
-              excerpt: `No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}. This query was excluded from all metrics.`,
+              excerpt: `${endSentence(`No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}`)} This query was excluded from all metrics.`,
               citations: [],
             };
             continue;
@@ -1729,7 +1730,7 @@ Return valid JSON matching the schema.`;
         narrativeAvailable,
         narrativeNote: narrativeAvailable
           ? undefined
-          : `${narrativeFailure} Visibility, share of voice and the evidence below are measured; accuracy, omissions and the remediation plan were not assessed. Re-run the audit to try again.`,
+          : `${endSentence(narrativeFailure)} Visibility, share of voice and the evidence below are measured; accuracy, omissions and the remediation plan were not assessed. Re-run the audit to try again.`,
 
         queriesTested,
         inaccuracies,

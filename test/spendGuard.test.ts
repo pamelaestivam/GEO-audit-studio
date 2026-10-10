@@ -4,6 +4,7 @@
  */
 import { paidEnginesAllowed, paidEnginesBlocked, dailyCallCap, capProblem, CallCounter, capReachedMessage } from '../src/spendGuard';
 import { configuredEngines } from '../src/providers';
+import { endSentence } from '../src/errors';
 import { paidEngineNotice } from '../src/statusView';
 
 let failures = 0;
@@ -69,8 +70,9 @@ for (let d = 0; d < 12; d++) {
   counter.record();
 }
 check('old days are dropped (memory stays bounded)', (counter as any).byDay.size <= 7, true);
-check('the cap sentence says what happened, what was kept and what to do', /at most 2 .* calls a day \(UTC\).*already measured are kept.*GEMINI_DAILY_CALL_CAP$/.test(capReachedMessage(2)), true);
-check('...with singular wording for one call and no trailing full stop to double up', [/at most 1 answer-engine call a day/.test(capReachedMessage(1)), capReachedMessage(2).endsWith('.')], [true, false]);
+check('the cap sentence says what happened, what was kept and what to do', /at most 2 .* calls a day \(UTC\).*already measured are kept.*GEMINI_DAILY_CALL_CAP\.$/.test(capReachedMessage(2)), true);
+check('...with singular wording for one call, ending in a full stop', [/at most 1 answer-engine call a day/.test(capReachedMessage(1)), capReachedMessage(2).endsWith('.')], [true, true]);
+check('joining messages never runs them together or doubles the stop', [endSentence('limit reached'), endSentence('limit reached.'), endSentence('about 2h remaining)'), endSentence('really?'), endSentence('  '), endSentence(capReachedMessage(2)) === capReachedMessage(2)], ['limit reached.', 'limit reached.', 'about 2h remaining).', 'really?', '', true]);
 
 // ---- the notice ---------------------------------------------------------------------------
 check('no notice when nothing is blocked or unknown', [paidEngineNotice([]), paidEngineNotice(null), paidEngineNotice(undefined)], [null, null, null]);

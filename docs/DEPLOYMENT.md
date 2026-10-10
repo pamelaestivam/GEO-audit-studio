@@ -116,7 +116,7 @@ own deployment (section 6).
 | `DATA_DIR` | yes for durability | Directory for the SQLite file. Unset = nothing is saved |
 | `PERPLEXITY_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | no | Adds a PAID engine, but only together with `ALLOW_PAID_ENGINES=1`; a key alone is ignored and `/api/audit/status` lists it under `spend.paidEnginesBlocked`. Each engine multiplies per-audit spend |
 | `ALLOW_PAID_ENGINES` | no (off) | `1` accepts that ChatGPT, Perplexity and Claude cost money per call. Leave unset to stay at $0 |
-| `GEMINI_DAILY_CALL_CAP` | no (none) | A positive whole number: the most Gemini calls this server process makes per UTC day. Counted per process (on serverless each instance counts alone, so the cap is a brake against loops, not a guarantee). The money control is a Google project with no billing account |
+| `GEMINI_DAILY_CALL_CAP` | no (none) | A positive whole number: the most Gemini calls this server process makes per UTC day. **A value that is set but unreadable, including `0`, blocks every Gemini call** (it is reported in `/api/audit/status` as `spend.capProblem` and in the start-up log); it does not mean "off". Leave it unset for no cap. Counted per process (on serverless each instance counts alone, so the cap is a brake against loops, not a guarantee). The money control is a Google project with no billing account |
 | `GEMINI_MODEL` etc. | no | Override a model id without a code change |
 | `USER_AUDITS_PER_DAY` | no (10) | Rolling 24h audits **per access code**. People sharing a code share this allowance; changing the email does not reset it. `0` disables |
 | `GLOBAL_AUDITS_PER_DAY` | no (100) | Rolling 24h audits for everyone. `0` disables |

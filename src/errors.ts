@@ -198,6 +198,17 @@ function modelEnvFor(provider: string): string {
   return 'GEMINI_MODEL';
 }
 
+/**
+ * Makes a message end like a sentence, once: adds a full stop unless it already ends in . ! or ?, so
+ * joining a message to the next sentence never produces a run-on ("... CAP Visibility ...") or a double
+ * stop ("..CAP.. This query"). Messages come from several places and not all end the same way.
+ */
+export function endSentence(message: string): string {
+  const m = String(message ?? '').trim();
+  if (m === '') return m;
+  return /[.!?]$/.test(m) ? m : `${m}.`;
+}
+
 export function describeProviderError(err: unknown, provider = 'The answer engine'): ReadableError {
   // A circuit-breaker refusal is already a finished, human-readable sentence
   // (built by computeQuotaCooldownMs/formatDuration at trip time). Re-running
