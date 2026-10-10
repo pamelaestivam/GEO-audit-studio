@@ -356,6 +356,10 @@ async function main() {
       apps.push(R1);
       const viaSecond = await login(R1, 'carol@example.com', 'second-code-99');
       check('the second code signs in', viaSecond.status, 200);
+      // The smoke script, pointed at a server that keeps nothing: a readiness check that passed only because it
+      // could not look is a printed warning, never a green line.
+      const smokeMemory = await runSmoke(R1.base, ['--email', 'smoke@example.com', '--code', TEST_ACCESS_CODE]);
+      assert('the smoke script prints a warning, not a pass, for the recent-trouble check on a server that keeps nothing', /warn {2}readiness: recent trouble was NOT verified/.test(smokeMemory.out) && !/pass {2}readiness: recent trouble/.test(smokeMemory.out), smokeMemory.out.slice(-800));
       await stopApp(R1);
       const R2 = await startApp({ ACCESS_CODES: TEST_ACCESS_CODE }, R1.port);
       if (R2) {

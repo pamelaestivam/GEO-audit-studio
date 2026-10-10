@@ -757,7 +757,8 @@ those files is a re-run, not a regression, but it must be recorded here.
   by when they ENDED; a fault stays red for up to 24 hours after it is fixed (every Production deployment re-runs the
   live check and adds a comment to the one open issue; there is no acknowledge), and a durable database that holds
   older error rows with no failure code (from before codes existed) would read them as "ended without a recorded
-  reason" for the first day after an upgrade. A hung server-driven audit is reaped as "took too long", which is
+  reason" for the first day after an upgrade. A job failed at start-up because it had no plan carries the code `restarted`, which is
+  counted as expected, not a fault. A hung server-driven audit is reaped as "took too long", which is
   counted as expected; counts alone cannot tell it from an abandoned tab. The detail goes to any signed-in user
   (counts, kind labels and one incident sentence; no ids, names or provider payloads); an incident sentence is built
   from step keys and describeProviderError text only. The page that shows the owner the list is not built. It reads the newest 200 incidents; above that a burst of

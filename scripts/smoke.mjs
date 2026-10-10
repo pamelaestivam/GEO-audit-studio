@@ -103,7 +103,12 @@ try {
       check('saved audits can be listed', list.status === 200 && Array.isArray(list.json?.audits), `status ${list.status}`);
       const ready = await get('/api/audit/readiness', { headers: auth, signal: AbortSignal.timeout(90000) }); // makes a real model call
       check('deep readiness answers', ready.status === 200 && Array.isArray(ready.json?.checks), `status ${ready.status}: ${ready.text.slice(0, 120)}`);
-      for (const c of ready.json?.checks || []) check(`readiness: ${c.name}${c.verified ? '' : ' (not verified by a live call)'}`, c.ok, c.detail);
+      for (const c of ready.json?.checks || []) {
+        // A check that passed only because it could not look (a key that is set but not called, a store that keeps
+        // nothing) is a warning, never a green line: it is printed on every run and does not fail the run.
+        if (c.ok && c.verified === false) console.log(`warn  readiness: ${c.name} was NOT verified by a live call or a record: ${c.detail}`);
+        else check(`readiness: ${c.name}`, c.ok, c.detail);
+      }
     }
   } else {
     console.log('skip  signed-in checks (pass --email and --code to include them, and the live Gemini readiness call)');
