@@ -10,6 +10,13 @@ how often your brand is named, where, and who is named instead. The counting is
 plain code, not a model's opinion, so the same answers always give the same
 numbers.
 
+The figures come from the engines' **developer APIs** (with web search switched
+on), asked once, at the moment shown on the report. That is not what people see
+in the ChatGPT, Gemini, Claude or Perplexity apps, which can use other models and
+personalise by account and location, and a repeat run can name different brands.
+Treat a score as a rough reading of how the engine answered *these* questions
+*this* time, not as your rank in the apps.
+
 It does **not** tell you why an engine said what it said, predict traffic, or
 measure whether a fix works. The inaccuracy, omission and remediation sections
 are a model's reading of the evidence: useful leads, not measurements.

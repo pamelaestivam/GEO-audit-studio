@@ -12,8 +12,9 @@ step that would confirm it.
 
 ## 0. Who the "agents" are
 
-There are no agent definition files in this repo (no `.claude/agents`, no
-subagent configs). The "agents" are the four standing **seats** in
+(Written before `.claude/agents/` existed - it now holds `adversarial-reviewer`,
+`eval-pm` and `ux-tourist`, which are prompts a session invokes as sub-agents, not
+independent services.) The four standing **seats** in
 `docs/TEAM_CHARTER.md`, which one Claude session adopts as thinking lenses -
 not separate processes or models:
 
