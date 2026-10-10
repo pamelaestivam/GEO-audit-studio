@@ -124,6 +124,13 @@ export interface AuditReport {
   leaderShare: number; // % of queries where business was #1 recommended
   /** % of mentioning answers with no flagged inaccuracy. null when the brand was never mentioned. */
   accuracyRate: number | null;
+  /** Model id each measured engine was queried with, e.g. { Gemini: 'gemini-3.6-flash' }. */
+  engineModels?: Record<string, string>;
+  /** Questions that produced at least one usable answer (the independent readings). */
+  questionsAnswered?: number;
+  /** First and last time a measured answer was captured (ISO). */
+  answersCapturedFrom?: string;
+  answersCapturedTo?: string;
   /** Model-reported inaccuracy claims that could not be tied to a captured answer and were left out. */
   inaccuraciesDiscarded?: number;
   executiveSummary: string;

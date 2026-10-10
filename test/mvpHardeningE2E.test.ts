@@ -118,6 +118,8 @@ async function startApp(extraEnv: Record<string, string> = {}): Promise<App | nu
       OPENAI_API_KEY: '',
       PERPLEXITY_API_KEY: '',
       ANTHROPIC_API_KEY: '',
+      // The stamp tests below need the default model whatever the shell has set.
+      GEMINI_MODEL: '',
       ...extraEnv,
     },
     stdio: 'ignore',
@@ -193,6 +195,17 @@ async function main() {
     check('share of voice is 1 of 3 vendors, not 1 of 16', report?.shareOfVoice, 33);
     check('the visibility numerator is reported, so the UI can show "1 of 1"', report?.observationsMentioned, 1);
     check('the visibility denominator is reported', report?.observationsWithEvidence, 1);
+    check('the report records the model each measured engine was queried with', report?.engineModels, { Gemini: 'gemini-3.6-flash' });
+    {
+      const custom = await startApp({ GEMINI_MODEL: 'gemini-custom-override' });
+      if (custom) {
+        procs.push(custom.proc);
+        const r = (await runAudit(custom, POKE)).final?.report;
+        check('GEMINI_MODEL overrides the model, and the report names the one actually used', r?.engineModels, { Gemini: 'gemini-custom-override' });
+      }
+    }
+    check('the report records how many questions actually produced an answer (the independent readings)', report?.questionsAnswered, 1);
+    check('the report records when the answers were captured', typeof report?.answersCapturedFrom === 'string' && !Number.isNaN(Date.parse(report.answersCapturedFrom)), true);
 
     // --- Blank optional fields stay blank, never guessed ------------------
     check('blank core offerings stay blank', report?.coreOfferings, '');

@@ -95,6 +95,27 @@ export function configuredEngines(): EngineName[] {
  * failed lookup on the retirement date. Override with ANTHROPIC_MODEL.
  */
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+export const DEFAULT_OPENAI_MODEL = 'gpt-5';
+export const DEFAULT_PERPLEXITY_MODEL = 'sonar';
+
+/**
+ * The model id an engine is queried with: the single definition used both to
+ * make the call and to stamp the report, so the report cannot name a model the
+ * call did not use.
+ */
+export function engineModelId(engine: EngineName): string {
+  switch (engine) {
+    case 'Gemini':
+      return process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+    case 'ChatGPT':
+      return process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+    case 'Perplexity':
+      return process.env.PERPLEXITY_MODEL || DEFAULT_PERPLEXITY_MODEL;
+    case 'Claude':
+      return process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+  }
+}
 
 const ANSWER_SYSTEM_PROMPT =
   'You are an AI search assistant answering a real user question. Search the web and recommend the specific vendors, products or providers that genuinely best answer the question, naming each one explicitly. Do not mention that you are part of an audit.';
@@ -127,7 +148,7 @@ async function askOpenAI(query: string): Promise<EngineAnswer> {
       'https://api.openai.com/v1/responses',
       { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
       {
-        model: process.env.OPENAI_MODEL || 'gpt-5',
+        model: engineModelId('ChatGPT'),
         instructions: ANSWER_SYSTEM_PROMPT,
         input: query,
         tools: [{ type: 'web_search' }],
@@ -184,7 +205,7 @@ async function askPerplexity(query: string): Promise<EngineAnswer> {
       'https://api.perplexity.ai/chat/completions',
       { Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}` },
       {
-        model: process.env.PERPLEXITY_MODEL || 'sonar',
+        model: engineModelId('Perplexity'),
         messages: [
           { role: 'system', content: ANSWER_SYSTEM_PROMPT },
           { role: 'user', content: query },
@@ -229,7 +250,7 @@ async function askAnthropic(query: string): Promise<EngineAnswer> {
         'anthropic-version': '2023-06-01',
       },
       {
-        model: process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL,
+        model: engineModelId('Claude'),
         // Output tokens are the narration, the search queries and the vendor list;
         // retrieved pages are input. 2000 was close to the ceiling for a list-heavy
         // answer, and a truncated answer is now (correctly) a failed lookup.
