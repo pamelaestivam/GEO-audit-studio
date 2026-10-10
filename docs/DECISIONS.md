@@ -24,6 +24,7 @@ not three independent people (see `docs/REVIEW_2026-10-09.md`, Part B 7).
   sub-line ("+2 cite your site without naming you") with a one-line explainer. They
   are never blended. Reports saved before the change used "named or cited"; the
   report gets a `metricVersion` so history is not silently reinterpreted.
+  *Implemented 2026-10-10:* `mentioned` is name-only; `observationsCitedOnly` and a per-answer `citedOnly` flag carry the other number; `metricVersion: 2` marks new reports and older ones say they were measured under the earlier rule; an invariant refuses a report whose named plus cited-only answers exceed the usable answers.
   *Process:* this changes what the product promises a client, so the PR says so in
   its first line and the owner is told in chat before merge.
 - **B. Numbers in written text.** The summary's figures come from a deterministic

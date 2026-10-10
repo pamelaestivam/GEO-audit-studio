@@ -41,7 +41,8 @@ On the first screen:
 
 - **Business, brand name, or website** - required. Type the name people use.
 - **Website domain** - recommended. It lets the audit tell when *your own site*
-  is cited as a source, and helps match shorthand references to your brand.
+  is cited as a source (shown as its own number, never added to your
+  visibility), and helps match shorthand references to your brand.
 - **Industry** - optional. With it, the first standard question becomes a
   **brand-neutral discovery question** ("What are the best *poke restaurants*?")
   - the question that actually tests whether buyers who don't know you are
@@ -80,6 +81,7 @@ spends a request of a shared quota):
 | What you see | What it means |
 |---|---|
 | **GEO Visibility Index** `100 / 100` and *"Named in 2 of 2 answers (Gemini)"* | The share of captured answers that name your brand. The sentence under it is the arithmetic. |
+| *"+2 cite your site without naming you"* under the index | Answers that linked to your website but in which the name you typed did not appear in the text (if engines write your name differently, enter it the way they do). They are **not** in the percentage: a cited source is not a mention. Reports saved before this rule (decision A, 2026-10) counted them, and say so on the report and in the lists of past audits ("· earlier rule"). |
 | *"Only 2 answers: indicative, not a stable rate"* | Under five answers, a percentage is a handful of data points. Add queries before quoting it. |
 | *"All 2 questions name your brand..."* | **Read this before quoting a 100.** If you ask an engine "How much does *X* cost?", it answers about X whatever it thinks of X - so a high score is near-guaranteed. That measures reputation, not discovery. Add a question that does not name you ("best poke in Austin"). |
 | *"Temporary storage: audits are kept only while this server stays awake..."* (amber bar at the top) | This deployment does not keep audits across a reload or restart. Export your report to keep it. It disappears on a deployment with durable storage. |

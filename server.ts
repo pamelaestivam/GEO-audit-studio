@@ -1128,6 +1128,7 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
 
         engineResults[ev.engine] = {
           engine: ev.engine,
+          citedOnly: client?.citedOnly ? true : undefined,
           status: !client || !client.mentioned
             ? 'omitted'
             : client.rank === 1
@@ -1303,10 +1304,10 @@ Competitors the client asked us to track: ${ctx.competitorList.join(', ') || 'no
 Engines actually queried: ${ctx.measuredEngines.join(', ')}
 
 MEASURED RESULTS (computed from captured evidence - do NOT recompute or contradict):
-- Cited in ${ctx.clientScore.timesMentioned} of ${ctx.totalObservations} engine answers (${ctx.clientScore.visibility}% visibility)
+- Named in ${ctx.clientScore.timesMentioned} of ${ctx.totalObservations} engine answers (${ctx.clientScore.visibility}% visibility)
 - Share of voice against every vendor named by the engines: ${ctx.clientScore.shareOfVoice}%
 - Named first in ${ctx.clientScore.timesFirst} answers
-${ctx.domain ? `- Client's own domain cited as a source ${ctx.clientScore.citedAsSourceCount} times` : '- Client website: not given, so whether it is cited was not measured'}
+${ctx.domain ? `- Client's own domain cited as a source ${ctx.clientScore.citedAsSourceCount} times, of which ${ctx.clientScore.citedOnlyCount} in answers that did not name the client (cited-only: a separate number, NOT part of the visibility figure above)` : '- Client website: not given, so whether it is cited was not measured'}
 
 VENDOR SCOREBOARD (all vendors the engines actually named):
 ${ctx.scorecards.map((s: any) => `- ${s.brand}: named in ${s.timesMentioned}/${ctx.totalObservations} answers, ${s.shareOfVoice}% share of voice, first ${s.timesFirst}x`).join('\n')}
