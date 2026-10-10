@@ -354,6 +354,11 @@ async function main() {
     assert('server with two codes starts', !!R1);
     if (R1) {
       apps.push(R1);
+      // With the flag the deployment's known lack of durable storage is a warning in the signed-in check too (it used
+      // to FAIL there, which would have turned the daily check red the day the owner added the sign-in secrets).
+      const smokeFlagged = await runSmoke(R1.base, ['--warn-non-durable', '--email', 'smoke@example.com', '--code', TEST_ACCESS_CODE]);
+      check('--warn-non-durable on a memory-store server: the whole smoke run passes', smokeFlagged.code, 0);
+      assert('...and the storage readiness entry is a printed warning, not a failure', /warn {2}readiness: storage is a known limit/.test(smokeFlagged.out) && !/FAIL {2}readiness: storage/.test(smokeFlagged.out), smokeFlagged.out.slice(-800));
       const viaSecond = await login(R1, 'carol@example.com', 'second-code-99');
       check('the second code signs in', viaSecond.status, 200);
       // The smoke script, pointed at a server that keeps nothing: a readiness check that passed only because it
