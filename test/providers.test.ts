@@ -41,6 +41,19 @@ async function main() {
   delete process.env.OPENAI_MODEL;
   delete process.env.PERPLEXITY_MODEL;
 
+  // ======================= the $0 guard sits in front of every paid adapter =======================
+  // Without the opt-in a paid engine is never contacted, whatever the caller's engine list says.
+  delete process.env.ALLOW_PAID_ENGINES;
+  let contacted = 0;
+  globalThis.fetch = (async () => {
+    contacted++;
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  const refused = await Promise.all([askEngine('ChatGPT', 'q'), askEngine('Perplexity', 'q'), askEngine('Claude', 'q')]);
+  check('without the opt-in no paid provider is contacted at all', contacted, 0);
+  check('...each says why, in a sentence', refused.every((r) => /paid engine and paid engines are not switched on/.test(r.error || '') && r.answerText === ''), true);
+  process.env.ALLOW_PAID_ENGINES = '1';
+
   // ======================= ChatGPT (OpenAI Responses API) =======================
   stub(200, {
     status: 'completed',

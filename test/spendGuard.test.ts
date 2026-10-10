@@ -2,7 +2,7 @@
  * The $0 guard (src/spendGuard.ts): paid engines are off unless allowed, the per-day call counter and
  * cap, and what configuredEngines() therefore returns. Run with: npx tsx test/spendGuard.test.ts
  */
-import { paidEnginesAllowed, paidEnginesBlocked, dailyCallCap, CallCounter, capReachedMessage } from '../src/spendGuard';
+import { paidEnginesAllowed, paidEnginesBlocked, dailyCallCap, capProblem, CallCounter, capReachedMessage } from '../src/spendGuard';
 import { configuredEngines } from '../src/providers';
 import { paidEngineNotice } from '../src/statusView';
 
@@ -43,7 +43,10 @@ check('a paid key alone and no opt-in leaves no engine at all (not a simulation)
 check('no key, no engine', withEnv({}, configuredEngines), []);
 
 // ---- the daily cap value -----------------------------------------------------------------
-check('no cap unless a positive whole number is given', [dailyCallCap({}), dailyCallCap({ GEMINI_DAILY_CALL_CAP: '' }), dailyCallCap({ GEMINI_DAILY_CALL_CAP: '0' }), dailyCallCap({ GEMINI_DAILY_CALL_CAP: '-5' }), dailyCallCap({ GEMINI_DAILY_CALL_CAP: '2.5' }), dailyCallCap({ GEMINI_DAILY_CALL_CAP: 'lots' })], [null, null, null, null, null, null]);
+check('no cap when none is set', [dailyCallCap({}), dailyCallCap({ GEMINI_DAILY_CALL_CAP: '' })], [null, null]);
+check('a cap that is set but unreadable fails CLOSED (0 calls), never open', ['0', '-5', '2.5', 'lots', '50/day', 'true'].map((v) => dailyCallCap({ GEMINI_DAILY_CALL_CAP: v })), [0, 0, 0, 0, 0, 0]);
+check('...and says so in a sentence', [capProblem({}), capProblem({ GEMINI_DAILY_CALL_CAP: '40' }), /"lots".*not a positive whole number.*no answer-engine calls until the operator fixes it/.test(capProblem({ GEMINI_DAILY_CALL_CAP: 'lots' }) || '')], [null, null, true]);
+check('a zero cap blocks the very first call', new CallCounter().wouldExceed(0), true);
 check('a positive whole number is the cap', dailyCallCap({ GEMINI_DAILY_CALL_CAP: '40' }), 40);
 
 // ---- the counter ---------------------------------------------------------------------------
@@ -66,7 +69,8 @@ for (let d = 0; d < 12; d++) {
   counter.record();
 }
 check('old days are dropped (memory stays bounded)', (counter as any).byDay.size <= 7, true);
-check('the cap sentence says what happened, what was kept and what to do', /at most 2 .* calls a day \(UTC\).*measured results were kept.*GEMINI_DAILY_CALL_CAP/.test(capReachedMessage(2)), true);
+check('the cap sentence says what happened, what was kept and what to do', /at most 2 .* calls a day \(UTC\).*already measured are kept.*GEMINI_DAILY_CALL_CAP$/.test(capReachedMessage(2)), true);
+check('...with singular wording for one call and no trailing full stop to double up', [/at most 1 answer-engine call a day/.test(capReachedMessage(1)), capReachedMessage(2).endsWith('.')], [true, false]);
 
 // ---- the notice ---------------------------------------------------------------------------
 check('no notice when nothing is blocked or unknown', [paidEngineNotice([]), paidEngineNotice(null), paidEngineNotice(undefined)], [null, null, null]);

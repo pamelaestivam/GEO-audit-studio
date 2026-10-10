@@ -57,6 +57,8 @@ async function main() {
   const paidOff = spawnApp(APP_PORT, { OPENAI_API_KEY: 'sk-test-not-real', PERPLEXITY_API_KEY: 'pplx-test-not-real' });
   const paidOn = spawnApp(APP_PORT + 1, { OPENAI_API_KEY: 'sk-test-not-real', ALLOW_PAID_ENGINES: '1' });
   const capped = spawnApp(APP_PORT + 2, { GEMINI_DAILY_CALL_CAP: '2' });
+  const badCap = spawnApp(APP_PORT + 3, { GEMINI_DAILY_CALL_CAP: 'abc' });
+  const paidOnly = spawnApp(APP_PORT + 4, { GEMINI_API_KEY: '', OPENAI_API_KEY: 'sk-test-not-real' });
 
   const status = async (b: string) => (await fetch(`${b}/api/audit/status`)).json();
   async function runAudit(b: string): Promise<any> {
@@ -84,7 +86,7 @@ async function main() {
   try {
     for (let i = 0; i < 80; i++) {
       try {
-        const ups = await Promise.all([paidOff, paidOn, capped].map((b) => fetch(`${b}/api/health`).then((r) => r.ok).catch(() => false)));
+        const ups = await Promise.all([paidOff, paidOn, capped, badCap, paidOnly].map((b) => fetch(`${b}/api/health`).then((r) => r.ok).catch(() => false)));
         if (ups.every(Boolean)) break;
       } catch {
         /* not up yet */
@@ -120,6 +122,21 @@ async function main() {
     const hitsAfter = fake.hits();
     await runAudit(capped);
     check('once the cap is reached no further request is made at all', fake.hits() - hitsAfter, 0);
+    check('hitting our own cap does NOT trip the Google quota breaker (the status still says the quota is available)', (await status(capped)).quota.available, true);
+
+    // ---- an unreadable cap fails closed, loudly
+    const badStatus = await status(badCap);
+    check('an unreadable cap is reported and blocks calls', [badStatus.spend.geminiDailyCap, /"abc".*not a positive whole number/.test(badStatus.spend.capProblem || '')], [0, true]);
+    const hitsBeforeBad = fake.hits();
+    const badReport = await runAudit(badCap);
+    check('...and an audit makes no request at all', fake.hits() - hitsBeforeBad, 0);
+    check('...the person is told why, in a sentence', /not a positive whole number/.test(JSON.stringify(badReport)), true);
+
+    // ---- only a paid key, no opt-in: say what is wrong, not 'add a key'
+    const paidOnlyStatus = await status(paidOnly);
+    check('a paid key alone leaves no engine, and names the switched-off engine', [paidOnlyStatus.engines, paidOnlyStatus.spend.paidEnginesBlocked], [[], ['ChatGPT']]);
+    const paidOnlyReport = await runAudit(paidOnly);
+    check('the audit says the paid engine is switched off and what to do, not just "add a key"', /ChatGPT is set up but switched off.*GEMINI_API_KEY.*ALLOW_PAID_ENGINES=1/.test(JSON.stringify(paidOnlyReport)), true);
   } finally {
     for (const p of apps) p.kill();
     fake.close();

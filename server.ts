@@ -43,7 +43,7 @@ import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import { guardSummary, containsFigure, assertReportInvariants } from './src/reportGuard.js';
-import { CallCounter, dailyCallCap, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
+import { CallCounter, dailyCallCap, capProblem, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
 import {
   askEngine,
   configuredEngines,
@@ -97,11 +97,18 @@ const NARRATIVE_MAX_ANSWERS = Math.max(40, MAX_AUDIT_QUERIES * 4);
  * function, which owns the request/response lifecycle itself and must
  * never call `app.listen`).
  */
+/** Why no engine is available, naming a paid engine that is switched off when that is the cause. */
+function noEngineReason(consequence: string): string {
+  const blocked = paidEnginesBlocked(process.env);
+  if (blocked.length > 0 && !process.env.GEMINI_API_KEY) {
+    return `${blocked.join(' and ')} ${blocked.length > 1 ? 'are' : 'is'} set up but switched off, because paid engines are not switched on for this server, so ${consequence}. Add GEMINI_API_KEY (free tier) or set ALLOW_PAID_ENGINES=1 (costs money).`;
+  }
+  return `No answer engine is configured, so ${consequence}. Add an engine API key.`;
+}
+
 async function buildApp() {
   // Misconfigured spend settings must not be silent: an unreadable cap means NO cap, and anything but 1 means paid engines stay off.
-  if ((process.env.GEMINI_DAILY_CALL_CAP ?? '') !== '' && dailyCallCap(process.env) === null) {
-    console.warn(`[config] GEMINI_DAILY_CALL_CAP=${JSON.stringify(process.env.GEMINI_DAILY_CALL_CAP)} is not a positive whole number, so NO daily call cap is in force.`);
-  }
+  if (capProblem(process.env)) console.warn(`[config] ${capProblem(process.env)}`);
   if ((process.env.ALLOW_PAID_ENGINES ?? '') !== '' && process.env.ALLOW_PAID_ENGINES !== '1') {
     console.warn(`[config] ALLOW_PAID_ENGINES=${JSON.stringify(process.env.ALLOW_PAID_ENGINES)} is ignored: only the value 1 switches paid engines on.`);
   }
@@ -353,6 +360,12 @@ async function buildApp() {
   /** Thrown when the circuit breaker refuses a call - carries the reason directly. */
   /** Calls this process has made to Gemini, per UTC day (a safeguard, not the money control: see src/spendGuard.ts). */
   const geminiCalls = new CallCounter();
+  /** The refusal to make one more Gemini call under the operator's cap, or null when a call may be made. */
+  function capRefusal(): Error | null {
+    const cap = dailyCallCap(process.env);
+    if (!geminiCalls.wouldExceed(cap)) return null;
+    return new CallCapReachedError(capProblem(process.env) ?? capReachedMessage(cap as number));
+  }
   class CallCapReachedError extends Error {
     constructor(message: string) {
       super(message);
@@ -391,6 +404,10 @@ async function buildApp() {
       );
     }
 
+    // Refuse BEFORE queueing: a call that will be refused must not first wait out the pacing delay.
+    const early = capRefusal();
+    if (early) throw early;
+
     let attempt = 0;
     let rateLimitWaits = 0;
 
@@ -409,8 +426,8 @@ async function buildApp() {
           }
           // The operator's daily safety cap on Gemini calls (src/spendGuard.ts): checked and counted
           // right where the call is made, so no code path can spend around it.
-          const cap = dailyCallCap(process.env);
-          if (geminiCalls.wouldExceed(cap)) throw new CallCapReachedError(capReachedMessage(cap as number));
+          const refusal = capRefusal();
+          if (refusal) throw refusal;
           geminiCalls.record();
           return aiInstance.models.generateContent(params);
         });
@@ -545,6 +562,7 @@ async function buildApp() {
         paidEnginesBlocked: paidEnginesBlocked(process.env),
         geminiCallsToday: geminiCalls.today(),
         geminiDailyCap: dailyCallCap(process.env),
+        capProblem: capProblem(process.env),
         scope: 'this server instance only',
       } satisfies SpendStatus,
     });
@@ -999,7 +1017,7 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
         return res.status(503).json({
           error: others.length
             ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured.`
-            : 'No answer engine is configured, so this query cannot be measured.',
+            : noEngineReason('this query cannot be measured'),
         });
       }
       if (engines.length === 0) {
@@ -1437,7 +1455,7 @@ Return valid JSON matching the schema.`;
         const others = engines.filter((e) => e !== 'Gemini');
         const reason = !ai && others.length
           ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured. Nothing was measured.`
-          : 'No answer engine is configured, so nothing could be measured. Add an engine API key and re-run.';
+          : noEngineReason('nothing could be measured') + ' Fix that and re-run.';
         return {
           report: {
             ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),

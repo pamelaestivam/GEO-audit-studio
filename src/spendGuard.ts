@@ -37,12 +37,26 @@ export function paidEnginesBlocked(env: Env): EngineName[] {
   return PAID_ENGINES.filter((e) => !!env[KEY_VAR[e]]);
 }
 
-/** The cap on Gemini calls per UTC day, or null for none. Anything that is not a positive whole number means none. */
+/**
+ * The cap on Gemini calls per UTC day: null when none is set, the number when it is a positive whole
+ * number, and 0 (no calls at all) when something is set but cannot be read ("0", "abc", "-1", "50/day").
+ * An operator who typed a cap wants a limit; silently running with none would be the wrong way to fail
+ * for a $0 directive. `capProblem` says which case it is.
+ */
 export function dailyCallCap(env: Env): number | null {
   const raw = env.GEMINI_DAILY_CALL_CAP;
   if (raw === undefined || raw === '') return null;
   const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/** A sentence when GEMINI_DAILY_CALL_CAP is set but unreadable (calls are then blocked), else null. */
+export function capProblem(env: Env): string | null {
+  const raw = env.GEMINI_DAILY_CALL_CAP;
+  if (raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n > 0) return null;
+  return `GEMINI_DAILY_CALL_CAP is set to ${JSON.stringify(raw)}, which is not a positive whole number, so this server makes no answer-engine calls until the operator fixes it.`;
 }
 
 /** Counts calls per UTC calendar day. Holds the last few days only. */
@@ -74,7 +88,7 @@ export class CallCounter {
 
 /** The sentence a person reads when the cap stops a call. */
 export function capReachedMessage(cap: number): string {
-  return `This server is set to make at most ${cap} answer-engine calls a day (UTC), and that limit has been reached. The measured results were kept; try again after 00:00 UTC, or ask the operator to raise GEMINI_DAILY_CALL_CAP.`;
+  return `This server is set to make at most ${cap} answer-engine ${cap === 1 ? 'call' : 'calls'} a day (UTC), and that limit has been reached. Results already measured are kept; try again after 00:00 UTC, or ask the operator to raise GEMINI_DAILY_CALL_CAP`;
 }
 
 /** What /api/audit/status says about spending. */
@@ -82,6 +96,8 @@ export interface SpendStatus {
   paidEnginesBlocked: EngineName[];
   geminiCallsToday: number;
   geminiDailyCap: number | null;
+  /** Set when GEMINI_DAILY_CALL_CAP is unreadable (calls are blocked). */
+  capProblem: string | null;
   /** The counter lives in this process only. */
   scope: 'this server instance only';
 }

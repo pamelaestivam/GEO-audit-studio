@@ -317,6 +317,10 @@ async function askAnthropic(query: string): Promise<EngineAnswer> {
 
 /** Query one non-Gemini engine. Gemini is handled in server.ts via its SDK. */
 export async function askEngine(engine: EngineName, query: string): Promise<EngineAnswer> {
+  // Defence in depth: whatever the caller's engine list says, a paid engine is never contacted without the opt-in.
+  if (engine !== 'Gemini' && !paidEnginesAllowed(process.env)) {
+    return { engine, answerText: '', citations: [], searchQueries: [], error: `${engine} is a paid engine and paid engines are not switched on for this server.` };
+  }
   switch (engine) {
     case 'ChatGPT':
       return askOpenAI(query);
