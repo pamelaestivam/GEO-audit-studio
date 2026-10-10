@@ -303,11 +303,12 @@ async function main() {
       })
     );
     await noEnginePage.goto(BASE);
-    await noEnginePage.waitForSelector('#run-new-audit-btn');
-    await noEnginePage.click('#run-new-audit-btn');
-    assert('with no engine configured the modal says nothing can be measured', await appears(noEnginePage, '[data-testid=no-engine-notice]'));
-    assert('...and the button that would start an audit is disabled, not a dead click', await noEnginePage.locator('.fixed button:has-text("Generate Viewer-Intent Queries")').isDisabled());
-    assert('...and the durable-storage notice is absent (storage is fine here)', (await noEnginePage.locator('[data-testid=storage-notice]').count()) === 0);
+    await signIn(noEnginePage, 'tester@example.com', TEST_ACCESS_CODE);
+    await noEnginePage.waitForSelector('#business-name-input');
+    await noEnginePage.fill('#business-name-input', 'Acme Bowls');
+    assert('with no engine configured the form says nothing can be measured', await appears(noEnginePage, '[data-testid=no-engine-notice]'));
+    assert('...and the run button is disabled even though a business name is entered, not a dead click', await noEnginePage.locator('button:has-text("Run Live GEO Search Audit")').isDisabled());
+    assert('...and the temporary-storage notice is absent (storage is fine here)', (await noEnginePage.locator('[data-testid=storage-notice]').count()) === 0);
     await noEnginePage.close();
 
     await ctx.close();
