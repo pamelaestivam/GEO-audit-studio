@@ -154,3 +154,9 @@ CI it ran under had already exercised) and #37 (the earlier record) are merged. 
 trigger on a finished **Production** deployment is now observed: Vercel's bot fired `live-check` on
 `main` after the merges of #33 and #34 (both runs executed and failed on the same two configuration
 checks, as expected). Dependabot opens a pull request per pinned action monthly.
+
+**Step e planned (docs/PLAN_STEP_E.md):** a read-only planning pass sliced the step-wise audit into seven
+small PRs with a boundary test each (counting real fake-Gemini hits, as `quotaEfficiencyE2E` does), the
+risks, and a list of what must not be claimed or built without the durable store or the owner. Its
+honest conclusion: on Vercel with memory-only storage the step-wise design makes a lost audit visible
+(a sentence, never a hang or a zero) but cannot make it recoverable; that is row 8 (Supabase, owner O-4).
