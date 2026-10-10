@@ -745,13 +745,24 @@ those files is a re-run, not a regression, but it must be recorded here.
   summary text carries the rows. The export wiring itself (modal calling `notCountedExportText`) has no browser test.
 - **The $0 guard counts per process.** `GEMINI_DAILY_CALL_CAP` and the call counter live in memory of one server process; on Vercel each function instance counts alone, so a cap is a brake against loops, not a ceiling on the day's spend, and a restart resets it. The money control is a Google project with no billing account (owner action O-2), which the app cannot see. A durable counter needs the database (PROGRAM row 8).
 - **Browser coverage:** the summary-note line on screen and in the export has no browser test.
+- **Step e engine (slice S3) limits:** engines now run one after another within a question (one step each),
+  where they used to run in parallel; with only Gemini (the free engine) nothing changes, and with several paid
+  engines a question takes longer. A crash between saving the audit and marking the job done can, on resume,
+  save a second copy under a new id (slice S5 should store the finished report on the finish step first). The
+  incident for a late result that was refused (a step taken over while still working) cannot be reached by the
+  inline driver and has no end-to-end test until the client driver (S4) can run two advances at once. While
+  collecting, the heartbeat is touched once per step, not during a long step.
 - **Step e store (slice S2) limits:** a held database writer lock blocks the whole Node process for up to the
   5 s `busy_timeout` (the sqlite calls are synchronous) and then surfaces as a typed `StoreBusyError`
   (`store_busy`), which the server must turn into a sentence (S3/S4). `repeatedCalls` is a lower bound (a
   collector can also retry inside one step). A crash between receiving `exhausted` and closing the job is
   repaired by the next claim reporting it again, not by the store: the engine or the S5 sweeper must close the
-  job. Start-up retries `journal_mode = WAL` and the migrations for about five seconds when several processes
-  open one file together.
+  job. Start-up retries only the `journal_mode = WAL` switch (about two seconds, because SQLite refuses it
+  at once when another process holds the file); the migrations wait on the writer lock instead. Only the
+  `BEGIN IMMEDIATE` paths raise the typed `StoreBusyError`; the plain writes (`updateJob`, `touchJob`,
+  `markCallStarted`, `completeStep`) can still raise a raw 'database is locked'. A late result from a holder
+  whose step was already taken over is refused by design (fencing): the engine must record that as an incident,
+  not drop it silently (S3).
 - **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
   no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and
   slice) has no test that fails if removed; three components each poll the status endpoint.

@@ -93,7 +93,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `claimed` and one `busy`; an expired lease is reclaimed with attempt 2; a fourth claim is `exhausted`;
    a double `completeStep` stores one result; steps survive closing and reopening a real SQLite file.
    Nothing in the server uses it yet.
-3. **S3 engine and inline driver (behaviour-preserving).** `/api/audit/run` plans and creates the
+3. **S3 engine and inline driver (behaviour-preserving).** *Delivered 2026-10-10 except the additive GET fields (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`), which move to S4 where the client first needs them; `phase` and a heartbeat are already stored on the job.* `/api/audit/run` plans and creates the
    planned job, then loops `advanceJob` in-process; `runJob` is removed; the GET view gains additive
    fields (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). Keep the
    late-finish-after-reap behaviour (the foundation E2E check "a job reaped as stuck that later finishes is

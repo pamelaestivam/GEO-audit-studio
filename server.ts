@@ -32,7 +32,7 @@ import {
   userFromEmail,
   verifyToken,
 } from './src/auth.js';
-import { openStore, type JobStep, type StoredJob } from './src/store.js';
+import { openStore, type JobStep, type StepCompletion, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import { analyseEvidence, assembleReport, discoverVendors, isUsableEvidence, planAudit } from './src/auditPipeline.js';
@@ -1627,6 +1627,21 @@ Return valid JSON matching the schema.`;
     });
   }
 
+  /**
+   * Store a step's outcome. A refused store means another worker took the step over while this one was still
+   * working (its lease ran out): the late result is not kept, and that is an incident, never a silent drop.
+   */
+  async function completeOrNote(job: StoredJob, step: JobStep, completion: StepCompletion, now: number) {
+    const stored = await store.completeStep(job.id, step.seq, step.attempt, completion, now);
+    if (!stored) {
+      console.warn(`[job ${job.id}] step ${step.key} finished after it had been taken over; its result was not stored.`);
+      await store
+        .recordIncident({ jobId: job.id, at: now, kind: 'lease_expired_midcall', detail: `Step ${step.key} finished after another worker had taken it over, so its result was not stored.` })
+        .catch(() => undefined);
+    }
+    return stored;
+  }
+
   /** Do the work of one claimed step and store its outcome. Throws only for something unexpected. */
   async function runStep(job: StoredJob, plan: StoredAuditPlan, step: JobStep, holder: string, pace: Pace) {
     const steps = await store.getJobSteps(job.id);
@@ -1642,7 +1657,7 @@ Return valid JSON matching the schema.`;
       // one fail the same way a moment later.
       if (skipForBreaker(steps, step, geminiBreaker.isTripped(), geminiPlanned)) {
         if (startsQuestion(steps, step)) console.log(`Stopping after ${queryIndex}/${total} queries: Gemini quota breaker is tripped.`);
-        await store.completeStep(job.id, step.seq, step.attempt, { state: 'skipped', skipReason: 'breaker' }, Date.now());
+        await completeOrNote(job, step, { state: 'skipped', skipReason: 'breaker' }, Date.now());
         return;
       }
       if (startsQuestion(steps, step)) {
@@ -1651,7 +1666,7 @@ Return valid JSON matching the schema.`;
       }
       await store.markCallStarted(job.id, step.seq, holder, step.attempt, Date.now());
       const evidence = await collectEngineEvidence(getGeminiClient(), plan.queryList[queryIndex], step.engine as EngineName);
-      await store.completeStep(job.id, step.seq, step.attempt, { state: 'done', result: evidence }, Date.now());
+      await completeOrNote(job, step, { state: 'done', result: evidence }, Date.now());
       return;
     }
 
@@ -1661,13 +1676,13 @@ Return valid JSON matching the schema.`;
     if (step.kind === 'narrative') {
       await store.updateJob(job.id, { progress: analysingProgress(total) });
       if (!hasUsable) {
-        await store.completeStep(job.id, step.seq, step.attempt, { state: 'skipped', skipReason: 'no_evidence' }, Date.now());
+        await completeOrNote(job, step, { state: 'skipped', skipReason: 'no_evidence' }, Date.now());
         return;
       }
       await pace(600);
       await store.markCallStarted(job.id, step.seq, holder, step.attempt, Date.now());
       const result = await runNarrative(plan, evidenceByQuery);
-      await store.completeStep(job.id, step.seq, step.attempt, { state: 'done', result }, Date.now());
+      await completeOrNote(job, step, { state: 'done', result }, Date.now());
       return;
     }
 
@@ -1680,7 +1695,7 @@ Return valid JSON matching the schema.`;
         ? noEvidencePayload(plan, evidenceByQuery)
         : assemblePayload(plan, evidenceByQuery, narrativeResult?.narrative ?? null, narrativeResult ? narrativeResult.narrativeFailure : 'The analysis step returned nothing usable.');
     await recordFinished(job, payload);
-    await store.completeStep(job.id, step.seq, step.attempt, { state: 'done' }, Date.now());
+    await completeOrNote(job, step, { state: 'done' }, Date.now());
   }
 
   /**
