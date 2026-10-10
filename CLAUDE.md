@@ -325,6 +325,8 @@ have to be rediscovered from scratch, not so it can be skipped.
   calls; two simultaneous advances give one `advanced` and one `busy` and one real call; a job on another
   instance of a stateless deployment is a typed 404; advances are not counted by the per-minute limiter; an
   undriven audit stops holding a concurrent-audit slot (needs a current `dist/`)
+- `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
+  quota-breaker rule (including the several-engine cases no end-to-end test can reach)
 - `npx tsx test/auditStepsE2E.test.ts` — the real built server, a fake Gemini that counts hits, and the real
   SQLite file: an audit's step rows agree with the calls it made (one question = 2 calls and 3 done steps;
   every engine failing = 1 call and a skipped analysis; a forced step exception = a failed step, an incident,

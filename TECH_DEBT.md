@@ -754,6 +754,11 @@ those files is a re-run, not a regression, but it must be recorded here.
   from the one that took the job, so `AuditInterrupted` may be common until the durable database (row 8).
   A page-driven audit that is abandoned still counts toward the daily budget until the reaper stops it (it
   spent nothing, and the reaper marks it not billable after `JOB_MAX_RUN_MS`).
+- **Step e engine (slice S3) tests:** the several-engine path (steps for each paid engine, one after another) has
+  no end-to-end test because only Gemini can be faked; `planSteps`, the ordering and the breaker rule have unit
+  tests (`test/auditSteps.test.ts`). `closeJobAfterFailedStep` (a claim reporting an exhausted or failed step) cannot
+  be reached by the inline driver, whose own exceptions end the audit in `advanceJob`; it is covered when the
+  client driver or the sweeper can re-claim (S4, S5).
 - **Step e engine (slice S3) limits:** engines now run one after another within a question (one step each),
   where they used to run in parallel; with only Gemini (the free engine) nothing changes, and with several paid
   engines a question takes longer. A crash between saving the audit and marking the job done can, on resume,

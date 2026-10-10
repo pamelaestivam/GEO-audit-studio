@@ -8,6 +8,8 @@ sections 1, 2, 6, 7. Mandate: `docs/OWNER_DIRECTIVES.md` (D-1 $0, D-2 must not f
 
 ## What is true today (the reasons for the design)
 
+*(Written before S1 to S3. S3 replaced `performAudit` and `runJob` with `advanceJob` and an inline driver; the reasons below are why.)*
+
 - `POST /api/audit/run` creates a job and then runs `void runJob(...)` after answering 202
   (`server.ts`, search `void runJob`). On Vercel the function can be frozen or killed after it
   responds, and each poll may reach a different instance, so work "after the response" is the
@@ -99,7 +101,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    late-finish-after-reap behaviour (the foundation E2E check "a job reaped as stuck that later finishes is
    still recorded", `test/foundationE2E.test.ts` near line 661, must pass untouched). Boundary test (`test/auditStepsE2E.test.ts`): a 1-query audit makes exactly 2 fake
    Gemini hits and the SQLite file holds 3 `done` steps with `attempt=1`.
-4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** *Delivered 2026-10-10 except: the Gemini HTTP timeout and `vercel.json` `maxDuration` (neither has a principled value until the owner reports the real function limit, O-3; recorded in TECH_DEBT), and `repeatedCalls`/`callsMade` are reported as 'at least' (a collector can retry inside a step).* `AUDIT_DRIVER=client`:
+4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** The GET job view also gains the additive fields deferred from S3 (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). `AUDIT_DRIVER=client`: *Delivered 2026-10-10 except: the Gemini HTTP timeout and `vercel.json` `maxDuration` (neither has a principled value until the owner reports the real function limit, O-3; recorded in TECH_DEBT), and `repeatedCalls`/`callsMade` are reported as 'at least' (a collector can retry inside a step).* `AUDIT_DRIVER=client`:
    `POST /api/audit/job/:id/advance` returns the view plus `outcome advanced | busy | finished | wait`
    and `nextStepAfterMs`; 404 `job_not_found`; `src/auditClient.ts` branches on the driver the 202
    returns and throws `AuditInterrupted`; exempt `/api/audit/job/*` from `spendLimiter`; make

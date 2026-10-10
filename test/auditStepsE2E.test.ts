@@ -67,6 +67,8 @@ async function main() {
   };
   const normal = start(APP_PORT);
   const broken = start(APP_PORT + 1, { AUDIT_FORCE_STEP_EXCEPTION: 'narrative' });
+  // Its own server: a tripped quota breaker lasts until the provider's daily reset and would taint every later audit.
+  const quota = start(APP_PORT + 2);
 
   async function runAudit(base: string, queries: any[]): Promise<{ jobId: string; job: any }> {
     const started = await fetch(`${base}/api/audit/run`, {
@@ -99,7 +101,7 @@ async function main() {
   try {
     for (let i = 0; i < 80; i++) {
       try {
-        if ((await fetch(`${normal.base}/api/health`)).ok && (await fetch(`${broken.base}/api/health`)).ok) break;
+        if ((await fetch(`${normal.base}/api/health`)).ok && (await fetch(`${broken.base}/api/health`)).ok && (await fetch(`${quota.base}/api/health`)).ok) break;
       } catch {
         /* not up yet */
       }
@@ -142,6 +144,23 @@ async function main() {
     check('...the broken step is recorded as failed with a code, and the finish was not reached', r.steps.map((s) => [s.key, s.state, s.error_code]), [['collect:0:Gemini', 'done', null], ['narrative', 'failed', 'step_exception'], ['finalize', 'pending', null]]);
     check('...an incident is recorded for the owner, in a sentence', r.incidents.map((i) => [i.kind, /^Step narrative failed: /.test(i.detail)]), [['step_exception', true]]);
     check('...it is not billable, and only the one answer call was spent (the analysis never started)', [r.job.billable, fake.hits() - before], [0, 1]);
+
+    // ---- the daily quota runs out on the first call: the questions not yet started are skipped, not attempted
+    mode = 'daily_quota';
+    before = fake.hits();
+    const three = [...QUERIES, { id: 'q3', intent: 'direct_recommendation', queryText: 'poke house prices', targetPersona: 'Buyer' }];
+    ({ jobId, job } = await runAudit(quota.base, three));
+    r = rows(quota.db, jobId);
+    check('when the daily quota runs out on the first call, only that one call is made', fake.hits() - before, 1);
+    check('...the questions not yet started are skipped for the breaker, and the analysis for lack of evidence', r.steps.map((s) => [s.key, s.state, s.skip_reason]), [
+      ['collect:0:Gemini', 'done', null],
+      ['collect:1:Gemini', 'skipped', 'breaker'],
+      ['collect:2:Gemini', 'skipped', 'breaker'],
+      ['narrative', 'skipped', 'no_evidence'],
+      ['finalize', 'done', null],
+    ]);
+    check('...and the person gets a failed audit that names the quota, not a result', [job.report?.degraded, /quota/i.test(job.report?.degradedReason || ''), r.job.billable], [true, true, 0]);
+    mode = 'ok';
   } finally {
     for (const p of procs) p.kill();
     fake.close();
