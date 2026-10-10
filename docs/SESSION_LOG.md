@@ -188,3 +188,16 @@ The independent review of the store (PR #43) found real faults, all fixed with c
 **Decision A, review round:** the independent review found that a brand typed with a legal suffix ("Acme Analytics, Inc.") that engines write plainly would now be reported as "cited without being named" (the citation used to hide the miss). Fixed two ways: the name without its legal suffix is matched too, and the report sentence and explainer now say only what was measured (the name as typed did not appear in the answer text). Also: past-audit lists now mark scores from the earlier rule (· earlier rule), the oldest reports (no answer count) get the note, the narrative prompt says "Named in" and carries the cited-only split, the matrix cell explains a cited-only answer, the add-a-question endpoint carries the flag, an invariant pairs metricVersion 2 with the cited-only number, and a render test checks the page really shows the sub-line, explainer and note. Still not handled: a location suffix ("Poke House Austin") is not matched; the explainer says why.
 
 **A test that could not fail (found 2026-10-10):** in a full-suite run `quotaBreakerE2E` printed `FAIL  the app server starts against the fake Gemini endpoint` (the server missed its 20-second start window under load) and the suite still exited 0, because `if (!up) return;` inside `main()` skipped the `process.exit(failures ? 1 : 0)` after its try/finally. Eight such early returns in six test files now set `process.exitCode = 1` first, proved with a copy whose server can never start (original exits 0, fixed exits 1), and `test/testHarness.test.ts` fails if a bare `return;` follows a negated check without an exit status (braced or not, checked against fixtures of each shape). The start-up timeout itself is a load flake and is not addressed here.
+
+**Decision A and the harness fix merged; S6 scoped and deferred (2026-10-10):** decision A is on `main` (#49, c09381d)
+after four independent review rounds; the test-harness fix is on `main` (#50, 22f3882): eight early returns in six E2E
+files exited 0 after a failed server start, and `test/testHarness.test.ts` now guards the shape (three adversarial rounds,
+each found real gaps; the guard is a tripwire, its contrived misses are in TECH_DEBT 2.14). One full local run failed once
+in `mvpHardeningE2E` ("Could not reach Gemini") while other commands were running in parallel; it passed alone three
+times and on a clean rerun; the cause was not captured (the suites spawn the server with `stdio: 'ignore'`).
+The daily live check is red on every deployment and that is correct: issue #36 says the production site has no engine key
+and no sign-in configuration (owner actions O-2, O-3). Before building S6 I read the code: the reaper already bounds a
+hung audit on every submit, read and advance, and a shared pacer, breaker and counter need a second process on one file,
+which the boot release forbids. S6 is deferred on purpose (reasons in `docs/PLAN_STEP_E.md` under S6); S7 is next.
+Nothing outward is possible until the owner does O-2 and O-3.
+
