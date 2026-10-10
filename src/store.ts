@@ -114,7 +114,7 @@ export type ClaimResult =
   /** Nothing to claim: the job is finished, failed, unknown, or all its steps are in a final state. */
   | { outcome: 'none' };
 
-export type IncidentKind = 'lease_expired_midcall' | 'step_attempts_exceeded' | 'invariant';
+export type IncidentKind = 'lease_expired_midcall' | 'step_attempts_exceeded' | 'step_exception' | 'invariant';
 
 export interface Incident {
   id: number;
@@ -125,12 +125,17 @@ export interface Incident {
   detail: string;
 }
 
+/** Set on a job the reaper stopped for running too long; see `decideClaim`. */
+export const STUCK_FAIL_CODE = 'stuck';
+/** Set on a job failed at boot because the process that held it is gone (it is not finished by anyone). */
+export const RESTARTED_FAIL_CODE = 'restarted';
+
 /**
  * The one definition of "may this step be claimed now" (both stores call it, so they cannot drift).
  * Steps run in order: only the first step that is not finished is ever considered.
  */
 export function decideClaim(
-  jobStatus: JobStatus | undefined,
+  job: { status: JobStatus; failCode?: string | null } | undefined,
   steps: JobStep[],
   holder: string,
   leaseMs: number,
@@ -138,7 +143,11 @@ export function decideClaim(
   maxAttempts: number
 ): { result: ClaimResult; index: number; patch?: Partial<JobStep> } {
   const none = { result: { outcome: 'none' } as ClaimResult, index: -1 };
-  if (jobStatus !== 'running') return none;
+  // A job the reaper stopped as stuck (`failCode` STUCK_FAIL_CODE) may still be finished by the process that
+  // holds it: the evidence was paid for, and recording a late finish is the existing behaviour. Any other
+  // ended job has nothing to claim.
+  const advanceable = job !== undefined && (job.status === 'running' || (job.status === 'error' && job.failCode === STUCK_FAIL_CODE));
+  if (!advanceable) return none;
   const failed = steps.find((st) => st.state === 'failed');
   if (failed) {
     return { result: failed.errorCode === 'step_attempts_exceeded' ? { outcome: 'exhausted', step: failed } : { outcome: 'failed', step: failed }, index: -1 };
@@ -225,6 +234,11 @@ export interface Store {
   /** Create a job and its ordered steps in one atomic write; the same idempotency rule as createJob. */
   createPlannedJob(job: StoredJob, steps: PlannedStep[]): Promise<void>;
   getJobSteps(jobId: string): Promise<JobStep[]>;
+  /**
+   * Drop the stored answers of a job's finished steps (keep the rows: state, attempts, timings). Called once the
+   * job has its result, so raw answer text is not kept twice and no longer than the result is.
+   */
+  compactJobSteps(jobId: string): Promise<void>;
   /** Claim the next step under a lease. See `decideClaim` for the rules. */
   claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number): Promise<ClaimResult>;
   /**
@@ -395,9 +409,12 @@ export class MemoryStore implements Store {
   async getJobSteps(jobId: string) {
     return (this.steps.get(jobId) || []).map((st) => ({ ...st, result: jsonCopy(st.result) }));
   }
+  async compactJobSteps(jobId: string) {
+    for (const st of this.steps.get(jobId) || []) if (st.state === 'done' || st.state === 'skipped') st.result = undefined;
+  }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
     const list = this.steps.get(jobId) || [];
-    const d = decideClaim(this.jobs.get(jobId)?.status, list, holder, leaseMs, now, maxAttempts);
+    const d = decideClaim(this.jobs.get(jobId), list, holder, leaseMs, now, maxAttempts);
     if (d.patch) Object.assign(list[d.index], d.patch);
     return cloneClaim(d.result);
   }
@@ -460,6 +477,7 @@ export class MemoryStore implements Store {
         j.error = reason;
         j.finishedAt = now;
         j.billable = false;
+        j.failCode = STUCK_FAIL_CODE;
         n++;
       }
     }
@@ -473,6 +491,7 @@ export class MemoryStore implements Store {
         j.error = reason;
         j.finishedAt = now;
         j.billable = false;
+        j.failCode = RESTARTED_FAIL_CODE;
         n++;
       }
     }
@@ -773,11 +792,15 @@ export class SqliteStore implements Store {
   async getJobSteps(jobId: string) {
     return this.db.prepare('SELECT * FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId).map(rowToStep);
   }
+  async compactJobSteps(jobId: string) {
+    this.db.prepare("UPDATE job_steps SET result = NULL WHERE job_id = ? AND state IN ('done', 'skipped')").run(jobId);
+  }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
     return this.immediate(() => {
-      const status = this.db.prepare('SELECT status FROM jobs WHERE id = ?').get(jobId)?.status as JobStatus | undefined;
+      const jr = this.db.prepare('SELECT status, fail_code FROM jobs WHERE id = ?').get(jobId);
+      const jobInfo = jr ? { status: jr.status as JobStatus, failCode: jr.fail_code ?? undefined } : undefined;
       const steps: JobStep[] = this.db.prepare('SELECT * FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId).map(rowToStep);
-      const d = decideClaim(status, steps, holder, leaseMs, now, maxAttempts);
+      const d = decideClaim(jobInfo, steps, holder, leaseMs, now, maxAttempts);
       if (d.patch) {
         const p = d.patch;
         const seq = steps[d.index].seq;
@@ -838,15 +861,15 @@ export class SqliteStore implements Store {
   async failStuck(maxAgeMs: number, reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0 WHERE status = 'running' AND started_at < ?")
-        .run(reason, now, now - maxAgeMs).changes
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running' AND started_at < ?")
+        .run(reason, now, STUCK_FAIL_CODE, now - maxAgeMs).changes
     );
   }
   async failAllRunning(reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0 WHERE status = 'running'")
-        .run(reason, now).changes
+        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running'")
+        .run(reason, now, RESTARTED_FAIL_CODE).changes
     );
   }
   async pruneJobs(beforeMs: number) {

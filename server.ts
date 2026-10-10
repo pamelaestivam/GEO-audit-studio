@@ -32,10 +32,21 @@ import {
   userFromEmail,
   verifyToken,
 } from './src/auth.js';
-import { openStore, type StoredJob } from './src/store.js';
+import { openStore, type JobStep, type StepCompletion, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import { analyseEvidence, assembleReport, discoverVendors, isUsableEvidence, planAudit } from './src/auditPipeline.js';
+import {
+  MAX_STEP_ATTEMPTS,
+  analysingProgress,
+  evidenceByQueryFromSteps,
+  planSteps,
+  queryingProgress,
+  skipForBreaker,
+  startsQuestion,
+  type AuditProgress,
+  type StoredAuditPlan,
+} from './src/auditSteps.js';
 import { CallCounter, dailyCallCap, capProblem, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
 import {
   askEngine,
@@ -108,6 +119,14 @@ async function buildApp() {
   if (process.env.AUDIT_FORCE_INVARIANT_VIOLATION === '1') {
     // A test-only switch: set on a real deployment it makes EVERY audit fail its consistency check. Say so loudly.
     console.warn('[config] AUDIT_FORCE_INVARIANT_VIOLATION=1 is set: every audit will fail its consistency check. This is a test-only switch; unset it.');
+  }
+  if (process.env.AUDIT_FORCE_STEP_EXCEPTION) {
+    const kind = process.env.AUDIT_FORCE_STEP_EXCEPTION;
+    console.warn(
+      ['collect', 'narrative', 'finalize'].includes(kind)
+        ? `[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(kind)} is set: every audit will break at its ${kind} step. This is a test-only switch; unset it.`
+        : `[config] AUDIT_FORCE_STEP_EXCEPTION=${JSON.stringify(kind)} matches no step (use collect, narrative or finalize) and does nothing. It is a test-only switch; unset it.`
+    );
   }
   const app = express();
 
@@ -1188,28 +1207,29 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
     query: any,
     engines: EngineName[]
   ): Promise<QueryEvidence[]> {
-    const tasks = engines.map(async (engine): Promise<QueryEvidence> => {
-      if (engine === 'Gemini') return collectGeminiEvidence(aiInstance, query);
+    return Promise.all(engines.map((engine) => collectEngineEvidence(aiInstance, query, engine)));
+  }
 
-      const answer = await askEngine(engine, query.queryText);
-      // The adapter already worded the failure for this provider; describing it again
-      // flattened every specific reason ("cut off", "declined", "out of credit") to
-      // "unexpected error".
-      if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.rawError || answer.error}`);
-      return {
-        queryId: query.id,
-        queryText: query.queryText,
-        answerText: answer.answerText,
-        citations: answer.citations,
-        searchQueries: answer.searchQueries,
-        capturedAt: new Date().toISOString(),
-        engine,
-        error: answer.error,
-        errorKind: answer.errorKind,
-      };
-    });
+  /** Collect evidence for one query from one engine: one outside call, and the unit of an audit step. */
+  async function collectEngineEvidence(aiInstance: any, query: any, engine: EngineName): Promise<QueryEvidence> {
+    if (engine === 'Gemini') return collectGeminiEvidence(aiInstance, query);
 
-    return Promise.all(tasks);
+    const answer = await askEngine(engine, query.queryText);
+    // The adapter already worded the failure for this provider; describing it again
+    // flattened every specific reason ("cut off", "declined", "out of credit") to
+    // "unexpected error".
+    if (answer.error) console.log(`[${engine}] evidence failed for "${query.queryText}": ${answer.rawError || answer.error}`);
+    return {
+      queryId: query.id,
+      queryText: query.queryText,
+      answerText: answer.answerText,
+      citations: answer.citations,
+      searchQueries: answer.searchQueries,
+      capturedAt: new Date().toISOString(),
+      engine,
+      error: answer.error,
+      errorKind: answer.errorKind,
+    };
   }
 
   /**
@@ -1347,156 +1367,127 @@ Return valid JSON matching the schema.`;
   }
 
   /**
-   * Run a full audit and return the response payload.
-   *
-   * Deliberately separated from the HTTP handler: an audit can take minutes
-   * once engine pacing and quota back-off are involved, and a browser (mobile
-   * Safari especially) aborts a request that long. The endpoint starts this as
-   * a background job and the client polls for the result.
+   * The pieces of an audit. It is planned when it is submitted (planAudit, src/auditPipeline.ts) and run one
+   * step at a time by advanceJob (below): each question and engine is its own step, then the written analysis,
+   * then the finish. The pure parts are in src/auditPipeline.ts and src/auditSteps.ts; these are the parts that
+   * need the engines, the model and the store.
    */
-  /** What an in-flight audit is doing, for the client to display truthfully. */
-  interface AuditProgress {
-    phase: 'querying' | 'analysing';
-    /** Queries fully collected so far. */
-    done: number;
-    total: number;
+
+  /** The report of an audit that could not measure anything at all (no engine, or no analysis key). */
+  function unconfiguredPayload(plan: StoredAuditPlan) {
+    return {
+      report: {
+        ...generateSynthesizedAudit(plan.businessName, plan.cleanDomain, plan.industry, plan.coreOfferings, plan.competitorList, plan.queryList, plan.engines as EngineName[]),
+        degraded: true,
+        degradedReason: plan.unconfigured?.reason,
+      },
+      degraded: true,
+    };
   }
 
-  async function performAudit(
-    req: { body: any },
-    onProgress: (p: AuditProgress) => void = () => {}
-  ): Promise<any> {
-    try {
-      const plan = planAudit(req.body, { fallbackQueries: getFallbackQueries, maxQueries: MAX_AUDIT_QUERIES });
-      if ('error' in plan) return plan;
-      const { businessName, cleanDomain, industry, coreOfferings, targetAudience, competitorList, queryList } = plan;
-
-      const ai = getGeminiClient();
-
-      const engines = configuredEngines();
-
-      if (!ai || engines.length === 0) {
-        const others = engines.filter((e) => e !== 'Gemini');
-        const reason = !ai && others.length
-          ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured. Nothing was measured.`
-          : noEngineReason('nothing could be measured') + ' Fix that and re-run.';
-        return {
-          report: {
-            ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),
-            degraded: true,
-            degradedReason: reason,
-          },
-          degraded: true,
-        };
-      }
-
-      // ---------- Layer 1: collect evidence across every configured engine ----------
-      const evidenceByQuery: QueryEvidence[][] = [];
-      for (let i = 0; i < queryList.length; i++) {
-        // Once quota is known to be exhausted mid-audit, stop immediately
-        // rather than pacing through the remaining queries only to have each
-        // one fail the same way a moment later.
-        if (engines.includes('Gemini') && geminiBreaker.isTripped()) {
-          console.log(`Stopping after ${i}/${queryList.length} queries: Gemini quota breaker is tripped.`);
-          break;
-        }
-        if (i > 0) await delay(1200);
-        onProgress({ phase: 'querying', done: i, total: queryList.length });
-        evidenceByQuery.push(await collectQueryEvidence(ai, queryList[i], engines));
-      }
-      onProgress({ phase: 'analysing', done: queryList.length, total: queryList.length });
-
-      const allEvidence = evidenceByQuery.flat();
-      const usableEvidence = allEvidence.filter(isUsableEvidence);
-
-      if (usableEvidence.length === 0) {
-        // The breaker can trip during query generation, before any per-query
-        // evidence collection even starts - the loop then breaks on its
-        // first check and `allEvidence` stays empty. Evidence errors would
-        // be empty too in that case, and summariseFailures([]) falls back to
-        // a generic "returned no answers" that loses the actual reason. The
-        // breaker's own status is the source of truth whenever it is tripped.
-        const breakerStatus = geminiBreaker.status();
-        const readable = breakerStatus.tripped
-          ? { message: breakerStatus.reason || 'The answer engine quota is exhausted.' }
-          : summariseFailures(evidenceFailures(allEvidence), 'The answer engine');
-        const degraded = generateSynthesizedAudit(
-          businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines, evidenceByQuery
-        );
-        degraded.executiveSummary =
-          `Audit could not complete: ${readable.message} No evidence was collected, so nothing below is a finding about ${businessName}.`;
-        return {
-          report: {
-            ...degraded,
-            degraded: true,
-            degradedReason: readable.message,
-          },
-          degraded: true,
-        };
-      }
-
-      // ---------- Layer 2: deterministic analysis over successful evidence only (src/auditPipeline.ts) ----------
-      const analysis = analyseEvidence({ businessName, cleanDomain, competitorList, evidenceByQuery });
-      const { clientLabel, analysisByEvidence, scorecards, clientScore, citationSources, totalObservations, measuredEngines, queryNumberOf } = analysis;
-
-      // ---------- Layer 3: narrative ----------
-      let narrative: any = null;
-      // Why the qualitative analysis is missing, when it is. An empty
-      // `inaccuracies` array from a model that never answered is NOT a finding
-      // of zero inaccuracies - it used to be reported as a 100% accuracy rate,
-      // the exact failure-counted-as-success pattern CLAUDE.md forbids.
-      let narrativeFailure: string | null = null;
-      try {
-        await delay(600);
-        narrative = await generateNarrative(ai, {
-          businessName,
-          clientLabel,
-          domain: cleanDomain,
-          industry: industry || 'not specified',
-          coreOfferings: coreOfferings || 'not specified',
-          competitorList,
-          usableEvidence,
-          analysisByEvidence,
-          queryNumberOf,
-          scorecards,
-          clientScore,
-          citationSources,
-          totalObservations,
-          measuredEngines,
-        });
-      } catch (narrativeErr: any) {
-        console.log(`Narrative synthesis failed: ${narrativeErr?.message || narrativeErr}`);
-        narrativeFailure = describeProviderError(narrativeErr, 'Gemini').message;
-      }
-      if (!narrative && !narrativeFailure) {
-        narrativeFailure = 'The analysis step returned nothing usable.';
-      }
-
-      // ---------- Layer 4: assemble an honest report (src/auditPipeline.ts) ----------
-      return assembleReport({
-        businessName, cleanDomain, industry, coreOfferings, targetAudience, competitorList, queryList,
-        engines, evidenceByQuery, analysis, narrative, narrativeFailure,
-        forceViolation: process.env.AUDIT_FORCE_INVARIANT_VIOLATION === '1',
-        failedShape: () => generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),
-      });
-    } catch (err: any) {
-      console.log(`Audit run failed: ${err?.message || err}`);
-      const readableFailure = describeProviderError(err, 'The audit service');
-      const fallback = generateSynthesizedAudit(
-        req.body?.businessName || 'Business',
-        normaliseDomain(req.body?.domain || ''),
-        req.body?.industry,
-        req.body?.coreOfferings,
-        req.body?.competitors,
-        req.body?.queries,
-        configuredEngines()
-      );
-      fallback.executiveSummary = `Audit failed to complete: ${readableFailure.message} No findings were generated, so none of the figures are measurements.`;
-      return {
-        report: { ...fallback, degraded: true, degradedReason: readableFailure.message },
+  /** The report of an audit that collected no usable answer: it says why and shows no finding. */
+  function noEvidencePayload(plan: StoredAuditPlan, evidenceByQuery: QueryEvidence[][]) {
+    // The breaker can trip during query generation, before any per-query
+    // evidence collection even starts - the loop then breaks on its
+    // first check and `allEvidence` stays empty. Evidence errors would
+    // be empty too in that case, and summariseFailures([]) falls back to
+    // a generic "returned no answers" that loses the actual reason. The
+    // breaker's own status is the source of truth whenever it is tripped.
+    const breakerStatus = geminiBreaker.status();
+    const readable = breakerStatus.tripped
+      ? { message: breakerStatus.reason || 'The answer engine quota is exhausted.' }
+      : summariseFailures(evidenceFailures(evidenceByQuery.flat()), 'The answer engine');
+    const degraded = generateSynthesizedAudit(
+      plan.businessName, plan.cleanDomain, plan.industry, plan.coreOfferings, plan.competitorList, plan.queryList, plan.engines as EngineName[], evidenceByQuery
+    );
+    degraded.executiveSummary =
+      `Audit could not complete: ${readable.message} No evidence was collected, so nothing below is a finding about ${plan.businessName}.`;
+    return {
+      report: {
+        ...degraded,
         degraded: true,
-      };
+        degradedReason: readable.message,
+      },
+      degraded: true,
+    };
+  }
+
+  /** Layers 2 and 3: analyse the captured answers, then ask the model for the qualitative part. */
+  async function runNarrative(plan: StoredAuditPlan, evidenceByQuery: QueryEvidence[][]) {
+    const analysis = analyseEvidence({ businessName: plan.businessName, cleanDomain: plan.cleanDomain, competitorList: plan.competitorList, evidenceByQuery });
+    const { clientLabel, usableEvidence, analysisByEvidence, scorecards, clientScore, citationSources, totalObservations, measuredEngines, queryNumberOf } = analysis;
+    let narrative: any = null;
+    // Why the qualitative analysis is missing, when it is. An empty
+    // `inaccuracies` array from a model that never answered is NOT a finding
+    // of zero inaccuracies - it used to be reported as a 100% accuracy rate,
+    // the exact failure-counted-as-success pattern CLAUDE.md forbids.
+    let narrativeFailure: string | null = null;
+    try {
+      narrative = await generateNarrative(getGeminiClient(), {
+        businessName: plan.businessName,
+        clientLabel,
+        domain: plan.cleanDomain,
+        industry: plan.industry || 'not specified',
+        coreOfferings: plan.coreOfferings || 'not specified',
+        competitorList: plan.competitorList,
+        usableEvidence,
+        analysisByEvidence,
+        queryNumberOf,
+        scorecards,
+        clientScore,
+        citationSources,
+        totalObservations,
+        measuredEngines,
+      });
+    } catch (narrativeErr: any) {
+      console.log(`Narrative synthesis failed: ${narrativeErr?.message || narrativeErr}`);
+      narrativeFailure = describeProviderError(narrativeErr, 'Gemini').message;
     }
+    if (!narrative && !narrativeFailure) {
+      narrativeFailure = 'The analysis step returned nothing usable.';
+    }
+    return { narrative, narrativeFailure };
+  }
+
+  /** Layer 4: the honest report, from the captured answers and the narrative step's result. */
+  function assemblePayload(plan: StoredAuditPlan, evidenceByQuery: QueryEvidence[][], narrative: any, narrativeFailure: string | null) {
+    const analysis = analyseEvidence({ businessName: plan.businessName, cleanDomain: plan.cleanDomain, competitorList: plan.competitorList, evidenceByQuery });
+    const engines = plan.engines as EngineName[];
+    return assembleReport({
+      businessName: plan.businessName,
+      cleanDomain: plan.cleanDomain,
+      industry: plan.industry,
+      coreOfferings: plan.coreOfferings,
+      targetAudience: plan.targetAudience,
+      competitorList: plan.competitorList,
+      queryList: plan.queryList,
+      engines,
+      evidenceByQuery,
+      analysis,
+      narrative,
+      narrativeFailure,
+      forceViolation: process.env.AUDIT_FORCE_INVARIANT_VIOLATION === '1',
+      failedShape: () => generateSynthesizedAudit(plan.businessName, plan.cleanDomain, plan.industry, plan.coreOfferings, plan.competitorList, plan.queryList, engines),
+    });
+  }
+
+  /** What a person gets when something unexpected broke the audit: a failed audit that says so, never a finding. */
+  function fallbackPayload(plan: StoredAuditPlan, err: any) {
+    const readableFailure = describeProviderError(err, 'The audit service');
+    const fallback = generateSynthesizedAudit(
+      plan.request.businessName || 'Business',
+      normaliseDomain(plan.request.domain || ''),
+      plan.request.industry,
+      plan.request.coreOfferings,
+      plan.request.competitors,
+      plan.request.queries,
+      configuredEngines()
+    );
+    fallback.executiveSummary = `Audit failed to complete: ${readableFailure.message} No findings were generated, so none of the figures are measurements.`;
+    return {
+      report: { ...fallback, degraded: true, degradedReason: readableFailure.message },
+      degraded: true,
+    };
   }
 
   // ---- Audit jobs. State lives in the store (src/store.ts), not in process
@@ -1576,51 +1567,227 @@ Return valid JSON matching the schema.`;
     }
   }
 
-  /** Run one audit to completion and record how it ended. Never throws. */
-  async function runJob(jobId: string, owner: string, body: any) {
-    const log = (what: string) => (err: any) =>
-      console.error(`[job ${jobId}] ${what}: ${err?.message || err}`);
-    try {
-      const payload = await performAudit({ body }, (progress) => {
-        void store.updateJob(jobId, { progress }).catch(log('progress update failed'));
-      });
+  /**
+   * How long one claim on a step lasts. It must be longer than the longest a single step can take (a paced call,
+   * a rate-limit wait and the retries) or a live step would be taken over while it works.
+   */
+  const AUDIT_LEASE_MS = Number(process.env.AUDIT_LEASE_MS) > 0 ? Number(process.env.AUDIT_LEASE_MS) : 10 * 60 * 1000;
 
-      // The reaper may already have marked this job failed after 15 minutes.
-      // The evidence was still collected and paid for, so a late finish is
-      // recorded rather than thrown away (only a pruned job is dropped).
-      const current = await store.getJob(jobId);
-      if (!current) return;
+  /** A pause the driver chooses how to spend: the inline driver sleeps, a client driver would hand it to the page. */
+  type Pace = (ms: number) => Promise<void>;
+  type AdvanceOutcome = 'advanced' | 'busy' | 'finished' | 'idle' | 'gone';
 
-      const report = payload?.report;
-      let saved = false;
-      // A failed audit is shown to the person who ran it but not kept: it holds
-      // no measurements, and a history of failures is noise, not a record.
-      if (report && !report.degraded) {
-        try {
-          await store.saveAudit(owner, report);
-          saved = store.info().durable;
-        } catch (err) {
-          log('could not save the audit')(err);
-        }
+  /**
+   * Record how a job ended and keep the audit. A failed audit is shown to the person who ran it but not kept: it
+   * holds no measurements, and a history of failures is noise, not a record. The reaper may already have marked
+   * the job failed after JOB_MAX_RUN_MS; the evidence was still collected and paid for, so a late finish is
+   * recorded rather than thrown away (only a pruned job is dropped).
+   */
+  async function recordFinished(job: StoredJob, payload: any) {
+    const log = (what: string) => (err: any) => console.error(`[job ${job.id}] ${what}: ${err?.message || err}`);
+    const current = await store.getJob(job.id);
+    if (!current || current.status === 'done') return;
+
+    const report = payload?.report;
+    let saved = false;
+    if (report && !report.degraded) {
+      try {
+        await store.saveAudit(job.owner, report);
+        saved = store.info().durable;
+      } catch (err) {
+        log('could not save the audit')(err);
       }
-      await store.updateJob(jobId, {
-        status: 'done',
-        result: { ...payload, saved },
-        finishedAt: Date.now(),
-        // An audit that collected no evidence spent nothing; it must not use
-        // up the person's daily allowance.
-        billable: !!report && !report.degraded,
-      });
+    }
+    await store.updateJob(job.id, {
+      status: 'done',
+      result: { ...payload, saved },
+      finishedAt: Date.now(),
+      // An audit that collected no evidence spent nothing; it must not use
+      // up the person's daily allowance.
+      billable: !!report && !report.degraded,
+      failCode: null,
+    });
+    // The result now holds what the person gets; the steps' raw answers are not kept a second time.
+    await store.compactJobSteps(job.id).catch((err) => log('could not compact the steps')(err));
+  }
+
+  /** End a job whose step failed or ran out of tries, with a sentence, a code and an incident. Not billable. */
+  async function closeJobAfterFailedStep(job: StoredJob, step: JobStep, outcome: 'exhausted' | 'failed') {
+    const latest = await store.getJob(job.id);
+    if (!latest || latest.status !== 'running') return;
+    const message =
+      outcome === 'exhausted'
+        ? `The audit stopped because one of its steps did not finish after ${MAX_STEP_ATTEMPTS} tries. Nothing from it is counted. Please run it again.`
+        : 'The audit stopped because one of its steps failed. Nothing from it is counted. Please run it again.';
+    console.error(`[job ${job.id}] step ${step.key} ended ${outcome} (${step.errorCode || 'no code'})`);
+    await store.recordIncident({
+      jobId: job.id,
+      at: Date.now(),
+      kind: outcome === 'exhausted' ? 'step_attempts_exceeded' : 'step_exception',
+      detail: `Step ${step.key} ${outcome === 'exhausted' ? `did not finish after ${MAX_STEP_ATTEMPTS} tries` : 'failed'}.`,
+    });
+    await store.updateJob(job.id, {
+      status: 'error',
+      error: message,
+      finishedAt: Date.now(),
+      billable: false,
+      failCode: step.errorCode ?? 'step_failed',
+    });
+  }
+
+  /**
+   * Store a step's outcome. A refused store means another worker took the step over while this one was still
+   * working (its lease ran out): the late result is not kept, and that is an incident, never a silent drop.
+   */
+  async function completeOrNote(job: StoredJob, step: JobStep, completion: StepCompletion, now: number) {
+    const stored = await store.completeStep(job.id, step.seq, step.attempt, completion, now);
+    if (!stored) {
+      console.warn(`[job ${job.id}] step ${step.key} finished after it had been taken over; its result was not stored.`);
+      await store
+        .recordIncident({ jobId: job.id, at: now, kind: 'lease_expired_midcall', detail: `Step ${step.key} finished after another worker had taken it over, so its result was not stored.` })
+        .catch(() => undefined);
+    }
+    return stored;
+  }
+
+  /** Tell the page how far the audit has got. A failed write is logged, never fatal: progress is only for display. */
+  async function setProgress(job: StoredJob, progress: AuditProgress) {
+    await store.updateJob(job.id, { progress }).catch((err) => console.error(`[job ${job.id}] progress update failed: ${err?.message || err}`));
+  }
+
+  /**
+   * Record that the outside call of this step is about to start. False means this holder no longer owns the step
+   * (its lease ran out and another worker took it over): the call must NOT be made, and that is an incident.
+   */
+  async function startCall(job: StoredJob, step: JobStep, holder: string): Promise<boolean> {
+    if (await store.markCallStarted(job.id, step.seq, holder, step.attempt, Date.now())) return true;
+    console.warn(`[job ${job.id}] step ${step.key} was taken over before its call started; this worker makes no call.`);
+    await store
+      .recordIncident({ jobId: job.id, at: Date.now(), kind: 'lease_expired_midcall', detail: `Step ${step.key} was taken over by another worker before its call started, so this worker made no call.` })
+      .catch(() => undefined);
+    return false;
+  }
+
+  /** Do the work of one claimed step and store its outcome. Throws only for something unexpected. */
+  async function runStep(job: StoredJob, plan: StoredAuditPlan, step: JobStep, holder: string, pace: Pace): Promise<'ran' | 'lost'> {
+    const steps = await store.getJobSteps(job.id);
+    const total = plan.queryList.length;
+    // A test-only switch (like AUDIT_FORCE_INVARIANT_VIOLATION): break a step of this kind, to prove the failure is visible.
+    if (process.env.AUDIT_FORCE_STEP_EXCEPTION === step.kind) throw new Error('forced by the test switch');
+
+    if (step.kind === 'collect') {
+      const queryIndex = step.queryIndex as number;
+      const geminiPlanned = plan.engines.includes('Gemini');
+      // Once quota is known to be exhausted mid-audit, stop immediately
+      // rather than pacing through the remaining queries only to have each
+      // one fail the same way a moment later.
+      if (skipForBreaker(steps, step, geminiBreaker.isTripped(), geminiPlanned)) {
+        // Said once per audit, at the first question that is skipped.
+        if (startsQuestion(steps, step) && !steps.some((s) => s.skipReason === 'breaker')) console.log(`Stopping after ${queryIndex}/${total} queries: Gemini quota breaker is tripped.`);
+        await completeOrNote(job, step, { state: 'skipped', skipReason: 'breaker' }, Date.now());
+        return 'ran';
+      }
+      if (startsQuestion(steps, step)) {
+        if (queryIndex > 0) await pace(1200);
+        await setProgress(job, queryingProgress(queryIndex, total));
+      }
+      if (!(await startCall(job, step, holder))) return 'lost';
+      const evidence = await collectEngineEvidence(getGeminiClient(), plan.queryList[queryIndex], step.engine as EngineName);
+      await completeOrNote(job, step, { state: 'done', result: evidence }, Date.now());
+      return 'ran';
+    }
+
+    const evidenceByQuery = evidenceByQueryFromSteps(steps, total);
+    const hasUsable = evidenceByQuery.flat().some(isUsableEvidence);
+
+    if (step.kind === 'narrative') {
+      await setProgress(job, analysingProgress(total));
+      if (!hasUsable) {
+        await completeOrNote(job, step, { state: 'skipped', skipReason: 'no_evidence' }, Date.now());
+        return 'ran';
+      }
+      await pace(600);
+      if (!(await startCall(job, step, holder))) return 'lost';
+      const result = await runNarrative(plan, evidenceByQuery);
+      await completeOrNote(job, step, { state: 'done', result }, Date.now());
+      return 'ran';
+    }
+
+    // finalize
+    await setProgress(job, analysingProgress(total));
+    const narrativeResult = steps.find((st) => st.kind === 'narrative' && st.state === 'done')?.result;
+    const payload = plan.unconfigured
+      ? unconfiguredPayload(plan)
+      : !hasUsable
+        ? noEvidencePayload(plan, evidenceByQuery)
+        : assemblePayload(plan, evidenceByQuery, narrativeResult?.narrative ?? null, narrativeResult ? narrativeResult.narrativeFailure : 'The analysis step returned nothing usable.');
+    await recordFinished(job, payload);
+    await completeOrNote(job, step, { state: 'done' }, Date.now());
+    return 'ran';
+  }
+
+  /**
+   * Do exactly one step of a job and return. Safe to call from any driver and any number of times: a step that is
+   * held by someone else is `busy`, a finished job is `idle`, nothing here waits for the next step.
+   */
+  async function advanceJob(jobId: string, holder: string, pace: Pace): Promise<AdvanceOutcome> {
+    const job = await store.getJob(jobId);
+    if (!job || !job.plan) return 'gone';
+    const plan = job.plan as StoredAuditPlan;
+
+    const claim = await store.claimStep(jobId, holder, AUDIT_LEASE_MS, Date.now(), MAX_STEP_ATTEMPTS);
+    if (claim.outcome === 'none') return 'idle';
+    if (claim.outcome === 'busy') return 'busy';
+    if (claim.outcome === 'exhausted' || claim.outcome === 'failed') {
+      await closeJobAfterFailedStep(job, claim.step, claim.outcome);
+      return 'finished';
+    }
+
+    const step = claim.step;
+    try {
+      // Heartbeat: something is working on this job right now, and this is what it is doing.
+      await store.touchJob(jobId, Date.now(), { phase: step.kind === 'collect' ? 'collecting' : step.kind === 'narrative' ? 'analysing' : 'finishing' });
+      if ((await runStep(job, plan, step, holder, pace)) === 'lost') return 'busy';
+    } catch (err: any) {
+      // Something unexpected broke the step. The audit ends as a failed audit that says so (as it always did),
+      // the step is marked failed and the incident is recorded, so it is never a silent stop.
+      console.log(`Audit run failed: ${err?.message || err}`);
+      await store.completeStep(job.id, step.seq, step.attempt, { state: 'failed', errorCode: 'step_exception' }, Date.now()).catch(() => false);
+      await store
+        .recordIncident({ jobId: job.id, at: Date.now(), kind: 'step_exception', detail: `Step ${step.key} failed: ${describeProviderError(err, 'The audit service').message}` })
+        .catch(() => undefined);
+      await recordFinished(job, fallbackPayload(plan, err));
+      return 'finished';
+    }
+    return step.kind === 'finalize' ? 'finished' : 'advanced';
+  }
+
+  /**
+   * The inline driver: run a job's steps one after another in this process, sleeping where the audit pauses.
+   * Never throws. (Behaviour is what it was when the whole audit was one function; each step is now recorded.)
+   */
+  async function driveInline(jobId: string) {
+    const holder = `inline:${store.instanceId}:${jobId}`;
+    const log = (what: string) => (err: any) => console.error(`[job ${jobId}] ${what}: ${err?.message || err}`);
+    try {
+      for (;;) {
+        const outcome = await advanceJob(jobId, holder, async (ms) => void (await delay(ms)));
+        if (outcome !== 'advanced') return;
+      }
     } catch (err: any) {
       console.log(`Audit job ${jobId} failed: ${err?.message || err}`);
       const latest = await store.getJob(jobId).catch(() => null);
       if (latest && latest.status !== 'running') return; // already ended (e.g. reaped); do not overwrite
+      await store
+        .recordIncident({ jobId, at: Date.now(), kind: 'step_exception', detail: `The audit driver stopped: ${describeProviderError(err, 'The audit service').message}` })
+        .catch(() => undefined);
       await store
         .updateJob(jobId, {
           status: 'error',
           error: describeProviderError(err, 'The audit service').message,
           finishedAt: Date.now(),
           billable: false,
+          failCode: 'driver_error',
         })
         .catch(log('could not record the failure'));
     }
@@ -1661,6 +1828,9 @@ Return valid JSON matching the schema.`;
       const owner: string = res.locals.user.owner;
       const budgetKey: string = res.locals.user.budgetKey;
 
+      const planned = planAudit(req.body, { fallbackQueries: getFallbackQueries, maxQueries: MAX_AUDIT_QUERIES });
+      if ('error' in planned) return res.status(400).json({ error: planned.error });
+
       // The single most expensive thing to get wrong. A cold instance stalls
       // the submit long enough for the browser's own retry to fire, while the
       // server has already accepted the first one and started spending quota -
@@ -1685,6 +1855,31 @@ Return valid JSON matching the schema.`;
 
           await admit(budgetKey);
 
+          // Plan the audit now, once: what is asked, which engines can answer, and the ordered steps. Nothing is
+          // read from the request again, so a step run later (or by another process) does the same work.
+          const engines = configuredEngines();
+          const measurable = !!getGeminiClient() && engines.length > 0;
+          const others = engines.filter((e) => e !== 'Gemini');
+          const stored: StoredAuditPlan = {
+            ...planned,
+            engines,
+            unconfigured: measurable
+              ? undefined
+              : {
+                  reason:
+                    !getGeminiClient() && others.length
+                      ? `GEMINI_API_KEY is required to analyse answers, even though ${others.join(' and ')} ${others.length > 1 ? 'are' : 'is'} configured. Nothing was measured.`
+                      : noEngineReason('nothing could be measured') + ' Fix that and re-run.',
+                },
+            request: {
+              businessName: req.body.businessName,
+              domain: req.body.domain,
+              industry: req.body.industry,
+              coreOfferings: req.body.coreOfferings,
+              competitors: req.body.competitors,
+              queries: req.body.queries,
+            },
+          };
           const job: StoredJob = {
             id: `job-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
             owner,
@@ -1692,10 +1887,12 @@ Return valid JSON matching the schema.`;
             idemKey,
             status: 'running',
             startedAt: Date.now(),
+            plan: stored,
+            phase: 'planned',
           };
-          await store.createJob(job);
+          await store.createPlannedJob(job, planSteps(stored, measurable));
           // Kick the work off and answer immediately; the client polls for the result.
-          void runJob(job.id, owner, req.body);
+          void driveInline(job.id);
           return { id: job.id, replayed: false };
         });
       } catch (err) {

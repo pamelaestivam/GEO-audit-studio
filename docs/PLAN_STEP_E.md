@@ -8,6 +8,8 @@ sections 1, 2, 6, 7. Mandate: `docs/OWNER_DIRECTIVES.md` (D-1 $0, D-2 must not f
 
 ## What is true today (the reasons for the design)
 
+*(Written before S1 to S3. S3 replaced `performAudit` and `runJob` with `advanceJob` and an inline driver; the reasons below are why.)*
+
 - `POST /api/audit/run` creates a job and then runs `void runJob(...)` after answering 202
   (`server.ts`, search `void runJob`). On Vercel the function can be frozen or killed after it
   responds, and each poll may reach a different instance, so work "after the response" is the
@@ -93,13 +95,13 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `claimed` and one `busy`; an expired lease is reclaimed with attempt 2; a fourth claim is `exhausted`;
    a double `completeStep` stores one result; steps survive closing and reopening a real SQLite file.
    Nothing in the server uses it yet.
-3. **S3 engine and inline driver (behaviour-preserving).** `/api/audit/run` plans and creates the
+3. **S3 engine and inline driver (behaviour-preserving).** *Delivered 2026-10-10 except the additive GET fields (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`), which move to S4 where the client first needs them; `phase` and a heartbeat are already stored on the job.* `/api/audit/run` plans and creates the
    planned job, then loops `advanceJob` in-process; `runJob` is removed; the GET view gains additive
    fields (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). Keep the
    late-finish-after-reap behaviour (the foundation E2E check "a job reaped as stuck that later finishes is
    still recorded", `test/foundationE2E.test.ts` near line 661, must pass untouched). Boundary test (`test/auditStepsE2E.test.ts`): a 1-query audit makes exactly 2 fake
    Gemini hits and the SQLite file holds 3 `done` steps with `attempt=1`.
-4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** `AUDIT_DRIVER=client`:
+4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** The GET job view also gains the additive fields deferred from S3 (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). `AUDIT_DRIVER=client`:
    `POST /api/audit/job/:id/advance` returns the view plus `outcome advanced | busy | finished | wait`
    and `nextStepAfterMs`; 404 `job_not_found`; `src/auditClient.ts` branches on the driver the 202
    returns and throws `AuditInterrupted`; exempt `/api/audit/job/*` from `spendLimiter`; make

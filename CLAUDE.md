@@ -317,6 +317,12 @@ have to be rediscovered from scratch, not so it can be skipped.
 - `npm start` — run the built server
 - `npm run lint` — `tsc --noEmit`
 - `npm test` — build, then every check below, in order
+- `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
+  quota-breaker rule (including the several-engine cases no end-to-end test can reach)
+- `npx tsx test/auditStepsE2E.test.ts` — the real built server, a fake Gemini that counts hits, and the real
+  SQLite file: an audit's step rows agree with the calls it made (one question = 2 calls and 3 done steps;
+  every engine failing = 1 call and a skipped analysis; a forced step exception = a failed step, an incident,
+  a failed audit, not billable). Needs a current `dist/`
 - `npx tsx test/auditGoldenE2E.test.ts` — the real built server and a fake Gemini; twelve scenarios' reports
   compared with `test/golden/` after dropping per-run values and sorting keys (captured before `src/auditPipeline.ts` was split out).
   A deliberate change to the report is `UPDATE_GOLDEN=1`, then read the diff (needs a current `dist/`)

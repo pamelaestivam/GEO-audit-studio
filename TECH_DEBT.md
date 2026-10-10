@@ -745,6 +745,23 @@ those files is a re-run, not a regression, but it must be recorded here.
   summary text carries the rows. The export wiring itself (modal calling `notCountedExportText`) has no browser test.
 - **The $0 guard counts per process.** `GEMINI_DAILY_CALL_CAP` and the call counter live in memory of one server process; on Vercel each function instance counts alone, so a cap is a brake against loops, not a ceiling on the day's spend, and a restart resets it. The money control is a Google project with no billing account (owner action O-2), which the app cannot see. A durable counter needs the database (PROGRAM row 8).
 - **Browser coverage:** the summary-note line on screen and in the export has no browser test.
+- **Step e engine (slice S3) tests:** the several-engine path (steps for each paid engine, one after another) has
+  no end-to-end test because only Gemini can be faked; `planSteps`, the ordering and the breaker rule have unit
+  tests (`test/auditSteps.test.ts`). `closeJobAfterFailedStep` (a claim reporting an exhausted or failed step) cannot
+  be reached by the inline driver, whose own exceptions end the audit in `advanceJob`; it is covered when the
+  client driver or the sweeper can re-claim (S4, S5).
+- **Step e engine (slice S3), review notes:** deleting a saved audit does not delete the job record that produced it,
+  which keeps the report for up to `JOB_RETENTION_MS` (seven days; this predates the steps). The raw answers in
+  the step rows are dropped when the job finishes (`compactJobSteps`). A job failed at boot (`failCode:
+  restarted`) is not finished by anyone, unlike one the reaper stopped (`stuck`); two processes on one
+  `DATA_DIR` are not supported. Closing a failed step on a job the reaper already stopped returns silently.
+- **Step e engine (slice S3) limits:** engines now run one after another within a question (one step each),
+  where they used to run in parallel; with only Gemini (the free engine) nothing changes, and with several paid
+  engines a question takes longer. A crash between saving the audit and marking the job done can, on resume,
+  save a second copy under a new id (slice S5 should store the finished report on the finish step first). The
+  incident for a late result that was refused (a step taken over while still working) cannot be reached by the
+  inline driver and has no end-to-end test until the client driver (S4) can run two advances at once. While
+  collecting, the heartbeat is touched once per step, not during a long step.
 - **Step e store (slice S2) limits:** a held database writer lock blocks the whole Node process for up to the
   5 s `busy_timeout` (the sqlite calls are synchronous) and then surfaces as a typed `StoreBusyError`
   (`store_busy`), which the server must turn into a sentence (S3/S4). `repeatedCalls` is a lower bound (a
