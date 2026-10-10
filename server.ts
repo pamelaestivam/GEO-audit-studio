@@ -1034,7 +1034,7 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
         inFlightRequests.forget(idempotencyKey);
         throw workErr;
       }
-      const usable = evidence.filter((e) => !e.error && e.answerText.trim().length > 0);
+      const usable = evidence.filter(isUsableEvidence);
 
       if (usable.length === 0) {
         const readable = summariseFailures(evidenceFailures(evidence), 'The answer engine');

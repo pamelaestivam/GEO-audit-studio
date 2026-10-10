@@ -13,7 +13,7 @@
  *
  * What it does NOT guard (mutations that still pass, checked 2026-10-10): the tie order and the
  * zero-mention filter of `untrackedRivals` (all fixture vendors are mentioned once), `dedupeMatchers`
- * (the typed competitor already absorbs its variants), which evidence list feeds `sourcesForBrand`, and
+ * (the typed competitor already absorbs its variants), the cap on the number of questions (`maxQueries`), which evidence list feeds `sourcesForBrand`, and
  * whether discovered vendor names are masked from the summary guard. Only Gemini answers in these
  * scenarios, so multi-engine success paths are not exercised. Add a scenario before touching those.
  *

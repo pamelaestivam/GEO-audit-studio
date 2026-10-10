@@ -332,7 +332,7 @@ export function assembleReport(input: {
   // "affects" when the model's own count is missing or impossible. Computed, not guessed.
   const unnamedQuestions = evidenceByQuery.filter(
     (group, qi) =>
-      group.some((ev) => !ev.error && ev.answerText.trim().length > 0) && !group.some((ev) => mentionedKeys.has(`${qi}|${ev.engine}`))
+      group.some(isUsableEvidence) && !group.some((ev) => mentionedKeys.has(`${qi}|${ev.engine}`))
   ).length;
 
   // Strings whose digits are not "figures": what the person typed and what the audit found.
@@ -433,7 +433,7 @@ export function assembleReport(input: {
     // Questions that produced at least one usable answer: the independent readings behind
     // the headline (a planned question that failed everywhere, or was never reached after
     // the quota breaker tripped, is not a reading).
-    questionsAnswered: evidenceByQuery.filter((group) => group.some((ev) => !ev.error && ev.answerText.trim().length > 0)).length,
+    questionsAnswered: evidenceByQuery.filter((group) => group.some(isUsableEvidence)).length,
     queriesNamingBrand,
     observationsAttempted: allEvidence.length,
     observationsWithEvidence: usableEvidence.length,
