@@ -55,6 +55,11 @@ jobs:
       LIVE_URL: ${{ inputs.url || vars.LIVE_URL || 'https://geo-audit-studio-five.vercel.app' }}
       TRACK_ISSUE: ${{ inputs.url == '' && 'yes' || 'no' }}
       GH_TOKEN: ${{ github.token }}
+      # Optional: a sign-in for the live site. With both set, the signed-in checks run too, including the live
+      # engine call and the 'recent trouble' check (failed audits and incidents of the last day). Without them
+      # those checks are skipped, and the run says so as a warning instead of passing silently (docs/PROGRAM.md O-3).
+      SMOKE_EMAIL: ${{ secrets.LIVE_CHECK_EMAIL }}
+      SMOKE_CODE: ${{ secrets.LIVE_CHECK_ACCESS_CODE }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # same pin as the confidenceHigh repository
@@ -69,9 +74,15 @@ jobs:
         run: |
           set +e
           code=1
+          signin=()
+          if [ -n "$SMOKE_EMAIL" ] && [ -n "$SMOKE_CODE" ]; then
+            signin=(--email "$SMOKE_EMAIL" --code "$SMOKE_CODE")
+          else
+            echo "::warning title=Signed-in checks skipped::The repository secrets LIVE_CHECK_EMAIL and LIVE_CHECK_ACCESS_CODE are not set, so the live engine call and the recent-trouble check (failed audits and incidents) did NOT run. See docs/PROGRAM.md O-3."
+          fi
           for attempt in 1 2 3; do
             echo "::group::attempt $attempt against $LIVE_URL"
-            node scripts/smoke.mjs "$LIVE_URL" --warn-non-durable 2>&1 | tee live.log
+            node scripts/smoke.mjs "$LIVE_URL" --warn-non-durable "${signin[@]}" 2>&1 | tee live.log
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             [ "$code" = 0 ] && break

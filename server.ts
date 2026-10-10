@@ -32,7 +32,7 @@ import {
   userFromEmail,
   verifyToken,
 } from './src/auth.js';
-import { openStore, type JobStep, type StepCompletion, type StoredJob } from './src/store.js';
+import { openStore, READINESS_PROBE_OWNER, type JobStep, type StepCompletion, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import { analyseEvidence, assembleReport, discoverVendors, isUsableEvidence, planAudit } from './src/auditPipeline.js';
@@ -627,7 +627,7 @@ async function buildApp() {
     const info = store.info();
     try {
       const probe = `readiness-${crypto.randomBytes(3).toString('hex')}`;
-      await store.createJob({ id: probe, owner: 'readiness@system', status: 'done', startedAt: Date.now(), billable: false });
+      await store.createJob({ id: probe, owner: READINESS_PROBE_OWNER, status: 'done', startedAt: Date.now(), billable: false });
       const back = await store.getJob(probe);
       // (The probe row is non-billable and ages out with ordinary job retention.)
       checks.push({
@@ -648,10 +648,16 @@ async function buildApp() {
     // daily live-site check opens its issue when audits have been breaking quietly (counts only; no names or ids).
     try {
       const windowHours = 24;
-      const since = Date.now() - windowHours * 60 * 60 * 1000;
-      const incidents = (await store.listIncidents({ limit: 200 })).filter((i) => i.at >= since);
-      const trouble = summariseRecentTrouble({ failedByCode: await store.countFailedJobsSince(since), incidents, windowHours, durable: info.durable });
-      checks.push({ name: 'recent trouble', verified: true, ok: trouble.ok, detail: trouble.detail });
+      const now = Date.now();
+      const since = now - windowHours * 60 * 60 * 1000;
+      const trouble = summariseRecentTrouble({
+        outcomes: await store.countJobOutcomesSince(since),
+        incidents: await store.listIncidents({ limit: 200 }),
+        now,
+        windowHours,
+        durable: info.durable,
+      });
+      checks.push({ name: 'recent trouble', verified: trouble.verified, ok: trouble.ok, detail: trouble.detail });
     } catch (err: any) {
       checks.push({ name: 'recent trouble', verified: true, ok: false, detail: `The record of failed audits could not be read: ${err?.message || err}` });
     }
@@ -1765,6 +1771,15 @@ Return valid JSON matching the schema.`;
       : !hasUsable
         ? noEvidencePayload(plan, evidenceByQuery)
         : assemblePayload(plan, evidenceByQuery, narrativeResult?.narrative ?? null, narrativeResult ? narrativeResult.narrativeFailure : 'The analysis step returned nothing usable.');
+    // A report whose own figures contradicted each other is a bug in this code. The person already got a failed
+    // audit that says so; the owner gets an incident, because nothing else would tell them.
+    const violations: string[] | undefined = (payload as any).invariantViolations;
+    if (violations && violations.length > 0) {
+      delete (payload as any).invariantViolations;
+      await store
+        .recordIncident({ jobId: job.id, at: Date.now(), kind: 'invariant', detail: `A report failed ${violations.length} consistency ${violations.length === 1 ? 'check' : 'checks'} and was not shown: ${violations.join('; ').slice(0, 300)}` })
+        .catch(() => undefined);
+    }
     await recordFinished(job, payload);
     await completeOrNote(job, step, { state: 'done' }, Date.now());
     return 'ran';

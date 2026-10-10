@@ -67,6 +67,10 @@ async function main() {
   };
   const normal = start(APP_PORT);
   const broken = start(APP_PORT + 1, { AUDIT_FORCE_STEP_EXCEPTION: 'narrative' });
+  const emptyDay = start(APP_PORT + 6);
+  const forcedInvariant = start(APP_PORT + 7, { AUDIT_FORCE_INVARIANT_VIOLATION: '1' });
+  const memory = start(APP_PORT + 8, { DATA_DIR: '' });
+  const unexplained = start(APP_PORT + 9);
   // Its own server: a tripped quota breaker lasts until the provider's daily reset and would taint every later audit.
   const quota = start(APP_PORT + 2);
   const quotaLater = start(APP_PORT + 3);
@@ -105,7 +109,7 @@ async function main() {
     let up = false;
     for (let i = 0; i < 80 && !up; i++) {
       try {
-        up = (await fetch(`${normal.base}/api/health`)).ok && (await fetch(`${broken.base}/api/health`)).ok && (await fetch(`${quota.base}/api/health`)).ok && (await fetch(`${quotaLater.base}/api/health`)).ok;
+        up = (await fetch(`${normal.base}/api/health`)).ok && (await fetch(`${broken.base}/api/health`)).ok && (await fetch(`${quota.base}/api/health`)).ok && (await fetch(`${quotaLater.base}/api/health`)).ok && (await fetch(`${emptyDay.base}/api/health`)).ok && (await fetch(`${forcedInvariant.base}/api/health`)).ok && (await fetch(`${memory.base}/api/health`)).ok && (await fetch(`${unexplained.base}/api/health`)).ok;
       } catch {
         /* not up yet */
       }
@@ -196,16 +200,40 @@ async function main() {
     check('...the person gets a measured report from the one answer, which says the written analysis was not produced', [job.report?.degraded !== true, job.report?.narrativeAvailable, job.report?.observationsWithEvidence], [true, false, 1]);
     mode = 'ok';
 
-    // ---- the deep readiness check reads that trouble back: quiet is healthy, a broken step is not
+    // ---- the deep readiness check reads that trouble back
     const troubleOf = async (base: string) => {
       const res = await fetch(`${base}/api/audit/readiness?refresh=1`);
       const body: any = await res.json();
       return body.checks?.find((c: any) => c.name === 'recent trouble');
     };
+    // A server whose audits finished (some of them empty while the engine was refusing) is not in trouble, and says what happened.
     const quiet = await troubleOf(normal.base);
-    check('readiness on a server whose audits all finished says there was no trouble', [quiet?.ok, quiet?.verified, /No audit failed and no incident/.test(quiet?.detail || '')], [true, true, true]);
+    check('readiness on a server where audits finished is ok, a measurement, and counts the ones that worked', [quiet?.ok, quiet?.verified, /finished normally/.test(quiet?.detail || '')], [true, true, true]);
+    // A step that broke is a fault and the sentence quotes what happened.
     const trouble = await troubleOf(broken.base);
-    check('readiness on a server where a step broke is not ok, says so, and names the kind of incident', [trouble?.ok, /1 step exception/.test(trouble?.detail || ''), /look at the incidents/.test(trouble?.detail || '')], [false, true, true]);
+    check('readiness on a server where a step broke is not ok, names the kind, and quotes the incident', [trouble?.ok, /1 step exception/.test(trouble?.detail || ''), /Most recent: Step narrative failed: /.test(trouble?.detail || '')], [false, true, true]);
+    // A day on which every audit came back empty (a rejected key, a used-up quota) must not read as healthy.
+    mode = 'unauthorized';
+    await runAudit(emptyDay.base, [QUERIES[0]]);
+    mode = 'ok';
+    const empty = await troubleOf(emptyDay.base);
+    check('readiness on a server where every audit came back empty is not ok and says what to check, not "no audit failed"', [empty?.ok, /finished with no result/.test(empty?.detail || ''), /key is accepted/.test(empty?.detail || ''), /No audit failed/.test(empty?.detail || '')], [false, true, true, false]);
+    // A report that broke its own consistency rules leaves an incident, although the audit finished.
+    const forced = await runAudit(forcedInvariant.base, [QUERIES[0]]);
+    const inv = await troubleOf(forcedInvariant.base);
+    check('a report that failed its own consistency checks gives the person a failed audit and the owner an incident', [forced.job.status, forced.job.report?.degraded, inv?.ok, /consistency check/.test(inv?.detail || ''), JSON.stringify(forced.job).includes('invariantViolations')], ['done', true, false, true, false]);
+    // The failure-code feed on its own (no incident behind it): an audit that ended in error with no recorded reason.
+    {
+      const conn = new DatabaseSync(unexplained.db);
+      const t = Date.now();
+      conn.prepare("INSERT INTO jobs (id, owner, status, started_at, finished_at, budget_key) VALUES ('ghost-1', 'someone@example.com', 'error', ?, ?, 'someone@example.com')").run(t - 2000, t - 1000);
+      conn.close();
+      const ghost = await troubleOf(unexplained.base);
+      check('an audit that ended in error with no recorded reason (no incident behind it) makes the check fail on its own', [ghost?.ok, /1 ended in error without a recorded reason/.test(ghost?.detail || '')], [false, true]);
+    }
+    // A server that keeps nothing across restarts cannot say, and must not claim a clean bill.
+    const unmeasured = await troubleOf(memory.base);
+    check('readiness on a server that keeps nothing says it could not check, and does not claim health', [unmeasured?.ok, unmeasured?.verified, /^Not checked\./.test(unmeasured?.detail || ''), /No audit failed/.test(unmeasured?.detail || '')], [true, false, true, false]);
   } finally {
     for (const p of procs) p.kill();
     fake.close();
