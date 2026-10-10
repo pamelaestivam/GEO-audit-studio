@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "npm run build && tsx test/analysis.test.ts && tsx test/reportView.test.ts && tsx test/rateLimit.test.ts && tsx test/auth.test.ts && tsx test/store.test.ts && tsx test/queries.test.ts && tsx test/apiClient.test.ts && tsx test/idempotency.test.ts && tsx test/quotaBreaker.test.ts && tsx test/quotaBreakerE2E.test.ts && tsx test/quotaEfficiencyE2E.test.ts && tsx test/retrySpendE2E.test.ts && tsx test/mvpHardeningE2E.test.ts && tsx test/foundationE2E.test.ts && tsx test/uiSmoke.test.ts && tsx test/vercelEsmImports.test.ts && tsx test/vercelServerless.test.ts && tsx test/contract.test.ts",
+    "test": "npm run build && tsx test/analysis.test.ts && tsx test/reportView.test.ts && tsx test/rateLimit.test.ts && tsx test/auth.test.ts && tsx test/store.test.ts && tsx test/queries.test.ts && tsx test/backup.test.ts && tsx test/apiClient.test.ts && tsx test/idempotency.test.ts && tsx test/quotaBreaker.test.ts && tsx test/quotaBreakerE2E.test.ts && tsx test/quotaEfficiencyE2E.test.ts && tsx test/retrySpendE2E.test.ts && tsx test/mvpHardeningE2E.test.ts && tsx test/foundationE2E.test.ts && tsx test/uiSmoke.test.ts && tsx test/vercelEsmImports.test.ts && tsx test/vercelServerless.test.ts && tsx test/contract.test.ts",
     "verify": "npm run lint && npm test && npm audit --omit=dev --audit-level=high",
     "smoke": "node scripts/smoke.mjs"
   },

@@ -48,7 +48,19 @@ jobs:
         with:
           node-version: 22
       - name: Build image
-        run: docker build -t geo-audit-studio:ci .
+        # Pulling node:22-slim from Docker Hub anonymously fails now and then from
+        # shared runners (429 Too Many Requests, 504 from auth.docker.io - both seen
+        # on this repo's PR runs, never a Dockerfile error). Retry the whole build; a
+        # real Dockerfile failure fails every attempt and still turns the job red.
+        run: |
+          for attempt in 1 2 3 4; do
+            docker build -t geo-audit-studio:ci . && exit 0
+            [ "$attempt" = 4 ] && break
+            echo "docker build attempt $attempt failed; retrying in $((attempt * 30))s"
+            sleep $((attempt * 30))
+          done
+          echo "docker build failed on every attempt"
+          exit 1
       - name: Run container
         run: |
           docker volume create geo-data
@@ -85,6 +97,24 @@ jobs:
             const db = new DatabaseSync('/data/geo-audit.sqlite');
             const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
             console.log('probe rows surviving the restart:', n);
+            process.exit(n >= 1 ? 0 : 1);
+          "
+      - name: Back up the running database inside the container
+        # A plain copy of geo-audit.sqlite from a running server restores nothing
+        # (recent writes live in the WAL); scripts/backup.mjs makes a real snapshot.
+        run: |
+          docker exec app node scripts/backup.mjs /data /data/backups/ci.sqlite
+          # A second run to the same name must REFUSE, for the right reason (bash -e
+          # ignores a failing `!`, so this is an explicit if).
+          if docker exec app node scripts/backup.mjs /data /data/backups/ci.sqlite 2>/tmp/second.err; then
+            echo "second backup run did not refuse to overwrite"; exit 1
+          fi
+          grep -q "refusing to overwrite" /tmp/second.err || { echo "refused for the wrong reason:"; cat /tmp/second.err; exit 1; }
+          docker run --rm -v geo-data:/data node:22-slim node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync('/data/backups/ci.sqlite');
+            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
+            console.log('probe rows in the backup:', n);
             process.exit(n >= 1 ? 0 : 1);
           "
       - name: Smoke test the restarted container
