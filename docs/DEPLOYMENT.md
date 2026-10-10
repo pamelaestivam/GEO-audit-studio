@@ -5,6 +5,12 @@ checked. Read section 8 before trusting any step marked **unverified**.
 
 ## 1. What you are deploying
 
+> **Superseded in part, 2026-10-10 (`docs/DECISIONS.md`, decision F):** the owner
+> directed that the product run on Vercel with Supabase as the durable store and
+> step-wise audit jobs. That is **not built yet**; until it is, this document describes
+> the only deployment shape that is correct today (an always-on process with a disk),
+> and the Vercel deployment is a preview whose audits can be lost (`docs/PROGRAM.md`).
+
 **One always-on Node process** that serves both the API and the built frontend,
 with state in a single **SQLite file on a persistent disk** (`DATA_DIR`).
 

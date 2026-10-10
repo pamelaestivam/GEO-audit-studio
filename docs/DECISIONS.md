@@ -5,6 +5,92 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-10-10 - Owner answers to the independent review; team decisions A to G; hosting reversal
+
+**Decision (owner, 2026-10-10, quoted in `docs/OWNER_DIRECTIVES.md`):** spend is $0;
+the product must not fail silently and should be designed not to fail; deploy
+automatically to a URL the owner opens; use what the owner already knows (Vercel,
+Supabase); Q1 and Q3 of the review are delegated to the agents; keep records.
+
+**Who weighed in:** PM Twin, CTO, UX Lead (three independent solo positions, then a
+debate round; method in `docs/TEAM_CHARTER.md`). EVAL PM scores each resulting PR.
+The seats are prompts run by one assistant, so this is three disciplined lenses and
+not three independent people (see `docs/REVIEW_2026-10-09.md`, Part B 7).
+
+**Decisions**
+
+- **A. Visibility counts a brand only when its name appears in the answer text.**
+  Cited-only (own domain cited, name absent) is a separate number shown as a
+  sub-line ("+2 cite your site without naming you") with a one-line explainer. They
+  are never blended. Reports saved before the change used "named or cited"; the
+  report gets a `metricVersion` so history is not silently reinterpreted.
+  *Process:* this changes what the product promises a client, so the PR says so in
+  its first line and the owner is told in chat before merge.
+- **B. Numbers in written text.** The summary's figures come from a deterministic
+  sentence built from computed metrics. The model writes qualitative prose. A guard
+  drops any model sentence containing a number (digits or spelled-out) that is not in
+  the computed set, records an incident, and the page says so in a footnote. Token
+  substitution (`{named_count}`) was the PM Twin's and CTO's final preference and the
+  UX Lead's was the digit guard; each conceded to the other, and the guard is the
+  real control in both, so the guard is mandatory and tokens are optional.
+- **C. Never fail silently.** Architecture in `docs/RELIABILITY.md`: six failure
+  classes, a persisted step-wise audit state machine with leases, invariants checked
+  by one pure function, an incidents record, a "Not counted" panel (replaces the
+  proposed "Not identified" list: one spec), an owner health section, a scheduled
+  canary. Unattributable claims are listed, never silently dropped (review Q4).
+- **D. Default question count: 2 until audits can resume, 3 after.** Three is the
+  ceiling. A labelled "Quick check (1 question)" mode exists and never shows a bare
+  percentage ("1 of 1 answer named you. A single answer is an observation, not a
+  rate."). Every rate is printed "n of M", never bare. One question does not help
+  robustness, it hides the failure; robustness comes from persisted steps.
+- **E. $0.** Provider: key from a project with billing never enabled (owner confirms
+  once; recorded in `docs/PROGRAM.md`). App: paid engines **will be** refused unless an explicit
+  flag is set (step d, not built), presence of a paid key **will be** a red health
+  check, and a call counter **will** stop the app before the free limit (labelled "calls this app made", never "your quota"). The
+  app cannot see billing and does not claim to prove $0.
+- **F. Hosting reverses the 2026-10-09 "always-on process, SQLite, Vercel unsupported"
+  decision.** Vercel stays the host (auto-deploys every merge; the owner knows it),
+  Supabase Postgres is to become the durable store (not built; blocked on the owner,
+  `docs/PROGRAM.md` O-4), and audits are to run as step-wise resumable jobs (not built). Until the store exists the deployment is labelled "Preview" and nothing
+  claims durability. Docker leaves the required checks (CI smoke runs
+  `dist/server.cjs`; `scripts/prod-install-check.sh` already exists); the Dockerfile
+  stays as an optional, non-blocking self-host path. Docker Hub 429s therefore stop
+  failing merges.
+- **G. Branch protection.** A required human review is theatre for a solo owner who
+  delegates merging (an author cannot approve their own PR, and the merges run under
+  the owner's login). Instead: a ruleset on `main` requiring a pull request (0
+  approvals), the `test` check (which already runs lint, audit and the whole suite), no force-push, no deletion; a
+  machine-checked "EVAL PM: SHIP" line in the PR body; "Automatically delete head
+  branches" turned on; and this entry is the written standing delegation. A change
+  to a metric definition, spend, or hosting still tells the owner in chat before merge
+  (the PM Twin veto, enforced by process).
+
+**Dissent and concessions:** none left open. PM Twin conceded 3-by-default (to 2
+interim), the `needs-owner` label as a gate, and tokens (to the guard). UX Lead
+conceded the default of 2 and the digit guard and adopted the CTO's panel name. CTO
+conceded token substitution as a preference and the GitHub-issue alert over email. UX
+Lead's conditions stand: no bare percentage at one answer; every drop told to the
+user; no Resume/Discard button before the lease exists. CTO's veto stands: no "never
+fails" or "durable" copy before the step that makes it true.
+
+**Alternatives rejected:** keeping SQLite on a free container host (free tiers sleep
+and lose disks; AGENT, unverified), staying on in-memory Vercel (cannot honour the
+mandate), one question by default (hides failure), a blended "named or cited" score
+(a number that means two things), a second model call to verify the first (cost and a
+new failure), required human approval (cannot be satisfied by the one human).
+
+**Not verified (AGENT-level or unknown):** Vercel function duration on this project
+(300 s with fluid compute per web search; an older default is 10 s); whether the
+Supabase free plan provides scheduled jobs; whether a private repo on a free GitHub
+plan supports rulesets; the Gemini free grounded-prompt allowance (sources
+disagree); whether secrets are set on the live Vercel project. The sandbox this work
+runs in cannot reach external hosts, so none of these were tested.
+
+**Reversibility:** every step sits behind the `Store` interface and the pure
+analysis layer; each ships as its own PR and can be reverted alone.
+
+---
+
 ## 2026-10-09 - Foundation: always-on service, SQLite, invitation sign-in (decided without the owner)
 
 **Decision:** D1 (runtime), D2 (datastore) and D3 (auth) from `docs/MVP_AUDIT.md`

@@ -209,7 +209,13 @@ directly (which every other test in this file does) cannot detect this
 failure mode at all - it bypasses Vercel's own routing layer entirely,
 which is exactly where this bug lived.
 
-### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured; the supported deployment is now an always-on service)
+### 1.4c The audit job model probably does not fit Vercel (open - inferred, not measured)
+
+> **Superseded 2026-10-10 (`docs/DECISIONS.md`, decision F):** the earlier call that the
+> supported deployment is an always-on service (D1 below) was reversed at the owner's
+> direction. Vercel stays the host; the fix is a step-wise resumable audit job plus a
+> durable store (`docs/RELIABILITY.md`), not a different host. The analysis below is
+> still the description of the problem.
 
 Found in the 2026-10-09 MVP audit (`docs/MVP_AUDIT.md` A1). `POST
 /api/audit/run` answers `202` and then keeps working after the response;
@@ -695,6 +701,17 @@ boundaries. **Still true, and not fixed:**
   a boundary).
 - A tracked competitor whose name contains the client's ("BP Pulse" beside "BP")
   is dropped by `dedupeMatchers`, the same as "Stripe Atlas" beside "Stripe".
+
+### 2.14 End-to-end tests draw random ports from overlapping ranges (low-medium)
+
+Found 2026-10-10. `test/quotaBreakerE2E.test.ts` (3400-4000) and
+`test/quotaEfficiencyE2E.test.ts` (3500-3900) overlap, as do other pairs, and none
+handles a collision. One CI run failed in `quotaEfficiencyE2E` ("Could not reach
+Gemini", zero requests seen by the fake) and passed on re-run of the same commit; it
+did not reproduce locally in three runs. A port collision is the suspected cause
+(INFERRED, not proven). Fix: have each test listen on port 0 and read the assigned
+port back, and fail loudly on a bind error. Until then a single unexplained red in
+those files is a re-run, not a regression, but it must be recorded here.
 
 ### 2.7 Vendor discovery depends on one model reading its own output (low-medium)
 
