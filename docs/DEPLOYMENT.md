@@ -108,6 +108,7 @@ own deployment (section 6).
 | `GEMINI_API_KEY` | yes | Answers queries and writes the analysis |
 | `SESSION_SECRET` | yes (production) | Signs sessions. 32+ characters. Rotating it signs everyone out |
 | `ACCESS_CODES` | yes (production) | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
+| `AUDIT_FORCE_INVARIANT_VIOLATION` | **never in production** | Test-only: `1` makes every audit fail its consistency check, to prove the failure path. The server logs a warning at start-up if it is set |
 | `TRUST_PROXY` | no (0) | Reverse proxies in front of the server (1 on Render/Fly/nginx). **Leave at 0 when exposed directly**: otherwise anyone can send their own `X-Forwarded-For` and dodge every per-IP limit. Too low behind a proxy = all visitors throttled together (safe, but wrong) |
 | `USER_LOOKUPS_PER_HOUR` | no (30) | Brand detection, query suggestions and added queries per person per hour (per process; resets on restart) |
 | `ALLOW_DEV_AUTH` | no | Local development only: `npm run dev` passes `--dev`, which has the same effect. Never honoured in production, and only from the same machine. Do not set it on a server behind a local reverse proxy without `TRUST_PROXY` (every request would look local) |

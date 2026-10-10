@@ -143,7 +143,14 @@ itself; that is the check working. Storage is memory only (a warning, not a fail
 durable store ships). The action this needs from the owner is O-3 and O-2 in `docs/PROGRAM.md`.
 
 **Also observed:** Vercel's bot emits `deployment_status` events for Preview deployments, which fire
-`live-check.yml` (skipped by its condition). A Production event has not been observed yet.
+`live-check.yml` (skipped by its condition). A Production event has not been observed yet (superseded below).
 
 **Open:** PR #33 (report invariants and the zero-figure guard, `docs/PROGRAM.md` row 5, first half) is in
 review; then row 5's second half, row 6 (the $0 guard) and row 7 (the step-wise audit).
+
+**Follow-up, later the same day:** #33 (report invariants and the zero-figure guard, 6025447), #34, #35
+(Dependabot bumps of the pinned `setup-node` and `checkout` actions, each a three-line change that the
+CI it ran under had already exercised) and #37 (the earlier record) are merged. The `deployment_status`
+trigger on a finished **Production** deployment is now observed: Vercel's bot fired `live-check` on
+`main` after the merges of #33 and #34 (both runs executed and failed on the same two configuration
+checks, as expected). Dependabot opens a pull request per pinned action monthly.
