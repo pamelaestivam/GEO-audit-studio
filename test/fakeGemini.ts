@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only' | 'hang' | 'hang_first';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -59,6 +59,9 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
           /* not JSON */
         }
       }
+      // 'hang': every request is accepted and never answered (the connection stays open and silent). 'hang_first': only
+      // the first request ever received is. This is how a provider that goes quiet looks from the client's side.
+      if (mode === 'hang' || (mode === 'hang_first' && hits === 1)) return;
       if (mode === 'slow') await new Promise((r) => setTimeout(r, slowMs));
       if (mode === 'unauthorized') {
         res.writeHead(401, { 'Content-Type': 'application/json' });

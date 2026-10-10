@@ -321,6 +321,24 @@ async function buildApp() {
       .filter((c: string) => c.length > 0)
       .slice(0, MAX_COMPETITORS);
 
+  /**
+   * How long ONE Gemini request may take before it is abandoned. Without a limit a request that never answers
+   * (a connection that goes quiet and stays open) holds the single Gemini queue (`scheduleGeminiCall` runs calls
+   * one behind the other) so every later call, in every audit, waits behind it until the process restarts, and
+   * nothing reports it. The limit turns that into an ordinary `timeout` error, which the retry loop already
+   * handles (a few waits and tries, then a sentence). It must stay well under the step lease (10 minutes) and
+   * the audit maximum (15 minutes) after counting every try: 90 s x 3 tries plus the pauses is about 5 minutes.
+   * Grounded answers normally take well under 30 s. The timer also covers reading the answer body.
+   */
+  const GEMINI_HTTP_TIMEOUT_MS = (() => {
+    const raw = process.env.GEMINI_HTTP_TIMEOUT_MS;
+    if (raw === undefined || raw === '') return 90 * 1000;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 100) return n;
+    console.warn(`GEMINI_HTTP_TIMEOUT_MS=${JSON.stringify(raw)} is not a number of milliseconds of at least 100; using 90000.`);
+    return 90 * 1000;
+  })();
+
   // Initialize Gemini Client server-side
   const getGeminiClient = () => {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -334,6 +352,8 @@ async function buildApp() {
         headers: {
           'User-Agent': 'aistudio-build'
         },
+        // One request, not the whole retry sequence (the SDK is given no retry options, so it never retries itself).
+        timeout: GEMINI_HTTP_TIMEOUT_MS,
         // Test-only escape hatch: lets the contract tests point Gemini calls
         // at a local fake server that always returns 429, to prove the
         // circuit breaker actually stops repeated calls against a real audit
