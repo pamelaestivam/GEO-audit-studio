@@ -211,8 +211,12 @@ async function buildApp() {
       'The server restarted while this audit was running, so it was stopped. Please run it again.'
     );
     if (orphaned > 0) console.warn(`[store] marked ${orphaned} orphaned audit job(s) without a plan as failed after a restart.`);
-    const released = await store.releaseLeasesNotHeldBy(store.instanceId);
-    if (released > 0) console.warn(`[store] released ${released} step lease(s) held by a previous process.`);
+    // Only where one process owns the database. On a serverless host many instances may share one durable store,
+    // and releasing "everyone else's" claims at boot would take over steps that are being worked on right now.
+    if (!process.env.VERCEL) {
+      const released = await store.releaseLeasesNotHeldBy(store.instanceId);
+      if (released > 0) console.warn(`[store] released ${released} step lease(s) held by a previous process.`);
+    }
   }
 
   /**

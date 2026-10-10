@@ -750,6 +750,16 @@ those files is a re-run, not a regression, but it must be recorded here.
   is too small to hit from outside), and when it fires the page-driven request just answers `busy`. Jobs that end in
   error (a failed or exhausted step, a driver error) are not compacted, so their raw step answers stay for the
   seven-day retention; the person gets no report in those cases.
+- **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper, so a job whose
+  holder dies without the whole process dying (not a case the server has today) is not picked up until the next
+  restart or, for a page-driven job, until the page asks again. The supported topology is ONE server process per
+  database file: `releaseLeasesNotHeldBy(instanceId)` at boot frees every other holder's live claim, so two
+  processes sharing a file would repeat each other's in-flight calls (counted and recorded, but paid for); the
+  shared pacer/breaker and a safer liveness rule are S6/row 8. A call that was in flight when the server died is
+  made again once: that is one extra paid call, recorded as a repeated call and a `lease_expired_midcall` incident,
+  and a step killed three times ends the audit (`step_attempts_exceeded`, not billable, calls capped at three).
+  Jobs made before audits were stepped have no plan and cannot be resumed; they are failed at boot with a sentence.
+  Memory stores (Vercel today) lose their jobs with the process: nothing here changes that (owner O-4).
 - **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
   HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
   says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). What a person actually sees if
