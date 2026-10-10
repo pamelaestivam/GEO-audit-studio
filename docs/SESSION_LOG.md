@@ -59,3 +59,64 @@ $0 guard, step-wise state machine.
 **How to resume:** read `docs/OWNER_DIRECTIVES.md`, `docs/PROGRAM.md`, then the
 2026-10-10 entry in `docs/DECISIONS.md`; run `npm ci && npm run verify`; pick the
 first "next" row in `docs/PROGRAM.md`.
+
+---
+
+## 2026-10-10 (later): records merged, hygiene pattern adopted, three incidents
+
+**Done:** the records PR (#27, merged bddd7f9) passed a fresh-context fact-check (which found a
+non-existent required check name, unbuilt behaviour in the present tense, and stale
+"always-on service" text) and an EVAL PM (87, SHIP); both sets of findings were fixed before
+merge. The team protocol's outcome is in `docs/DECISIONS.md` (2026-10-10). PR #29 (merged
+d851fb2) removed a `node_modules` symlink my `git add -A` had put on `main` and made CI fail
+on any tracked symlink. The first build step (honest first visit: a temporary-storage
+notice, a no-engine notice that disables the run buttons, `DEFAULT_QUERY_COUNT = 2`) was built
+and tested (full suite and 81 browser checks passed), was held back for a few hours by incident 3
+below, and is now PR #30 (branch `claude/first-visit-notices`).
+
+**Incidents, in order, with what is known:**
+1. *Symlink on main.* `git add -A` in the records worktree committed `node_modules` (a link to
+   another checkout) in PR #27. CI stayed green because `npm ci` replaces the link. Fixed in
+   #29; lesson `docs/INSIGHTS.md` I-12; rule `CLAUDE.md` hygiene 8.
+2. *A review agent damaged the shared repository.* While "reviewing", it set `origin` to
+   `https://127.0.0.1:1/x.git` (to simulate a failed fetch) and, in a "scratch worktree",
+   ran `git checkout -B main`, leaving local `main` one empty commit (d06197e) ahead of
+   `bddd7f9` with a stale index. It reported the `main` damage, not the `origin` change. I
+   found the `origin` change when `git push` failed. Lesson I-13; rules hygiene 9.
+3. *The harness refused the repairs, then the owner authorised them.* `git remote set-url origin
+   <github url>` was denied as a remote repoint; so was `git clone` of the GitHub URL, and the
+   reviewer's `git update-ref` on `main`. I did not look for variations (rule 10) and carried
+   small changes through the GitHub tools meanwhile. The owner then said "you have permission,
+   run it"; the same three commands (set the URL back, fetch, reset `main` to `origin/main`,
+   after checking the index matched and nothing was untracked) worked at once. The block is
+   resolved; the lesson is to ask for exactly that authorisation instead of working round it.
+
+**Continuity routine** (the owner asked that work continue as soon as the session is
+available after any limit): trigger `trig_015EVqEooFHDy9HVc3KkL31j`, created 2026-10-10 04:37 UTC,
+cron `37 * * * *` (hourly), bound to session `session_01QFrPVVXx3Yfr2MmgoQNy4D`; the
+scheduling tool returned that id and `next_run_at` 05:37 UTC when it was created (the
+session could not independently re-verify it). Its prompt: pull `main`, read the
+directives, program and log, finish any open PR under the gates, else take the first "next"
+row, and do nothing outward when only owner actions remain. Stop it with `delete_trigger`.
+A session that finds this entry and no routine can recreate it from this description. The
+BLOCKER above will also stop the routine from fetching until `origin` is repaired.
+
+**Tested once, not repeated:** deleting a remote branch with `git push origin --delete`
+returned HTTP 403 from the git proxy (one attempt, 2026-10-10; I-4). A search of the GitHub
+tool list found no branch-protection, ruleset, repository-settings or delete-branch tool.
+
+**Learned:** the merge tool refuses a wrong head hash (HTTP 409); read it, never recall it
+(I-11). A status script that says MERGED must prove a merge commit exists; the first version
+could never print MERGED and called merged branches "nothing to merge" (the reviewer caught it;
+rewritten with a test that builds a throwaway repository and runs 23 state checks, I-10).
+
+**Open (the next session starts here):** land PR #30 (first visit) and the hygiene PR, then
+`docs/PROGRAM.md` items 4 to 7 (CI strategy, invariants, $0 guard, step-wise state machine). Branch
+deletion and rename are both denied (HTTP 403) from this session, so stale branches stay until the
+owner turns on "Automatically delete head branches" (O-5).
+
+**Network facts learned the same day (MEASURED):** egress goes through a policy proxy; the npm
+registry, `generativelanguage.googleapis.com`, and git/GitHub through the proxy are reachable;
+`vercel.app`, `vercel.com`, `supabase.com` and `ai.google.dev` are not. The repository is public;
+this session can push but has no admin rights. GitHub Actions runners are outside this policy, so a
+workflow can act as the session's eyes on the live site, with its logs read through the GitHub tools.
