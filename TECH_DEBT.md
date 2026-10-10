@@ -734,8 +734,15 @@ those files is a re-run, not a regression, but it must be recorded here.
   today; it is a tripwire for future code changes, not evidence of correctness. A violation costs
   the audit's collected evidence and the quota behind it (it is not billable to the person), and has
   no incident id: only a server log line.
-- **"Not counted" strip and panel, and cited-only as its own number** (RELIABILITY step c, second
-  half) are not built. Until they are, discarded items are only a count (`inaccuraciesDiscarded`).
+- **Cited-only as its own number** (RELIABILITY step c, second half) is not built. The "Not counted"
+  strip and list exist for discarded inaccuracy claims only (at most 20 rows kept, the rest counted);
+  other things the pipeline drops (vendor names that fail verification, answers that errored) are
+  counted elsewhere but not listed there. A saved audit from before this change shows its count and says the
+  reasons were not recorded. Rows are in the model's order, not grouped by reason (27 near-identical cards
+  are possible). `answer_does_not_name_brand` is also the reason when a measured engine had no captured
+  answer for that question (the function sees only brand-naming answers), so its sentence says "or no answer
+  was captured". The printed/PDF view of the export carries the count and footer, not the rows; the copied
+  summary text carries the rows. The export wiring itself (modal calling `notCountedExportText`) has no browser test.
 - **The $0 guard counts per process.** `GEMINI_DAILY_CALL_CAP` and the call counter live in memory of one server process; on Vercel each function instance counts alone, so a cap is a brake against loops, not a ceiling on the day's spend, and a restart resets it. The money control is a Google project with no billing account (owner action O-2), which the app cannot see. A durable counter needs the database (PROGRAM row 8).
 - **Browser coverage:** the summary-note line on screen and in the export has no browser test.
 - **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the

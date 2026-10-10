@@ -13,6 +13,8 @@ import {
   extractCandidateVendors,
   extractDomain,
   attributeInaccuracies,
+  notCountedItems,
+  MAX_NOT_COUNTED_ROWS,
   computeAccuracyRate,
   queryNamesBrand,
   sourcesForBrand,
@@ -485,7 +487,29 @@ check(
   const onlyOne = attributeInaccuracies([{ queryText: 'Best poke in Austin?' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Perplexity']));
   check('...but if only one engine answered that query, an unnamed engine can only mean it', onlyOne.kept.map((k) => k.engine), ['Perplexity']);
   check('a claim about an answer that does not name the brand is discarded (the list and the accuracy rate must agree)', attr([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])).discarded, 1);
-  check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0 });
+  const reasons = (claims: any[], engines = ['Gemini'], keys = answers) => attr(claims, engines, keys).discardedClaims.map((d) => d.reason);
+  check('each discarded claim carries the reason: no such question / ambiguous question / engine never measured / answer does not name the brand', [
+    reasons([{ queryText: 'not a query we asked', engine: 'Gemini' }]),
+    reasons([{ queryText: 'poke cost', engine: 'Gemini' }]),
+    reasons([{ queryNumber: 2, queryText: 'Best poke in Austin?', engine: 'Gemini' }]),
+    reasons([{ queryText: 'Best poke in Austin?', engine: 'ChatGPT' }]),
+    reasons([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])),
+  ], [['no_such_question'], ['ambiguous_question'], ['ambiguous_question'], ['engine_not_measured'], ['answer_does_not_name_brand']]);
+  const dc = (claimedFact: unknown) => ({ claim: { claimedFact }, reason: 'no_such_question' as const });
+  check('the list keeps at most MAX_NOT_COUNTED_ROWS rows (20), in the model\'s order', [notCountedItems(Array.from({ length: 25 }, (_, i) => dc(`claim ${i}`))).length, notCountedItems(Array.from({ length: 25 }, (_, i) => dc(`claim ${i}`)))[19].text, MAX_NOT_COUNTED_ROWS], [20, 'claim 19', 20]);
+  check('a long claim is cut to 300 characters with an ellipsis; a short one is untouched', [notCountedItems([dc('x'.repeat(400))])[0].text.length, notCountedItems([dc('x'.repeat(400))])[0].text.endsWith('...'), notCountedItems([dc('x'.repeat(300))])[0].text.length], [300, true, 300]);
+  const emoji = notCountedItems([dc('\u{1F600}'.repeat(400))])[0].text;
+  check('cutting never splits a surrogate pair (no lone surrogate in the stored report)', [/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(emoji), Array.from(emoji).length], [false, 300]);
+  check('whitespace and newlines collapse to single spaces', notCountedItems([dc('  a\n\n  b\t c  ')])[0].text, 'a b c');
+  check('a claim with no text, or a non-string, gets the placeholder', [notCountedItems([dc(''), dc(null), dc(42), { claim: null as any, reason: 'no_such_question' as const }]).map((r) => r.text.startsWith('(the analysis gave no text'))], [[true, true, true, true]]);
+  check('a claim naming no engine on a question several engines answered is "engine not identified", not "answer does not name the brand"',
+    attributeInaccuracies([{ queryNumber: 1 }], queries, ['Gemini', 'Perplexity'], new Set(['0|Gemini', '0|Perplexity'])).discardedClaims.map((d) => d.reason), ['engine_not_identified']);
+  check('...while a claim about an answer that does not name the brand stays that, with or without a named engine',
+    [attributeInaccuracies([{ queryNumber: 1, engine: 'Gemini' }], queries, ['Gemini', 'Perplexity'], new Set(['0|Perplexity'])).discardedClaims[0].reason,
+     attributeInaccuracies([{ queryNumber: 1 }], queries, ['Gemini', 'Perplexity'], new Set()).discardedClaims[0].reason],
+    ['answer_does_not_name_brand', 'answer_does_not_name_brand']);
+  check('the discarded claim itself is kept so the report can show what was left out', attr([{ queryText: 'nope', claimedFact: 'Open until midnight' }]).discardedClaims[0].claim.claimedFact, 'Open until midnight');
+  check('a model that returns a string instead of a list does not crash or count characters', attributeInaccuracies('none' as any, queries, ['Gemini'], answers), { kept: [], discarded: 0, discardedClaims: [] });
 
   const mentioned = new Set(['0|Gemini', '1|Gemini']);
   check('accuracy counts answers, not claims: two claims on one of two mentioning answers is 50%', computeAccuracyRate(mentioned, ['0|Gemini', '0|Gemini']), 50);

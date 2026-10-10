@@ -2,6 +2,7 @@ import React from 'react';
 import { ShieldCheck, AlertTriangle, HelpCircle, TrendingUp, CheckCircle2, Globe, Building2, ExternalLink, Award } from 'lucide-react';
 import { AuditReport } from '../types';
 import { TabType } from './Sidebar';
+import { NotCountedPanel } from './NotCountedPanel';
 import {
   brandedQueryCaution,
   describeAccuracy,
@@ -92,6 +93,8 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
           </div>
         </div>
       )}
+
+      <NotCountedPanel audit={audit} />
 
       {/* Whether a refresh will lose this audit - stated, not assumed. */}
       {!audit.degraded && (

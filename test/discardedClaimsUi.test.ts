@@ -75,6 +75,15 @@ async function main() {
     const card = await page.locator('main').innerText();
     assert('the accuracy tile says it is at most this when claims were discarded', /at most this, since 2 reported claims/.test(card), card.slice(0, 600));
 
+    // The "Not counted" strip: visible without opening anything, and opening it lists each claim with a reason.
+    const strip = page.locator('[data-testid=not-counted]');
+    assert('a strip at the top says how many claims were not counted', /2 claims the analysis reported were not counted\./.test(await strip.innerText()), await strip.innerText());
+    assert('...its list is closed until asked for', !(await strip.evaluate((el) => (el as HTMLDetailsElement).open)));
+    await strip.locator('summary').click();
+    const opened = await strip.innerText();
+    assert('opened, it marks every row unverified and gives a plain reason', (opened.match(/unverified/gi) || []).length === 2 && /could not be tied|does not match any engine/.test(opened), opened);
+    assert('...and says none of it is in any figure', /left out of every figure and every rate/.test(opened), opened);
+
     assert('the findings tile does not read as a clean zero either', /2 reported claims not listed/.test(card), card.slice(0, 900));
     assert('the sidebar badge is a question mark, not blank', /Inaccuracies & Hallucinations\s*\?/.test(await page.locator('aside').innerText()), await page.locator('aside').innerText());
 

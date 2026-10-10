@@ -150,6 +150,9 @@ violates('findings although the narrative did not run', (r) => { r.narrativeAvai
 violates('an omission affecting more questions than were asked', (r) => (r.omissions = [{ id: 'om-1', affectedQueriesCount: 47 }]), /affects 47 questions out of 2/);
 violates('an omission with a non-integer count', (r) => (r.omissions = [{ id: 'om-1', affectedQueriesCount: 1.5 }]), /om-1/);
 violates('shares of voice that add up to far more than 100', (r) => (r.competitorBenchmarks = [{ shareOfVoice: 90 }, { shareOfVoice: 90 }]), /add up to/);
+violates('more not-counted rows than discarded claims', (r) => { r.inaccuraciesDiscarded = 2; r.notCounted = [{}, {}, {}]; }, /not counted/);
+check('as many not-counted rows as discarded claims is fine', assertReportInvariants({ ...good(), inaccuraciesDiscarded: 2, notCounted: [{}, {}] }), []);
+check('fewer not-counted rows than discarded claims is fine (the list is capped)', assertReportInvariants({ ...good(), inaccuraciesDiscarded: 5, notCounted: [{}, {}] }), []);
 check('an omission within range is fine', assertReportInvariants({ ...good(), omissions: [{ id: 'om-1', affectedQueriesCount: 2 }] }), []);
 check('rounding slack in shares of voice is tolerated', assertReportInvariants({ ...good(), competitorBenchmarks: [{ shareOfVoice: 34 }, { shareOfVoice: 34 }, { shareOfVoice: 34 }] }), []);
 check('a report that was never assessed (accuracy null, narrative off, no findings) is consistent', assertReportInvariants({ ...good(), narrativeAvailable: false, accuracyRate: null }), []);
