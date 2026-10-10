@@ -718,12 +718,15 @@ async function buildApp() {
       // Not a direct URL, handle as brand name string
     }
 
+    // Only a domain the person actually typed (or pasted as a URL) is a fact. For a
+    // plain brand name the old code invented `<name>.com`, returned it even when the
+    // lookup failed, and the form filled it in under a notice saying nothing had
+    // been guessed. It stays blank unless the lookup itself finds one.
     if (parsedDomain) {
       const domainNamePart = parsedDomain.split('.')[0];
       parsedBusinessName = domainNamePart.charAt(0).toUpperCase() + domainNamePart.slice(1);
     } else {
       parsedBusinessName = cleanedInput;
-      parsedDomain = `${cleanedInput.toLowerCase().replace(/[^a-z0-9]/g, '')}.com`;
     }
 
     const ai = getGeminiClient();
@@ -732,7 +735,7 @@ async function buildApp() {
 
     if (ai) {
       try {
-        const prompt = `Analyze the brand/business "${parsedBusinessName}" (Domain: ${parsedDomain}).
+        const prompt = `Analyze the brand/business "${parsedBusinessName}"${parsedDomain ? ` (Domain: ${parsedDomain})` : ' (the domain is unknown: find it)'}.
 Use live web search to identify real current details:
 1. Exact official business name
 2. Official primary domain
@@ -792,6 +795,11 @@ Return a valid JSON object matching the requested schema.`;
       };
     }
 
+    // A found domain must look like one. A model that cannot find it returns "N/A",
+    // "unknown" or a whole URL, and the form would fill that in as if it were a fact.
+    const foundDomain = normaliseDomain(String(details.domain || ''));
+    // (If the person typed a URL or domain, that is a fact and is kept when the lookup's is unusable.)
+    details.domain = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(foundDomain) ? foundDomain : parsedDomain;
     return { details, detected: true };
   }
 
@@ -1228,7 +1236,7 @@ Return a JSON array of exactly 3 query objects.`;
       .map((s: any) => `${s.domain} (cited ${s.citationCount}x across ${s.queryCount} queries)${s.isOwned ? ' [CLIENT-OWNED]' : ''}`)
       .join('\n');
 
-    const prompt = `You are a senior Generative Engine Optimization (GEO) consultant writing the analysis section of a paid audit for "${ctx.businessName}" (${ctx.domain}).
+    const prompt = `You are a senior Generative Engine Optimization (GEO) consultant writing the analysis section of a paid audit for "${ctx.businessName}" ${ctx.domain ? `(${ctx.domain})` : '(no website was given)'}.
 
 Industry: ${ctx.industry}
 Core offerings: ${ctx.coreOfferings}
@@ -1239,7 +1247,7 @@ MEASURED RESULTS (computed from captured evidence - do NOT recompute or contradi
 - Cited in ${ctx.clientScore.timesMentioned} of ${ctx.totalObservations} engine answers (${ctx.clientScore.visibility}% visibility)
 - Share of voice against every vendor named by the engines: ${ctx.clientScore.shareOfVoice}%
 - Named first in ${ctx.clientScore.timesFirst} answers
-- Client's own domain cited as a source ${ctx.clientScore.citedAsSourceCount} times
+${ctx.domain ? `- Client's own domain cited as a source ${ctx.clientScore.citedAsSourceCount} times` : '- Client website: not given, so whether it is cited was not measured'}
 
 VENDOR SCOREBOARD (all vendors the engines actually named):
 ${ctx.scorecards.map((s: any) => `- ${s.brand}: named in ${s.timesMentioned}/${ctx.totalObservations} answers, ${s.shareOfVoice}% share of voice, first ${s.timesFirst}x`).join('\n')}

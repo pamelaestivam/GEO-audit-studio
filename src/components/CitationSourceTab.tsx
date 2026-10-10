@@ -53,10 +53,12 @@ export const CitationSourceTab: React.FC<CitationSourceTabProps> = ({ audit }) =
             <div className="text-[11px] text-slate-400 mt-0.5">Distinct domains cited</div>
           </div>
           <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3.5">
-            <div className={`text-2xl font-bold ${owned.length > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {owned.length}
+            <div className={`text-2xl font-bold ${!audit.domain ? 'text-slate-500' : owned.length > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {audit.domain ? owned.length : '—'}
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">Your own domain cited</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              {audit.domain ? 'Your own domain cited' : 'Your own domain cited: not measured, no domain was given'}
+            </div>
           </div>
           <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-3.5">
             <div className="text-2xl font-bold text-amber-400">{thirdParty.length}</div>
@@ -64,7 +66,7 @@ export const CitationSourceTab: React.FC<CitationSourceTabProps> = ({ audit }) =
           </div>
         </div>
 
-        {owned.length === 0 && (
+        {audit.domain && owned.length === 0 && (
           <div className="mt-4 flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/25 rounded-lg p-3.5">
             <Target className="h-4 w-4 text-rose-400 mt-0.5 shrink-0" />
             <p className="text-xs text-rose-200/90 leading-relaxed">

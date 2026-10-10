@@ -135,7 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="font-bold text-sm text-slate-100 truncate" title={audit.businessName}>
               {audit.businessName}
             </div>
-            <div className="text-xs text-slate-400 truncate">{audit.domain}</div>
+            {audit.domain && <div className="text-xs text-slate-400 truncate">{audit.domain}</div>}
           </div>
         ) : null}
 

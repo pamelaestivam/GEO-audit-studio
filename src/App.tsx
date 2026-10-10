@@ -234,12 +234,17 @@ export default function App() {
   // It used to also raise `geoVisibilityScore` by a made-up share of the
   // remaining gap, so ticking a checkbox moved a number presented as a
   // measurement. Visibility only changes when answer engines are re-queried.
+  // (Keyed on the audit actually SHOWN, `activeAudit`: after a reload nothing has
+  // been explicitly selected, so `activeAuditId` is null while the newest audit is
+  // on screen - and both handlers used to return early, so ticking a task or
+  // adding a query did nothing, silently, on exactly the audits a returning user opens.)
   const handleToggleTaskComplete = (taskId: string) => {
-    if (!activeAuditId) return;
+    const shownId = activeAudit?.id;
+    if (!shownId) return;
 
     setAudits((prevAudits) =>
       prevAudits.map((a) =>
-        a.id !== activeAuditId
+        a.id !== shownId
           ? a
           : {
               ...a,
@@ -270,11 +275,12 @@ export default function App() {
   // server-side recompute or leaving the figures alone and saying so. This is
   // the latter; the card tells the reader how many queries are not included.
   const handleAppendQueryToAudit = (newQuery: import('./types').AuditQuery) => {
-    if (!activeAuditId) return;
+    const shownId = activeAudit?.id;
+    if (!shownId) return;
 
     setAudits((prevAudits) =>
       prevAudits.map((a) =>
-        a.id !== activeAuditId
+        a.id !== shownId
           ? a
           : {
               ...a,

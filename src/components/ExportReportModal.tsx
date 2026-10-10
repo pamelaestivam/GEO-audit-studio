@@ -147,8 +147,8 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
                 {audit.businessName}
               </h2>
               <div className="flex items-center gap-3 text-slate-400 mt-1">
-                <span>{audit.domain}</span>
-                <span>•</span>
+                {audit.domain && <span>{audit.domain}</span>}
+                {audit.domain && <span>•</span>}
                 {audit.industry && <span>{audit.industry}</span>}
                 {audit.industry && <span>•</span>}
                 <span>Audit Date: {new Date(audit.createdAt).toLocaleDateString()}</span>

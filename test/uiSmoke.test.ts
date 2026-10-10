@@ -220,6 +220,13 @@ async function main() {
     assert('after a reload the dropdown (built from the saved summary) still carries what the score rests on', /GEO Score: 100% \(3 answers\)/.test(optionAfterReload), optionAfterReload);
     assert('the saved audit comes back after a reload, in full', /Named in 3 of 3 answers/.test(reloaded) && /33%/.test(reloaded), reloaded.slice(0, 300));
 
+    // --- after a reload nothing is explicitly selected; adding a query must still work
+    await page.locator('aside').getByText('Query Intent Matrix', { exact: false }).first().click();
+    await page.fill('input[placeholder^="Type extra target search query"]', 'poke bowl catering');
+    await page.click('button:has-text("Add & Audit Query")');
+    assert('after a reload an added query still appears (it used to vanish silently)', await appears(page, 'text=poke bowl catering', 30000));
+    assert('...and the card says added queries are not kept', /lost on reload/.test(await page.locator('main').innerText()));
+
     // --- Fresh search really leaves the audit
     await page.locator('header >> text=GEO Audit Studio').first().click();
     assert('"fresh search" returns to the search form even when audits exist', await appears(page, '#business-name-input', 5000));
