@@ -104,6 +104,31 @@ export function visibilityBasis(
 }
 
 /**
+ * The brand's own website was cited in some answers that never named it. Its own number, shown under the headline and
+ * never added to it (docs/DECISIONS.md, decision A). Null when there is nothing to say or nothing was measured.
+ */
+export function citedOnlyLine(audit: Pick<AuditReport, 'degraded' | 'observationsWithEvidence' | 'observationsCitedOnly'>): string | null {
+  if (audit.degraded) return null;
+  const n = audit.observationsCitedOnly;
+  if (typeof n !== 'number' || n <= 0) return null;
+  return `+${n} cite your site without naming you`;
+}
+
+/** The one-line explanation that goes with `citedOnlyLine`. */
+export const CITED_ONLY_EXPLAINER = 'A cited source is not a mention: these answers linked to your website but never said your name, so they are not in the percentage above.';
+
+/**
+ * A report measured before the rule changed (no metricVersion) counted a cited source as a mention. It is not
+ * silently reinterpreted: it says so. Null for reports on the current rule, and for ones with no measurements.
+ */
+export function metricVersionNote(audit: Pick<AuditReport, 'degraded' | 'metricVersion' | 'observationsWithEvidence'>): string | null {
+  if (audit.degraded) return null;
+  if (audit.metricVersion !== undefined && audit.metricVersion >= 2) return null;
+  if (typeof audit.observationsWithEvidence !== 'number') return null;
+  return 'Measured under the earlier rule, where citing your website also counted as a mention. New audits count only answers that name you, so this figure is not directly comparable.';
+}
+
+/**
  * When every question asked names the brand, "visible in 100% of answers" is
  * close to guaranteed by construction - the engine was asked about the brand.
  * That measures reputation, not discovery, and must not pass for a finding.

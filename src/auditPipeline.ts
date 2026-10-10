@@ -257,6 +257,7 @@ export function assembleReport(input: {
 
       engineResults[ev.engine] = {
         engine: ev.engine,
+        citedOnly: client?.citedOnly ? true : undefined,
         status: !client || !client.mentioned
           ? 'omitted'
           : client.rank === 1
@@ -441,6 +442,9 @@ export function assembleReport(input: {
     observationsWithEvidence: usableEvidence.length,
     // Numerator behind geoVisibilityScore, so the UI can show "1 of 3".
     observationsMentioned: clientScore.timesMentioned,
+    // Answers that cite the brand's own website without naming it: its own number, never blended into the headline.
+    observationsCitedOnly: clientScore.citedOnlyCount,
+    metricVersion: 2,
     enginesRequested: engines,
   };
 
@@ -448,7 +452,11 @@ export function assembleReport(input: {
   // by the server in the first sentence. A model sentence that states ANY figure is removed and
   // the removal is said, never hidden (docs/RELIABILITY.md section 4). Digits inside names the
   // person typed or the audit found ("3M", "7-Eleven", a query "top 10 ...") are not figures.
-  const factualSentence = `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.`;
+  const citedOnlyClause =
+    clientScore.citedOnlyCount > 0
+      ? ` In ${clientScore.citedOnlyCount} more, ${businessName}'s website was cited as a source without ${businessName} being named; that is not counted as visibility.`
+      : '';
+  const factualSentence = `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.${citedOnlyClause}`;
   const guarded = narrativeAvailable
     ? guardSummary(typeof narrative?.executiveSummary === 'string' ? narrative.executiveSummary : '', guardNames)
     : null;

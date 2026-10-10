@@ -23,6 +23,8 @@ export interface EngineResult {
   position: number | null; // 1 = top recommendation, 2 = runner up, null = omitted
   excerpt: string;
   citations: string[];
+  /** The brand's website was cited but its name was not in the answer (status stays 'omitted'). */
+  citedOnly?: boolean;
   keyInaccuracy?: string;
   keyOmissionReason?: string;
 }
@@ -168,6 +170,16 @@ export interface AuditReport {
   observationsWithEvidence?: number;
   /** Of observationsWithEvidence, how many named the brand (numerator of geoVisibilityScore). */
   observationsMentioned?: number;
+  /**
+   * Of observationsWithEvidence, how many cite the brand's own website without naming it. Never part of
+   * geoVisibilityScore. Absent on reports saved before metricVersion 2.
+   */
+  observationsCitedOnly?: number;
+  /**
+   * 2 = a brand counts as visible only when its name appears in the answer (cited-only is separate).
+   * Absent = measured under the earlier rule, where a cited source also counted as a mention.
+   */
+  metricVersion?: number;
   enginesRequested?: string[];
   /** Engines genuinely queried in this audit - never a claim about untested ones. */
   measuredEngines?: string[];

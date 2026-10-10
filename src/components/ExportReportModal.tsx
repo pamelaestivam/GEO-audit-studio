@@ -12,6 +12,9 @@ import {
   engineModelsLine,
   MEASUREMENT_DISCLOSURE,
   visibilityBasis,
+  citedOnlyLine,
+  CITED_ONLY_EXPLAINER,
+  metricVersionNote,
   rangeExplanation,
   visibilityRange,
   wasAssessed,
@@ -42,6 +45,8 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const measured = hasMeasurements(audit);
   const accuracy = describeAccuracy(audit);
   const basis = visibilityBasis(audit);
+  const citedOnly = citedOnlyLine(audit);
+  const versionNote = metricVersionNote(audit);
   const range = visibilityRange(audit);
   const rangeText = rangeExplanation(audit);
   const lowSample = isLowSample(audit);
@@ -79,7 +84,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const handleCopyText = async () => {
     const summaryText = `GEO AI SEARCH AUDIT REPORT - ${audit.businessName}${audit.domain ? ` (${audit.domain})` : ''}
 Date: ${new Date(audit.createdAt).toLocaleDateString()}
-Engines measured: ${modelsLine ? `${modelsLine} (model ids requested)` : enginesLine}${basis ? `\n${basis}` : ''}${capturedLine ? `\n${capturedLine}` : ''}
+Engines measured: ${modelsLine ? `${modelsLine} (model ids requested)` : enginesLine}${basis ? `\n${basis}` : ''}${citedOnly ? `\n${citedOnly}. ${CITED_ONLY_EXPLAINER}` : ''}${versionNote ? `\n${versionNote}` : ''}${capturedLine ? `\n${capturedLine}` : ''}
 ${caveats.length ? `\nCAVEATS:\n${caveats.map((c) => `- ${c}`).join('\n')}\n` : ''}
 Visibility (answers naming the brand): ${formatScore(audit)}${measured ? '/100' : ''}${range ? ` (rough 95% range ${range})` : ''}
 Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoice)}
@@ -162,6 +167,8 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
               <span className={`text-3xl font-black block ${measured && !lowSample ? 'text-emerald-400' : 'text-slate-400'}`}>{formatScore(audit)}</span>
               <span className="text-[10px] font-semibold text-slate-400 uppercase">GEO Visibility Score</span>
               {basis && <span className="block text-[10px] text-slate-400 mt-1">{basis}</span>}
+              {citedOnly && <span className="block text-[10px] text-slate-400 mt-0.5">{citedOnly}. {CITED_ONLY_EXPLAINER}</span>}
+              {versionNote && <span className="block text-[10px] text-amber-300/90 mt-0.5">{versionNote}</span>}
               {range && <span className="block text-[10px] text-slate-300 mt-1">Rough 95% range: {range}</span>}
               {measured && modelsLine && <span className="block text-[10px] text-slate-400 mt-1">Models requested: {modelsLine}</span>}
               {measured && capturedLine && <span className="block text-[10px] text-slate-400 mt-1">{capturedLine}</span>}

@@ -519,5 +519,30 @@ check(
   check('accuracy never goes below 0', computeAccuracyRate(new Set(['0|Gemini']), ['0|Gemini', '0|Gemini', '0|Gemini']), 0);
 }
 
+// ---------------------------------------------------------------- decision A: cited-only is its own number
+{
+  const citedNoName = evidence({
+    answerText: 'The leading option is Adyen. PayPal is also popular.',
+    citations: [{ url: 'https://stripe.com/docs', title: 'Stripe Docs', domain: 'stripe.com' }],
+  });
+  const namedAndCited = evidence({
+    answerText: 'The leading option is Stripe. PayPal is also popular.',
+    citations: [{ url: 'https://stripe.com/docs', title: 'Stripe Docs', domain: 'stripe.com' }],
+  });
+  const neither = evidence({ answerText: 'The leading option is Adyen.', citations: [] });
+  const m = [stripe, buildBrandMatcher('Adyen')];
+  const a = analyseAnswer(citedNoName, m).find((r) => r.brand === 'Stripe')!;
+  check('a brand whose website is cited but whose name is absent is NOT mentioned', [a.mentioned, a.citedAsSource, a.citedOnly], [false, true, true]);
+  check('...so it has no rank and no prominence (only a name earns those)', [a.rank, a.prominence, a.firstMentionIndex], [null, 0, -1]);
+  const b = analyseAnswer(namedAndCited, m).find((r) => r.brand === 'Stripe')!;
+  check('named AND cited is a mention, not cited-only', [b.mentioned, b.citedAsSource, b.citedOnly], [true, true, false]);
+  const c = analyseAnswer(neither, m).find((r) => r.brand === 'Stripe')!;
+  check('neither named nor cited is neither', [c.mentioned, c.citedAsSource, c.citedOnly], [false, false, false]);
+  const cards = buildScorecards([analyseAnswer(citedNoName, m), analyseAnswer(namedAndCited, m), analyseAnswer(neither, m)], m);
+  const s = cards.find((x) => x.brand === 'Stripe')!;
+  check('over three answers: visibility counts the one that names the brand (33%), cited-only is 1, cited at all is 2', [s.visibility, s.timesMentioned, s.citedOnlyCount, s.citedAsSourceCount], [33, 1, 1, 2]);
+  check('share of voice does not count the cited-only answer either (1 of 3 mentions = 33%; counting it would give 2 of 4 = 50%)', s.shareOfVoice, 33);
+}
+
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

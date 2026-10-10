@@ -17,6 +17,9 @@ import {
   formatScore,
   isLowSample,
   visibilityBasis,
+  citedOnlyLine,
+  CITED_ONLY_EXPLAINER,
+  metricVersionNote,
   visibilityRange,
   rangeExplanation,
   lowSampleReason,
@@ -215,6 +218,12 @@ check('the panel for a new audit is an openable list; for an older audit it is p
 check('the singular reads correctly', notCountedView(nc({ inaccuraciesDiscarded: 1, notCounted: [nc().notCounted[0]] }))?.summary, '1 claim the analysis reported was not counted.');
 check('rows are capped in the report, and the rest are still counted', [notCountedView(nc({ inaccuraciesDiscarded: 25, notCounted: Array(20).fill(nc().notCounted[0]) }))?.moreCount, notCountedView(nc())?.moreCount], [5, 0]);
 check('an old saved audit with a count but no rows still shows the strip (and no invented rows)', [notCountedView(nc({ notCounted: undefined }))?.summary, notCountedView(nc({ notCounted: undefined }))?.rows.length, notCountedView(nc({ notCounted: undefined }))?.moreCount], ['2 claims the analysis reported were not counted.', 0, 2]);
+
+// ---- decision A: the cited-only sub-line and the note on reports measured under the earlier rule
+check('the cited-only sub-line states the number and who did what, with a plus sign', citedOnlyLine({ degraded: false, observationsWithEvidence: 6, observationsCitedOnly: 2 }), '+2 cite your site without naming you');
+check('...nothing when there are none, when it is absent, or when the audit failed', [citedOnlyLine({ degraded: false, observationsWithEvidence: 6, observationsCitedOnly: 0 }), citedOnlyLine({ degraded: false, observationsWithEvidence: 6 }), citedOnlyLine({ degraded: true, observationsWithEvidence: 0, observationsCitedOnly: 2 })], [null, null, null]);
+check('the explainer says a cited source is not a mention and is not in the percentage', /not a mention/.test(CITED_ONLY_EXPLAINER) && /not in the percentage/.test(CITED_ONLY_EXPLAINER), true);
+check('a report from before the rule change says so; one on the current rule does not; a failed audit does not', [/earlier rule/.test(metricVersionNote({ degraded: false, observationsWithEvidence: 3 }) || ''), metricVersionNote({ degraded: false, metricVersion: 2, observationsWithEvidence: 3 }), metricVersionNote({ degraded: true, observationsWithEvidence: 0 })], [true, null, null]);
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

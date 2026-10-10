@@ -237,6 +237,13 @@ export function assertReportInvariants(report: any): string[] {
   }
   if (isNum(attempted) && isNum(withEvidence) && withEvidence > attempted) v.push(`${withEvidence} usable answers out of ${attempted} attempted`);
   if (isNum(withEvidence) && isNum(mentioned) && mentioned > withEvidence) v.push(`named in ${mentioned} of only ${withEvidence} usable answers`);
+  const citedOnly = report.observationsCitedOnly;
+  if (citedOnly !== undefined) {
+    if (!isNum(citedOnly) || citedOnly < 0 || !Number.isInteger(citedOnly)) v.push(`observationsCitedOnly is ${JSON.stringify(citedOnly)}, not a count`);
+    else if (isNum(withEvidence) && isNum(mentioned) && mentioned + citedOnly > withEvidence) {
+      v.push(`${mentioned} named plus ${citedOnly} cited without being named is more than the ${withEvidence} usable answers (the two are separate and cannot overlap)`);
+    }
+  }
   if (isNum(withEvidence) && isNum(mentioned) && withEvidence > 0 && isNum(report.geoVisibilityScore)) {
     const expected = Math.round((mentioned / withEvidence) * 100);
     if (Math.abs(report.geoVisibilityScore - expected) > 1) {

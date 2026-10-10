@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -136,6 +136,11 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
                     ? [{ title: 'Add schema', category: 'Schema & Entity Data', priority: 'P1 High', effort: 'Quick Win (< 2h)', description: 'Add JSON-LD', stepByStepInstructions: ['Add it'], targetUrls: [] }]
                     : [],
               })
+            : mode === 'cited_only'
+              ? // the first question's answer never names the brand but cites its website; the second names it and cites it
+                body.includes('poke house menu')
+                ? FAKE_ANSWER
+                : FAKE_ANSWER.replace('* **Poke House** - solid fresh fish.\n', '')
             : mode === 'many_vendors'
               ? // the second question's answer never names the brand, so "who took the answer" is exercised
                 body.includes('poke house menu')
@@ -149,7 +154,10 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
             {
               content: { parts: [{ text }], role: 'model' },
               groundingMetadata: {
-                groundingChunks: [{ web: { uri: 'https://yelp.com/biz/x', title: 'yelp.com' } }],
+                groundingChunks: [
+                  { web: { uri: 'https://yelp.com/biz/x', title: 'yelp.com' } },
+                  ...(mode === 'cited_only' && !wantsJson ? [{ web: { uri: 'https://poke.house/menu', title: 'poke.house' } }] : []),
+                ],
                 webSearchQueries: ['poke austin'],
               },
               finishReason: 'STOP',
