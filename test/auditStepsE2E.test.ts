@@ -226,6 +226,8 @@ async function main() {
     {
       const conn = new DatabaseSync(unexplained.db);
       const t = Date.now();
+      // one that ended a day and an hour ago must NOT be counted (pins the window the server passes to the store)
+      conn.prepare("INSERT INTO jobs (id, owner, status, started_at, finished_at, budget_key) VALUES ('ghost-old', 'someone@example.com', 'error', ?, ?, 'someone@example.com')").run(t - 25 * 3600_000 - 2000, t - 25 * 3600_000);
       conn.prepare("INSERT INTO jobs (id, owner, status, started_at, finished_at, budget_key) VALUES ('ghost-1', 'someone@example.com', 'error', ?, ?, 'someone@example.com')").run(t - 2000, t - 1000);
       conn.close();
       const ghost = await troubleOf(unexplained.base);

@@ -31,6 +31,9 @@ check('...and says how many finished normally', fine.detail, 'No audit failed an
 const unmeasured = summariseRecentTrouble({ ...base, durable: false, outcomes: none, incidents: [] });
 check('on a server that keeps nothing, silence is NOT reported as health: it says it could not check', [unmeasured.ok, unmeasured.verified, /^Not checked\./.test(unmeasured.detail), /No audit failed/.test(unmeasured.detail)], [true, false, true, false]);
 
+const unmeasuredWithSuccess = summariseRecentTrouble({ ...base, durable: false, outcomes: { ...none, succeeded: 2 }, incidents: [] });
+check('...and when audits did finish on that server it says so instead of claiming nothing was recorded', [unmeasuredWithSuccess.verified, /2 audits finish normally and no failure/.test(unmeasuredWithSuccess.detail), /Nothing was recorded/.test(unmeasuredWithSuccess.detail)], [false, true, false]);
+
 const benign = summariseRecentTrouble({ ...base, outcomes: { failed: { stuck: 2, restarted: 1 }, degraded: 0, succeeded: 5 }, incidents: [inc('lease_expired_midcall')] });
 check('audits stopped for taking too long, a restart and a repeated call are noted but are not a fault', [benign.ok, benign.serious], [true, 0]);
 check('...and the sentence names each one', benign.detail, 'In the last 24 hours: 3 audits ended in error (2 took too long and were stopped, 1 was interrupted by a restart); 1 incident was recorded (1 lease expired midcall); 5 audits finished normally. None of this is a fault in the server: restarts, slow audits, repeated calls and an occasional empty audit are expected now and then.');
@@ -57,6 +60,8 @@ check('a code this version does not know is shown, not hidden, and is not assume
 // ---- empty audits: every one empty is a fault; some empty among successes is noted
 const allEmpty = summariseRecentTrouble({ ...base, outcomes: { ...none, degraded: 3 }, incidents: [] });
 check('every audit in the window finishing with no result is a fault and says what to check', [allEmpty.ok, /3 audits finished with no result/.test(allEmpty.detail), /key is accepted/.test(allEmpty.detail), /No audit failed/.test(allEmpty.detail)], [false, true, true, false]);
+const oneEmpty = summariseRecentTrouble({ ...base, outcomes: { ...none, degraded: 1 }, incidents: [] });
+check('a single audit that came back empty, with nothing else in the window, is already a fault (a person got nothing)', [oneEmpty.ok, /1 audit finished with no result/.test(oneEmpty.detail)], [false, true]);
 const someEmpty = summariseRecentTrouble({ ...base, outcomes: { ...none, degraded: 1, succeeded: 6 }, incidents: [] });
 check('...one empty audit among six that worked is noted, not a fault', [someEmpty.ok, /1 audit finished with no result/.test(someEmpty.detail), /6 audits finished normally/.test(someEmpty.detail)], [true, true, true]);
 

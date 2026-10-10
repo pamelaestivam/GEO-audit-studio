@@ -98,7 +98,8 @@ Google login; secrets must never be in the repo or in chat.
    on GitHub, repository **Settings** then **Secrets and variables** then **Actions** then **New repository secret**,
    twice: `LIVE_CHECK_EMAIL` (any email) and `LIVE_CHECK_ACCESS_CODE` (one of the codes in `ACCESS_CODES`). Until both
    exist, each daily run prints a warning that the signed-in checks were skipped; nothing else changes. These checks
-   make one real Gemini call a day.
+   make a real Gemini call each time the live check runs (daily, and after each Production deployment; at most
+   once every five minutes, up to three tries per run), counted by the $0 guard.
 Optional and faster: connect the **Vercel** connector in claude.ai (Settings then
 Connectors). It gives the assistant read access to projects and deployments, so the
 assistant can check this itself. It does not set variables.

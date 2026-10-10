@@ -85,7 +85,7 @@ export function summariseRecentTrouble(input: {
         ok: true,
         verified: false,
         serious: 0,
-        detail: `Not checked. This server keeps nothing across restarts or between its instances, so it cannot say whether audits failed in ${window}. Nothing was recorded here since it started.`,
+        detail: `Not checked. This server keeps nothing across restarts or between its instances, so it cannot say whether audits failed in ${window}. Since it started it has seen ${succeeded > 0 ? `${plural(succeeded, 'audit', 'audits')} finish normally and ` : ''}no failure.`,
       };
     }
     const fine = succeeded > 0 ? ` ${plural(succeeded, 'audit finished', 'audits finished')} normally.` : '';
@@ -97,7 +97,7 @@ export function summariseRecentTrouble(input: {
     parts.push(`${plural(failedTotal, 'audit ended', 'audits ended')} in error (${failedEntries.map(([code, n]) => describeFailCode(code, n)).join(', ')})`);
   }
   if (degraded > 0) {
-    parts.push(`${plural(degraded, 'audit finished', 'audits finished')} with no result (the answer engines or the analysis failed)`);
+    parts.push(`${plural(degraded, 'audit finished', 'audits finished')} with no result`);
   }
   if (incidents.length > 0) {
     const kinds = Object.entries(incidentsByKind)
