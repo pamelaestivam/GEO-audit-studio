@@ -81,7 +81,7 @@ async function main() {
     assert('...its list is closed until asked for', !(await strip.evaluate((el) => (el as HTMLDetailsElement).open)));
     await strip.locator('summary').click();
     const opened = await strip.innerText();
-    assert('opened, it marks every row unverified and gives a plain reason', (opened.match(/unverified/gi) || []).length === 2 && /did not ask|could not be tied|did not measure/.test(opened), opened);
+    assert('opened, it marks every row unverified and gives a plain reason', (opened.match(/unverified/gi) || []).length === 2 && /could not be tied|does not match any engine/.test(opened), opened);
     assert('...and says none of it is in any figure', /left out of every figure and every rate/.test(opened), opened);
 
     assert('the findings tile does not read as a clean zero either', /2 reported claims not listed/.test(card), card.slice(0, 900));

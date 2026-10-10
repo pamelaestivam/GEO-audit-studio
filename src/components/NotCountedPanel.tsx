@@ -10,6 +10,13 @@ import type { AuditReport } from '../types';
 export const NotCountedPanel: React.FC<{ audit: AuditReport }> = ({ audit }) => {
   const view = notCountedView(audit);
   if (!view) return null;
+  if (!view.reasonsRecorded) {
+    return (
+      <p data-testid="not-counted" className="mb-4 rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-2.5 text-xs text-slate-300">
+        <span className="font-semibold text-slate-200">{view.summary}</span> The reasons were not recorded for this older audit. {view.footer}
+      </p>
+    );
+  }
   return (
     <details data-testid="not-counted" className="mb-4 rounded-xl border border-slate-700 bg-slate-900/60 text-xs text-slate-300">
       <summary className="cursor-pointer select-none px-4 py-2.5 font-semibold text-slate-200">

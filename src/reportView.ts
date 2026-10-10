@@ -270,11 +270,11 @@ export function wasAssessed(audit: Pick<AuditReport, 'degraded' | 'narrativeAvai
 
 /** Plain-language reasons a reported claim is not in any counted figure. */
 export const NOT_COUNTED_REASONS: Record<string, string> = {
-  no_such_question: 'It pointed at a question this audit did not ask.',
+  no_such_question: 'It could not be tied to any question this audit asked.',
   ambiguous_question: 'It could not be tied to one question (two questions share its wording, or the number and the text disagreed).',
-  engine_not_measured: 'It named an engine this audit did not measure.',
+  engine_not_measured: 'The engine it named does not match any engine this audit measured.',
   engine_not_identified: 'It did not say which engine\'s answer it was about, and more than one engine answered that question.',
-  answer_does_not_name_brand: 'The answer it points at does not name the brand, so there is nothing for it to be wrong about.',
+  answer_does_not_name_brand: 'The answer it points at does not name the brand (or no answer was captured for it), so there is nothing for it to be wrong about.',
 };
 
 export interface NotCountedView {
@@ -284,13 +284,15 @@ export interface NotCountedView {
   /** Claims left out beyond the rows kept in the report (rows are capped). */
   moreCount: number;
   footer: string;
+  /** False for an audit saved before reasons were recorded: only the count is known. */
+  reasonsRecorded: boolean;
 }
 
 /** The plain-text block the exported report carries for claims that were not counted ('' when there are none). */
 export function notCountedExportText(view: NotCountedView | null): string {
   if (!view) return '';
   const rows = view.rows.map((r) => `\n- "${r.text}" (unverified): ${r.reason}`).join('');
-  const more = view.moreCount > 0 ? `\n- ...and ${view.moreCount} more not listed.` : '';
+  const more = !view.reasonsRecorded ? '\n- (The reasons were not recorded for this older audit.)' : view.moreCount > 0 ? `\n- ...and ${view.moreCount} more not listed.` : '';
   return `\n\nNOT COUNTED: ${view.summary} ${view.footer}${rows}${more}`;
 }
 
@@ -299,7 +301,7 @@ export function notCountedExportText(view: NotCountedView | null): string {
  * with the reason. null when nothing was left out, or when no analysis was assessed (nothing to leave out).
  */
 export function notCountedView(
-  audit: Pick<AuditReport, 'degraded' | 'narrativeAvailable' | 'inaccuraciesDiscarded' | 'notCounted'>
+  audit: Pick<AuditReport, 'degraded' | 'narrativeAvailable' | 'inaccuraciesDiscarded' | 'notCounted' | 'accuracyRate'>
 ): NotCountedView | null {
   if (!hasMeasurements(audit) || audit.narrativeAvailable === false) return null;
   const count = audit.inaccuraciesDiscarded ?? 0;
@@ -309,6 +311,7 @@ export function notCountedView(
     summary: `${count} ${count === 1 ? 'claim' : 'claims'} the analysis reported ${count === 1 ? 'was' : 'were'} not counted.`,
     rows,
     moreCount: Math.max(0, count - rows.length),
-    footer: 'These are left out of every figure and every rate, and none of them is verified. Accuracy is shown as "at most" the number printed.',
+    footer: `These are left out of every figure and every rate, and none of them is verified.${typeof audit.accuracyRate === 'number' ? ' Accuracy is shown as "at most" the number printed.' : ''}`,
+    reasonsRecorded: rows.length > 0,
   };
 }

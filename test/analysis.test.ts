@@ -13,6 +13,8 @@ import {
   extractCandidateVendors,
   extractDomain,
   attributeInaccuracies,
+  notCountedItems,
+  MAX_NOT_COUNTED_ROWS,
   computeAccuracyRate,
   queryNamesBrand,
   sourcesForBrand,
@@ -493,6 +495,13 @@ check(
     reasons([{ queryText: 'Best poke in Austin?', engine: 'ChatGPT' }]),
     reasons([{ queryText: 'poke cost', queryNumber: 2, engine: 'Gemini' }], ['Gemini'], new Set(['0|Gemini'])),
   ], [['no_such_question'], ['ambiguous_question'], ['ambiguous_question'], ['engine_not_measured'], ['answer_does_not_name_brand']]);
+  const dc = (claimedFact: unknown) => ({ claim: { claimedFact }, reason: 'no_such_question' as const });
+  check('the list keeps at most MAX_NOT_COUNTED_ROWS rows (20), in the model\'s order', [notCountedItems(Array.from({ length: 25 }, (_, i) => dc(`claim ${i}`))).length, notCountedItems(Array.from({ length: 25 }, (_, i) => dc(`claim ${i}`)))[19].text, MAX_NOT_COUNTED_ROWS], [20, 'claim 19', 20]);
+  check('a long claim is cut to 300 characters with an ellipsis; a short one is untouched', [notCountedItems([dc('x'.repeat(400))])[0].text.length, notCountedItems([dc('x'.repeat(400))])[0].text.endsWith('...'), notCountedItems([dc('x'.repeat(300))])[0].text.length], [300, true, 300]);
+  const emoji = notCountedItems([dc('\u{1F600}'.repeat(400))])[0].text;
+  check('cutting never splits a surrogate pair (no lone surrogate in the stored report)', [/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(emoji), Array.from(emoji).length], [false, 300]);
+  check('whitespace and newlines collapse to single spaces', notCountedItems([dc('  a\n\n  b\t c  ')])[0].text, 'a b c');
+  check('a claim with no text, or a non-string, gets the placeholder', [notCountedItems([dc(''), dc(null), dc(42), { claim: null as any, reason: 'no_such_question' as const }]).map((r) => r.text.startsWith('(the analysis gave no text'))], [[true, true, true, true]]);
   check('a claim naming no engine on a question several engines answered is "engine not identified", not "answer does not name the brand"',
     attributeInaccuracies([{ queryNumber: 1 }], queries, ['Gemini', 'Perplexity'], new Set(['0|Gemini', '0|Perplexity'])).discardedClaims.map((d) => d.reason), ['engine_not_identified']);
   check('...while a claim about an answer that does not name the brand stays that, with or without a named engine',

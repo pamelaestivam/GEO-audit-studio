@@ -652,7 +652,7 @@ export const MAX_NOT_COUNTED_ROWS = 20;
 export function notCountedItems(discarded: DiscardedClaim<{ claimedFact?: unknown }>[]): NotCountedItem[] {
   return discarded.slice(0, MAX_NOT_COUNTED_ROWS).map(({ claim, reason }) => {
     const raw = typeof claim?.claimedFact === 'string' ? claim.claimedFact.replace(/\s+/g, ' ').trim() : '';
-    return { kind: 'inaccuracy_claim' as const, text: raw ? (raw.length > 300 ? `${raw.slice(0, 297)}...` : raw) : '(the analysis gave no text for this claim)', reason };
+    return { kind: 'inaccuracy_claim' as const, text: raw ? (Array.from(raw).length > 300 ? `${Array.from(raw).slice(0, 297).join('')}...` : raw) : '(the analysis gave no text for this claim)', reason };
   });
 }
 
