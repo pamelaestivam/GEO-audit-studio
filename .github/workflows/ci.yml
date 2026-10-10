@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # same pin as the confidenceHigh repository
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
       - name: No tracked symlinks
         # A symlink named node_modules (pointing at a path outside the checkout) was
         # committed once by `git add -A` and CI stayed green because npm ci replaced it.
