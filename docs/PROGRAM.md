@@ -47,7 +47,7 @@ tell the owner or a client that it is dependable.
 | 6 | d. Paid-engine refusal and call counters ($0 guard, per instance) | next | nothing |
 | 7 | e. Step-wise audit state machine, leases, incidents; default returns to 3 | next | nothing |
 | 8 | f. PostgresStore on Supabase | blocked | owner action O-4 |
-| 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | next after 7 | O-3 for the live URL |
+| 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | partly: the scheduled live check with one tracking issue (`live-check.yml`, PR #32) is built but has not run on GitHub yet, and its `deployment_status` trigger is unproven (only the daily run and manual dispatch can be exercised); deep health endpoint and owner health section are not built | O-3 for the live URL |
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
 

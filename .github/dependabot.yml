@@ -1,0 +1,9 @@
+# Keeps the pinned GitHub Actions in .github/workflows current. A pinned commit SHA never moves on
+# its own, which is the point of pinning, so without this the pins would silently age. Each update
+# arrives as a pull request that runs the normal gate.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
