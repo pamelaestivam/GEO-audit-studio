@@ -41,6 +41,129 @@ export interface StoredJob {
    * someone's allowance. Defaults to true.
    */
   billable?: boolean;
+  /** Step-wise audits (docs/PLAN_STEP_E.md): the planned work, what it is doing, and who last touched it. */
+  plan?: unknown;
+  phase?: string;
+  heartbeatAt?: number;
+  instanceId?: string;
+  /** A short machine code for why a job failed (e.g. `step_attempts_exceeded`), beside the sentence in `error`. */
+  failCode?: string;
+}
+
+// ---- step-wise audits ------------------------------------------------------------------------
+// A job can be planned as an ordered list of steps (one answer-engine call each, then the narrative, then
+// the finish). A step is claimed under a lease, so two callers never run one step at the same time, and an
+// unfinished step is retried only a bounded number of times. Exactly-once is impossible for a call to an
+// outside service; what is recorded is when a call STARTED, so a step that died mid-call is counted as a
+// possibly repeated call instead of being hidden. Nothing in the server uses this yet (slice S2).
+
+export type StepKind = 'collect' | 'narrative' | 'finalize';
+export type StepState = 'pending' | 'leased' | 'done' | 'skipped' | 'failed';
+
+export interface PlannedStep {
+  /** Stable name, e.g. `collect:0:Gemini`. */
+  key: string;
+  kind: StepKind;
+  queryIndex?: number;
+  engine?: string;
+}
+
+export interface JobStep extends PlannedStep {
+  jobId: string;
+  /** Position in the plan; steps run in this order. */
+  seq: number;
+  state: StepState;
+  /** How many times it has been claimed. */
+  attempt: number;
+  leaseUntil?: number;
+  leaseHolder?: string;
+  /** Set just before the outside call; empty when the step has not reached it. */
+  callStartedAt?: number;
+  finishedAt?: number;
+  result?: any;
+  skipReason?: string;
+  errorCode?: string;
+  /**
+   * Times a step was re-claimed after its lease expired with a call already started. A LOWER BOUND on repeated
+   * provider calls: a collector can also retry inside one step, which this does not see. Say "at least" wherever
+   * it is shown.
+   */
+  repeatedCalls: number;
+}
+
+export interface StepCompletion {
+  state: 'done' | 'skipped' | 'failed';
+  result?: any;
+  skipReason?: string;
+  errorCode?: string;
+}
+
+export type ClaimResult =
+  | { outcome: 'claimed'; step: JobStep; reclaimedMidCall: boolean }
+  /** Another holder has the step and its lease has not expired. */
+  | { outcome: 'busy'; step: JobStep }
+  /**
+   * The step was claimed `maxAttempts` times and never finished: it is failed. The store does NOT fail the job or
+   * record an incident: the caller must end the job with a sentence and a failCode and record the incident. Until
+   * it does, EVERY claim on the job reports this again, so a caller that crashed before closing the job is
+   * reminded by the next one (slices S3 and S5).
+   */
+  | { outcome: 'exhausted'; step: JobStep }
+  /** A step ended `failed` for another reason (completeStep) and the job is still running: close it, as above. */
+  | { outcome: 'failed'; step: JobStep }
+  /** Nothing to claim: the job is finished, failed, unknown, or all its steps are in a final state. */
+  | { outcome: 'none' };
+
+export type IncidentKind = 'lease_expired_midcall' | 'step_attempts_exceeded' | 'invariant';
+
+export interface Incident {
+  id: number;
+  jobId?: string;
+  at: number;
+  kind: IncidentKind;
+  /** A sentence for the owner. Never a provider payload or a secret. */
+  detail: string;
+}
+
+/**
+ * The one definition of "may this step be claimed now" (both stores call it, so they cannot drift).
+ * Steps run in order: only the first step that is not finished is ever considered.
+ */
+export function decideClaim(
+  jobStatus: JobStatus | undefined,
+  steps: JobStep[],
+  holder: string,
+  leaseMs: number,
+  now: number,
+  maxAttempts: number
+): { result: ClaimResult; index: number; patch?: Partial<JobStep> } {
+  const none = { result: { outcome: 'none' } as ClaimResult, index: -1 };
+  if (jobStatus !== 'running') return none;
+  const failed = steps.find((st) => st.state === 'failed');
+  if (failed) {
+    return { result: failed.errorCode === 'step_attempts_exceeded' ? { outcome: 'exhausted', step: failed } : { outcome: 'failed', step: failed }, index: -1 };
+  }
+  const index = steps.findIndex((st) => st.state === 'pending' || st.state === 'leased');
+  if (index < 0) return none;
+  const step = steps[index];
+  if (step.state === 'leased' && (step.leaseUntil ?? 0) > now) return { result: { outcome: 'busy', step }, index };
+  // Anything but a whole number of at least 1 (NaN from a bad setting, undefined from a caller) allows one try,
+  // never unlimited ones.
+  const limit = Number.isInteger(maxAttempts) && maxAttempts >= 1 ? maxAttempts : 1;
+  if (step.attempt >= limit) {
+    const patch: Partial<JobStep> = { state: 'failed', errorCode: 'step_attempts_exceeded', finishedAt: now, leaseUntil: undefined, leaseHolder: undefined, callStartedAt: undefined };
+    return { result: { outcome: 'exhausted', step: { ...step, ...patch } }, index, patch };
+  }
+  const reclaimedMidCall = step.state === 'leased' && step.callStartedAt !== undefined;
+  const patch: Partial<JobStep> = {
+    state: 'leased',
+    attempt: step.attempt + 1,
+    leaseUntil: now + leaseMs,
+    leaseHolder: holder,
+    callStartedAt: undefined,
+    repeatedCalls: step.repeatedCalls + (reclaimedMidCall ? 1 : 0),
+  };
+  return { result: { outcome: 'claimed', step: { ...step, ...patch }, reclaimedMidCall }, index, patch };
 }
 
 export interface AuditSummary {
@@ -69,16 +192,55 @@ export interface StoreInfo {
   note?: string;
 }
 
+/** Thrown when another process holds the database's writer lock for longer than the wait allows. */
+export class StoreBusyError extends Error {
+  readonly code = 'store_busy';
+  constructor(detail?: string) {
+    super(`The database is busy and did not answer in time${detail ? ` (${detail})` : ''}.`);
+    this.name = 'StoreBusyError';
+  }
+}
+
+/** Incident text is a sentence for the owner, never a payload: longer text is cut here, in the store. */
+export const MAX_INCIDENT_DETAIL = 500;
+
 export interface Store {
   info(): StoreInfo;
+  /**
+   * Names this running store instance (new on every start), so a job can say which instance last touched it.
+   * Deliberately NOT part of `info()`, which is shown on a public status endpoint.
+   */
+  readonly instanceId: string;
 
   createJob(job: StoredJob): Promise<void>;
   getJob(id: string): Promise<StoredJob | null>;
   findJobByKey(owner: string, idemKey: string): Promise<StoredJob | null>;
   updateJob(
     id: string,
-    patch: Partial<Pick<StoredJob, 'status' | 'progress' | 'result' | 'error' | 'finishedAt' | 'billable'>>
+    patch: Partial<Pick<StoredJob, 'status' | 'progress' | 'result' | 'error' | 'finishedAt' | 'billable' | 'phase'>> & { failCode?: string | null }
   ): Promise<void>;
+  /** Record that something is working on the job now (and which instance), optionally with a phase. */
+  touchJob(id: string, now: number, patch?: { phase?: string }): Promise<void>;
+
+  /** Create a job and its ordered steps in one atomic write; the same idempotency rule as createJob. */
+  createPlannedJob(job: StoredJob, steps: PlannedStep[]): Promise<void>;
+  getJobSteps(jobId: string): Promise<JobStep[]>;
+  /** Claim the next step under a lease. See `decideClaim` for the rules. */
+  claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number): Promise<ClaimResult>;
+  /**
+   * Record that the outside call is about to start. `attempt` is the number `claimStep` returned: false unless
+   * the step is still leased to this holder AT THIS ATTEMPT (a fencing token, so a stale invocation of the same
+   * holder cannot touch a newer claim).
+   */
+  markCallStarted(jobId: string, seq: number, holder: string, attempt: number, now: number): Promise<boolean>;
+  /**
+   * Store a step's outcome. False (and nothing stored) unless the step is still leased at this `attempt`: a
+   * result from an older attempt that was reclaimed in the meantime is refused, so one attempt owns one result.
+   */
+  completeStep(jobId: string, seq: number, attempt: number, completion: StepCompletion, now: number): Promise<boolean>;
+  recordIncident(incident: Omit<Incident, 'id'>): Promise<void>;
+  /** Newest first. */
+  listIncidents(opts?: { jobId?: string; limit?: number }): Promise<Incident[]>;
   /** Jobs still running that started within `maxAgeMs`. */
   countRunning(maxAgeMs: number, now?: number): Promise<number>;
   /** Billable jobs started at or after `sinceMs` under one budget key, or (omitted) everyone's. */
@@ -120,6 +282,53 @@ export function summariseAudit(report: any): AuditSummary {
   };
 }
 
+/** A copy that shares nothing with the original and reads back as the database would (JSON): no NaN, no Date. */
+function jsonCopy<T>(v: T): T {
+  return v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T);
+}
+
+/** Refuses a plan the database would refuse, so both stores reject the same inputs. */
+function assertPlannedSteps(steps: PlannedStep[]) {
+  const kinds = ['collect', 'narrative', 'finalize'];
+  steps.forEach((st, i) => {
+    if (!st || typeof st.key !== 'string' || st.key === '' || !kinds.includes(st.kind)) {
+      throw new Error(`planned step ${i} is not valid`);
+    }
+  });
+}
+
+function clampLimit(limit: number | undefined): number {
+  return Number.isInteger(limit) && (limit as number) >= 0 ? (limit as number) : 50;
+}
+
+function cutIncident(detail: string): string {
+  // Cut by whole characters (code points) so an emoji is never split into a lone half.
+  const chars = Array.from(String(detail ?? ''));
+  return chars.length > MAX_INCIDENT_DETAIL ? `${chars.slice(0, MAX_INCIDENT_DETAIL - 3).join('')}...` : chars.join('');
+}
+
+/** Retry `fn` while the database refuses it as locked, up to 60 tries of 25 to 50 ms (about two seconds), sleeping between. */
+function retryWhileLocked(fn: () => void) {
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fn();
+    } catch (err: any) {
+      if (!/locked|busy/i.test(String(err?.message || err)) || attempt >= 60) throw err;
+      Atomics.wait(sleeper, 0, 0, 25 + Math.floor(Math.random() * 25));
+    }
+  }
+}
+
+function newInstanceId(): string {
+  return `inst-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** A claim result that shares no object with the stored rows. */
+function cloneClaim(r: ClaimResult): ClaimResult {
+  return r.outcome === 'none' ? r : { ...r, step: { ...r.step, result: jsonCopy(r.step.result) } };
+}
+
 // ---------------------------------------------------------------------------
 // Memory
 // ---------------------------------------------------------------------------
@@ -127,6 +336,10 @@ export function summariseAudit(report: any): AuditSummary {
 export class MemoryStore implements Store {
   private jobs = new Map<string, StoredJob>();
   private audits = new Map<string, { owner: string; createdAtMs: number; report: any }>();
+  private steps = new Map<string, JobStep[]>();
+  private incidents: Incident[] = [];
+  private nextIncidentId = 1;
+  readonly instanceId = newInstanceId();
 
   constructor(private readonly note?: string) {}
 
@@ -152,7 +365,71 @@ export class MemoryStore implements Store {
   }
   async updateJob(id: string, patch: Parameters<Store['updateJob']>[1]) {
     const j = this.jobs.get(id);
-    if (j) Object.assign(j, patch);
+    if (!j) return;
+    const { failCode, ...rest } = patch;
+    Object.assign(j, rest);
+    // null clears the code (it then reads back as undefined, as on SQLite).
+    if (failCode === null) delete j.failCode;
+    else if (failCode !== undefined) j.failCode = failCode;
+  }
+  async touchJob(id: string, now: number, patch: { phase?: string } = {}) {
+    const j = this.jobs.get(id);
+    if (!j) return;
+    j.heartbeatAt = now;
+    j.instanceId = this.instanceId;
+    if (patch.phase !== undefined) j.phase = patch.phase;
+  }
+  async createPlannedJob(job: StoredJob, steps: PlannedStep[]) {
+    // All checks and both writes happen in one synchronous run, so nothing can read a half-made job.
+    assertPlannedSteps(steps);
+    if (this.jobs.has(job.id)) throw new Error('duplicate job id');
+    if (job.idemKey) {
+      for (const j of this.jobs.values()) if (j.owner === job.owner && j.idemKey === job.idemKey) throw new Error('duplicate idempotency key');
+    }
+    this.jobs.set(job.id, { ...job, billable: job.billable ?? true, budgetKey: job.budgetKey ?? job.owner });
+    this.steps.set(
+      job.id,
+      steps.map((st, seq) => ({ ...st, jobId: job.id, seq, state: 'pending' as const, attempt: 0, repeatedCalls: 0 }))
+    );
+  }
+  async getJobSteps(jobId: string) {
+    return (this.steps.get(jobId) || []).map((st) => ({ ...st, result: jsonCopy(st.result) }));
+  }
+  async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
+    const list = this.steps.get(jobId) || [];
+    const d = decideClaim(this.jobs.get(jobId)?.status, list, holder, leaseMs, now, maxAttempts);
+    if (d.patch) Object.assign(list[d.index], d.patch);
+    return cloneClaim(d.result);
+  }
+  async markCallStarted(jobId: string, seq: number, holder: string, attempt: number, now: number) {
+    const st = (this.steps.get(jobId) || [])[seq];
+    if (!st || st.state !== 'leased' || st.leaseHolder !== holder || st.attempt !== attempt) return false;
+    st.callStartedAt = now;
+    return true;
+  }
+  async completeStep(jobId: string, seq: number, attempt: number, c: StepCompletion, now: number) {
+    const st = (this.steps.get(jobId) || [])[seq];
+    if (!st || st.state !== 'leased' || st.attempt !== attempt) return false;
+    // Copy first: a result that cannot be serialised throws here, before anything changed (as in SQLite).
+    const result = jsonCopy(c.result);
+    st.state = c.state;
+    st.result = result;
+    st.skipReason = c.skipReason;
+    st.errorCode = c.errorCode;
+    st.finishedAt = now;
+    st.leaseUntil = undefined;
+    st.leaseHolder = undefined;
+    return true;
+  }
+  async recordIncident(incident: Omit<Incident, 'id'>) {
+    this.incidents.push({ ...incident, detail: cutIncident(incident.detail), id: this.nextIncidentId++ });
+  }
+  async listIncidents(opts: { jobId?: string; limit?: number } = {}) {
+    return this.incidents
+      .filter((i) => !opts.jobId || i.jobId === opts.jobId)
+      .sort((a, b) => b.id - a.id)
+      .slice(0, clampLimit(opts.limit))
+      .map((i) => ({ ...i }));
   }
   async countRunning(maxAgeMs: number, now = Date.now()) {
     let n = 0;
@@ -206,9 +483,11 @@ export class MemoryStore implements Store {
     for (const [id, j] of this.jobs) {
       if (j.startedAt < beforeMs) {
         this.jobs.delete(id);
+        this.steps.delete(id);
         n++;
       }
     }
+    this.incidents = this.incidents.filter((i) => i.at >= beforeMs);
     return n;
   }
 
@@ -273,6 +552,41 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE jobs ADD COLUMN budget_key TEXT;
    UPDATE jobs SET budget_key = CASE WHEN instr(owner, '|') > 0 THEN substr(owner, 1, instr(owner, '|') - 1) ELSE owner END;
    CREATE INDEX jobs_budget_started ON jobs(budget_key, started_at);`,
+  // 4: step-wise audits - what a job is doing and who last touched it.
+  `ALTER TABLE jobs ADD COLUMN plan TEXT;
+   ALTER TABLE jobs ADD COLUMN phase TEXT;
+   ALTER TABLE jobs ADD COLUMN heartbeat_at INTEGER;
+   ALTER TABLE jobs ADD COLUMN instance_id TEXT;
+   ALTER TABLE jobs ADD COLUMN fail_code TEXT;`,
+  // 5: the ordered steps of a job, and incidents the owner can read.
+  `CREATE TABLE job_steps (
+    job_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    query_index INTEGER,
+    engine TEXT,
+    state TEXT NOT NULL DEFAULT 'pending',
+    attempt INTEGER NOT NULL DEFAULT 0,
+    lease_until INTEGER,
+    lease_holder TEXT,
+    call_started_at INTEGER,
+    finished_at INTEGER,
+    result TEXT,
+    skip_reason TEXT,
+    error_code TEXT,
+    repeated_calls INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (job_id, seq)
+   );
+   CREATE TABLE incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT,
+    at INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    detail TEXT NOT NULL
+   );
+   CREATE INDEX incidents_at ON incidents(at);
+   CREATE INDEX incidents_job ON incidents(job_id);`,
 ];
 
 type Row = Record<string, any>;
@@ -289,11 +603,38 @@ function rowToJob(r: Row): StoredJob {
     result: r.result ? JSON.parse(r.result) : undefined,
     error: r.error ?? undefined,
     billable: r.billable === 0 ? false : true,
+    plan: r.plan ? JSON.parse(r.plan) : undefined,
+    phase: r.phase ?? undefined,
+    heartbeatAt: r.heartbeat_at ?? undefined,
+    instanceId: r.instance_id ?? undefined,
+    failCode: r.fail_code ?? undefined,
+  };
+}
+
+function rowToStep(r: Row): JobStep {
+  return {
+    jobId: r.job_id,
+    seq: r.seq,
+    key: r.key,
+    kind: r.kind,
+    queryIndex: r.query_index ?? undefined,
+    engine: r.engine ?? undefined,
+    state: r.state,
+    attempt: r.attempt,
+    leaseUntil: r.lease_until ?? undefined,
+    leaseHolder: r.lease_holder ?? undefined,
+    callStartedAt: r.call_started_at ?? undefined,
+    finishedAt: r.finished_at ?? undefined,
+    result: r.result ? JSON.parse(r.result) : undefined,
+    skipReason: r.skip_reason ?? undefined,
+    errorCode: r.error_code ?? undefined,
+    repeatedCalls: r.repeated_calls,
   };
 }
 
 export class SqliteStore implements Store {
   private db: any;
+  readonly instanceId = newInstanceId();
 
   constructor(
     DatabaseSync: new (p: string) => any,
@@ -301,23 +642,50 @@ export class SqliteStore implements Store {
   ) {
     if (filePath !== ':memory:') fs.mkdirSync(path.dirname(filePath), { recursive: true });
     this.db = new DatabaseSync(filePath);
-    this.db.exec('PRAGMA journal_mode = WAL');
+    // Several processes can start on one file at the same moment. Switching to WAL needs a lock that SQLite can
+    // refuse at once instead of waiting for (measured: 4 of 6 four-process starts failed without the retry), so
+    // that one step is retried for about two seconds. The migrations wait on the writer lock instead.
     this.db.exec('PRAGMA busy_timeout = 5000');
+    retryWhileLocked(() => this.db.exec('PRAGMA journal_mode = WAL'));
     this.migrate();
   }
 
   private migrate() {
-    const current: number = this.db.prepare('PRAGMA user_version').get().user_version;
-    for (let v = current; v < MIGRATIONS.length; v++) {
-      this.db.exec('BEGIN');
+    // Several processes can start on one old file at the same moment. The version is read INSIDE the writer
+    // lock, so the one that loses the race finds the work already done and skips it instead of running it twice.
+    for (;;) {
+      this.beginImmediate();
       try {
-        this.db.exec(MIGRATIONS[v]);
-        this.db.exec(`PRAGMA user_version = ${v + 1}`);
+        const current: number = this.db.prepare('PRAGMA user_version').get().user_version;
+        if (current >= MIGRATIONS.length) {
+          this.db.exec('COMMIT');
+          return;
+        }
+        this.db.exec(MIGRATIONS[current]);
+        this.db.exec(`PRAGMA user_version = ${current + 1}`);
         this.db.exec('COMMIT');
       } catch (err) {
-        this.db.exec('ROLLBACK');
+        this.rollbackQuietly();
         throw err;
       }
+    }
+  }
+
+  /** BEGIN IMMEDIATE, with a lock that stayed held reported as a typed error rather than a raw one. */
+  private beginImmediate() {
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+    } catch (err: any) {
+      if (/locked|busy/i.test(String(err?.message || err))) throw new StoreBusyError();
+      throw err;
+    }
+  }
+  /** A failed rollback must not hide the error that caused it. */
+  private rollbackQuietly() {
+    try {
+      this.db.exec('ROLLBACK');
+    } catch {
+      /* nothing more can be done; the original error is the one to report */
     }
   }
 
@@ -326,9 +694,13 @@ export class SqliteStore implements Store {
   }
 
   async createJob(job: StoredJob) {
+    this.insertJob(job);
+  }
+  /** Synchronous on purpose: createPlannedJob must see a duplicate-key error INSIDE its transaction. */
+  private insertJob(job: StoredJob) {
     this.db
       .prepare(
-        'INSERT INTO jobs (id, owner, idem_key, status, started_at, finished_at, progress, result, error, billable, budget_key) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+        'INSERT INTO jobs (id, owner, idem_key, status, started_at, finished_at, progress, result, error, billable, budget_key, plan, phase, heartbeat_at, instance_id, fail_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
       )
       .run(
         job.id,
@@ -341,7 +713,12 @@ export class SqliteStore implements Store {
         job.result === undefined ? null : JSON.stringify(job.result),
         job.error ?? null,
         job.billable === false ? 0 : 1,
-        job.budgetKey ?? job.owner
+        job.budgetKey ?? job.owner,
+        job.plan === undefined ? null : JSON.stringify(job.plan),
+        job.phase ?? null,
+        job.heartbeatAt ?? null,
+        job.instanceId ?? null,
+        job.failCode ?? null
       );
   }
   async getJob(id: string) {
@@ -361,8 +738,86 @@ export class SqliteStore implements Store {
     if (patch.error !== undefined) (sets.push('error = ?'), vals.push(patch.error));
     if (patch.finishedAt !== undefined) (sets.push('finished_at = ?'), vals.push(patch.finishedAt));
     if (patch.billable !== undefined) (sets.push('billable = ?'), vals.push(patch.billable ? 1 : 0));
+    if (patch.phase !== undefined) (sets.push('phase = ?'), vals.push(patch.phase));
+    if (patch.failCode !== undefined) (sets.push('fail_code = ?'), vals.push(patch.failCode));
     if (sets.length === 0) return;
     this.db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
+  }
+  async touchJob(id: string, now: number, patch: { phase?: string } = {}) {
+    if (patch.phase !== undefined) {
+      this.db.prepare('UPDATE jobs SET heartbeat_at = ?, instance_id = ?, phase = ? WHERE id = ?').run(now, this.instanceId, patch.phase, id);
+    } else {
+      this.db.prepare('UPDATE jobs SET heartbeat_at = ?, instance_id = ? WHERE id = ?').run(now, this.instanceId, id);
+    }
+  }
+  /** Run `fn` as one write transaction that no other connection can interleave with. */
+  private immediate<T>(fn: () => T): T {
+    this.beginImmediate();
+    try {
+      const out = fn();
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      this.rollbackQuietly();
+      throw err;
+    }
+  }
+  async createPlannedJob(job: StoredJob, steps: PlannedStep[]) {
+    assertPlannedSteps(steps);
+    this.immediate(() => {
+      this.insertJob(job);
+      const insert = this.db.prepare('INSERT INTO job_steps (job_id, seq, key, kind, query_index, engine) VALUES (?,?,?,?,?,?)');
+      steps.forEach((st, seq) => insert.run(job.id, seq, st.key, st.kind, st.queryIndex ?? null, st.engine ?? null));
+    });
+  }
+  async getJobSteps(jobId: string) {
+    return this.db.prepare('SELECT * FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId).map(rowToStep);
+  }
+  async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number) {
+    return this.immediate(() => {
+      const status = this.db.prepare('SELECT status FROM jobs WHERE id = ?').get(jobId)?.status as JobStatus | undefined;
+      const steps: JobStep[] = this.db.prepare('SELECT * FROM job_steps WHERE job_id = ? ORDER BY seq').all(jobId).map(rowToStep);
+      const d = decideClaim(status, steps, holder, leaseMs, now, maxAttempts);
+      if (d.patch) {
+        const p = d.patch;
+        const seq = steps[d.index].seq;
+        this.db
+          .prepare(
+            'UPDATE job_steps SET state = ?, attempt = COALESCE(?, attempt), lease_until = ?, lease_holder = ?, call_started_at = ?, finished_at = COALESCE(?, finished_at), error_code = COALESCE(?, error_code), repeated_calls = COALESCE(?, repeated_calls) WHERE job_id = ? AND seq = ?'
+          )
+          .run(p.state, p.attempt ?? null, p.leaseUntil ?? null, p.leaseHolder ?? null, p.callStartedAt ?? null, p.finishedAt ?? null, p.errorCode ?? null, p.repeatedCalls ?? null, jobId, seq);
+      }
+      return d.result;
+    });
+  }
+  async markCallStarted(jobId: string, seq: number, holder: string, attempt: number, now: number) {
+    return (
+      Number(
+        this.db
+          .prepare("UPDATE job_steps SET call_started_at = ? WHERE job_id = ? AND seq = ? AND state = 'leased' AND lease_holder = ? AND attempt = ?")
+          .run(now, jobId, seq, holder, attempt).changes
+      ) > 0
+    );
+  }
+  async completeStep(jobId: string, seq: number, attempt: number, c: StepCompletion, now: number) {
+    return (
+      Number(
+        this.db
+          .prepare(
+            "UPDATE job_steps SET state = ?, result = ?, skip_reason = ?, error_code = ?, finished_at = ?, lease_until = NULL, lease_holder = NULL WHERE job_id = ? AND seq = ? AND state = 'leased' AND attempt = ?"
+          )
+          .run(c.state, c.result === undefined ? null : JSON.stringify(c.result), c.skipReason ?? null, c.errorCode ?? null, now, jobId, seq, attempt).changes
+      ) > 0
+    );
+  }
+  async recordIncident(incident: Omit<Incident, 'id'>) {
+    this.db.prepare('INSERT INTO incidents (job_id, at, kind, detail) VALUES (?,?,?,?)').run(incident.jobId ?? null, incident.at, incident.kind, cutIncident(incident.detail));
+  }
+  async listIncidents(opts: { jobId?: string; limit?: number } = {}) {
+    const rows = opts.jobId
+      ? this.db.prepare('SELECT * FROM incidents WHERE job_id = ? ORDER BY id DESC LIMIT ?').all(opts.jobId, clampLimit(opts.limit))
+      : this.db.prepare('SELECT * FROM incidents ORDER BY id DESC LIMIT ?').all(clampLimit(opts.limit));
+    return rows.map((r: Row) => ({ id: r.id, jobId: r.job_id ?? undefined, at: r.at, kind: r.kind, detail: r.detail }) as Incident);
   }
   async countRunning(maxAgeMs: number, now = Date.now()) {
     return this.db
@@ -395,7 +850,11 @@ export class SqliteStore implements Store {
     );
   }
   async pruneJobs(beforeMs: number) {
-    return Number(this.db.prepare('DELETE FROM jobs WHERE started_at < ?').run(beforeMs).changes);
+    return this.immediate(() => {
+      this.db.prepare('DELETE FROM job_steps WHERE job_id IN (SELECT id FROM jobs WHERE started_at < ?)').run(beforeMs);
+      this.db.prepare('DELETE FROM incidents WHERE at < ?').run(beforeMs);
+      return Number(this.db.prepare('DELETE FROM jobs WHERE started_at < ?').run(beforeMs).changes);
+    });
   }
 
   async saveAudit(owner: string, report: any) {
