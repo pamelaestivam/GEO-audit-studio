@@ -129,7 +129,10 @@ async function main() {
 
     const up = await waitForServer(APP_BASE);
     assert('the app server starts against the fake Gemini endpoint', up);
-    if (!up) return;
+    if (!up) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
 
     // --- First audit: discovers the quota is exhausted.
     const first = await runAudit(APP_BASE, {

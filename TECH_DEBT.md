@@ -713,6 +713,21 @@ did not reproduce locally in three runs. A port collision is the suspected cause
 port back, and fail loudly on a bind error. Until then a single unexplained red in
 those files is a re-run, not a regression, but it must be recorded here.
 
+Update 2026-10-10 (PR #50): a server that misses its 20-second start window under load
+used to print FAIL and still exit 0 (`if (!up) return;` skipped the exit status). It now
+fails the run, so this flake turns a slow machine's `npm test` red instead of passing
+silently. That is the intended trade, but it makes the port fix above more worth doing:
+`retrySpendE2E` (3900-4100) failed once this way in a full local run and passed alone
+three times in a row. The cause of that start failure was not captured because the
+suites spawn the server with `stdio: 'ignore'`; capturing its output on a failed start
+belongs with the same fix. `test/testHarness.test.ts` guards the early-return shape.
+The guard is a tripwire for the shapes this repo's tests produce, not a proof. Known contrived
+misses (found in review, none present in the sources): a negated `if` and its return on
+one line after an `else`; a return inside a `try`/loop nested in the negated `if`; `return`
+without a semicolon; a template literal with text at column 0 inside the block; an object
+literal in the condition ahead of `=== false`; a status written only inside a string. A
+fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <why>`.
+
 ### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
 
 - **The number guard covers the executive summary, model forecasts (`expectedGain`) and the

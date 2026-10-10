@@ -153,7 +153,10 @@ async function main() {
 
     const up = await waitForServer();
     assert('the app server starts against the fake success endpoint', up);
-    if (!up) return;
+    if (!up) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
 
     // --- A genuine single-query audit: the user typed one query themselves
     // and did not click "Auto-Detect". This is the exact scenario reported:

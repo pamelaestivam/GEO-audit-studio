@@ -176,7 +176,10 @@ async function main() {
     // ------------------------------------------------------------------
     const A = await startApp();
     assert('server A starts', !!A);
-    if (!A) return;
+    if (!A) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
     procs.push(A.proc);
 
     // --- Vendor discovery and the share-of-voice denominator -------------
