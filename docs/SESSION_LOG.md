@@ -98,11 +98,14 @@ scheduling tool returned that id and `next_run_at` 05:37 UTC when it was created
 session could not independently re-verify it). Its prompt: pull `main`, read the
 directives, program and log, finish any open PR under the gates, else take the first "next"
 row, and do nothing outward when only owner actions remain. Stop it with `delete_trigger`.
-A session that finds this entry and no routine can recreate it from this description. The
-BLOCKER above will also stop the routine from fetching until `origin` is repaired.
+A session that finds this entry and no routine can recreate it from this description. (Its
+first firings, while `origin` was still wrong, would have had to stop; `origin` has since been
+repaired, see incident 3.)
 
 **Tested once, not repeated:** deleting a remote branch with `git push origin --delete`
-returned HTTP 403 from the git proxy (one attempt, 2026-10-10; I-4). A search of the GitHub
+returned HTTP 403 from the git proxy (one attempt, 2026-10-10; I-4). Later the same day, on the
+owner's suggestion to rename instead, a delete and a rename through the GitHub API were each
+tried once and also answered 403 (a policy denial); no variations were tried. A search of the GitHub
 tool list found no branch-protection, ruleset, repository-settings or delete-branch tool.
 
 **Learned:** the merge tool refuses a wrong head hash (HTTP 409); read it, never recall it
@@ -110,8 +113,9 @@ tool list found no branch-protection, ruleset, repository-settings or delete-bra
 could never print MERGED and called merged branches "nothing to merge" (the reviewer caught it;
 rewritten with a test that builds a throwaway repository and runs 23 state checks, I-10).
 
-**Open (the next session starts here):** land PR #30 (first visit) and the hygiene PR, then
-`docs/PROGRAM.md` items 4 to 7 (CI strategy, invariants, $0 guard, step-wise state machine). Branch
+**Open (the next session starts here):** PR #30 (first visit) is merged (19005fc). The hygiene PR
+(#31) and the CI-strategy PR (#32) are the open ones; then `docs/PROGRAM.md` items 5 to 7
+(invariants, $0 guard, step-wise state machine). Branch
 deletion and rename are both denied (HTTP 403) from this session, so stale branches stay until the
 owner turns on "Automatically delete head branches" (O-5).
 

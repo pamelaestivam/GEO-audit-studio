@@ -39,10 +39,10 @@ tell the owner or a client that it is dependable.
 |---|---|---|---|
 | 1 | Independent review (defects D1 to D8) and fixes #19 to #25 | done | merged to `main`; full suite 1,092 checks passed, 0 failed (MEASURED 2026-10-10) |
 | 2 | Records: owner directives, decisions, session log, insights, this file | done | merged #27 (bddd7f9) |
-| 2b | Session hygiene: branch-status script and test, `CLAUDE.md` rules, resume routine | in progress | the hygiene PR (this one) |
+| 2b | Session hygiene: branch-status script and test, `CLAUDE.md` rules, resume routine | in review | PR #31 |
 | 2c | Remove a stray `node_modules` symlink from `main`; CI fails on tracked symlinks | done | merged #29 (d851fb2) |
-| 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | in review | PR #30 (branch `claude/first-visit-notices`; full suite and 81 browser checks passed locally). The older branch `claude/honest-first-visit` only holds a backup patch and can be ignored |
-| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs` | next | nothing |
+| 3 | a. Honest first visit: storage-mode line, "no engine configured", default 2 questions, "n of M" | done | merged #30 (19005fc); CI green, full suite and browser checks passed, review findings fixed. The branches `claude/honest-first-visit` (backup patch) and `claude/session-hygiene*` are obsolete leftovers |
+| 4 | b. Docker out of the required checks; CI smoke runs `dist/server.cjs`; daily live-site check | in review | PR #32 (`docker.yml`, `live-check.yml`, restart and backup proof in `prod-install-check.sh`) |
 | 5 | c. Invariants, number guard, "Not counted" panel, cited-only as its own number (decision A) | next | nothing |
 | 6 | d. Paid-engine refusal and call counters ($0 guard, per instance) | next | nothing |
 | 7 | e. Step-wise audit state machine, leases, incidents; default returns to 3 | next | nothing |

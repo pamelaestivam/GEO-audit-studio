@@ -82,6 +82,27 @@ g fetch -q --prune origin
 out=$(status)
 absent "after the remote branch is deleted there is no stale line for it" "$out" "claude/feature"
 
+# A sync merge (main merged INTO a feature branch) must not make a new branch cut from
+# that main commit read as merged: the sync merge is not on main's first-parent line.
+g checkout -q main
+g checkout -q -b claude/syncer
+g commit -q --allow-empty -m "syncer work"
+g checkout -q main
+g commit -q --allow-empty -m "main moves on"
+g push -q origin main
+g fetch -q origin
+g checkout -q claude/syncer
+g merge -q --no-ff -m "Merge main into syncer" main
+# ...and the feature branch is then merged to main, so the sync merge is in main's history.
+g checkout -q main
+g merge -q --no-ff -m "Merge pull request #2" claude/syncer
+g push -q origin main
+g fetch -q origin
+g checkout -q -b claude/cut-from-main-tip main~1
+out=$(status)
+check "a branch cut at a main commit that a sync merge brought in is not merged" "$out" "no commits of its own yet"
+absent "...and is not called MERGED" "$out" "MERGED"
+
 # Main behind and ahead.
 g checkout -q main
 g commit -q --allow-empty -m "local only"

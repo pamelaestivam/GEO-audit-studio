@@ -19,13 +19,14 @@ unreported. They apply here with the same force.
 1. **Say the branch status at the end of EVERY reply that touches the repo, as one
    line, written LAST.** Run `bash scripts/branch-status.sh` in that same turn and
    copy its first line; add any open PR or red CI it cannot see. Shape:
-   `Branch: <name> | <N commits ahead of main>, pushed | MERGED (<sha>)` or
-   `Branch: <name> | ... | NOT merged (<what blocks it>)`. Never from memory of the plan.
+   `Branch: <name> | N commit(s) ahead of main, pushed | MERGED (merge commit <sha> is on main)`
+   or `Branch: <name> | ... | NOT merged (<what blocks it>)`. Never from memory of the plan.
 2. **Merge at the end of every round that contained development.** A round ends with
    the change on `main` (a real GitHub pull request, merged as a merge commit), not
    parked on a branch. The gates make that safe, they are not optional: green CI, a
-   fresh-context adversarial review, an EVAL PM SHIP. A red gate is the only
-   legitimate reason a round ends unmerged; then say which gate and what closes it.
+   fresh-context adversarial review, an EVAL PM SHIP. A red gate, or an explicit
+   owner instruction to hold the merge, is the only legitimate reason a round ends
+   unmerged; then say which and what closes it.
    Being late or the change being "mostly docs" is not a reason.
 3. **No stale branches.** One short-lived branch per change, merged the same round.
    `scripts/branch-status.sh` lists merged remote branches that were never deleted (it
@@ -43,8 +44,9 @@ unreported. They apply here with the same force.
    A review that stopped halfway looks identical to one that found little. If a limit,
    cap or interruption ended it, the next session reruns it from the start and keeps
    whatever partial output exists only as an input.
-6. **Continuity.** A scheduled routine (id in `docs/SESSION_LOG.md`) wakes the session
-   hourly with instructions to pick up `docs/PROGRAM.md`. It must do real work only
+6. **Continuity.** A scheduled routine was created on 2026-10-10 (id in
+   `docs/SESSION_LOG.md`; check it still exists with `list_triggers` before relying on it) to
+   wake the session hourly with instructions to pick up `docs/PROGRAM.md`. It must do real work only
    when there is some, and must never take outward actions that need the owner. Stop
    it with `delete_trigger` once the program is complete or the owner asks.
 7. **Never fabricate an argument to a tool.** A merge guarded by an expected commit hash
@@ -62,8 +64,9 @@ unreported. They apply here with the same force.
 10. **If the harness blocks a git operation, stop and report; do not look for a variation.**
     Changing a remote URL, moving a branch ref and cloning from a GitHub URL were each
     refused on 2026-10-10. The GitHub tools (create_branch, create_or_update_file,
-    push_files, delete_file) remain a sanctioned route for small files; large files wait
-    for the owner (`docs/PROGRAM.md`, the BLOCKER note).
+    push_files, delete_file) remain a sanctioned route for small files; for anything else
+    ask the owner to authorise the exact commands, as happened the same day and worked
+    at once (`docs/INSIGHTS.md` I-14).
 
 ## Working dynamic with the owner (read this first in a new session)
 
@@ -348,6 +351,8 @@ have to be rediscovered from scratch, not so it can be skipped.
   production-dependencies-only install
 - `npx tsx test/contract.test.ts` — full server contract checks (needs a
   current `dist/`)
+- `bash test/branchStatus.test.sh` — the branch-status script against a throwaway
+  repository (part of `npm test`)
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
 `server.ts`) to redirect the SDK at a local fake server — a no-op unless

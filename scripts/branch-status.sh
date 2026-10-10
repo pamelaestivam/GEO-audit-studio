@@ -40,7 +40,10 @@ if ! git rev-parse --verify -q "$base_ref" >/dev/null; then
 fi
 
 # "<parent-of-a-merge> <merge-commit>" for every second-or-later parent of a merge on the base.
-merge_map=$(git log "$base_ref" --merges --format='%h %P' | awk '{ for (i = 3; i <= NF; i++) print $i, $1 }')
+# Only merges on the base branch's own first-parent line count: a merge of main INTO a feature
+# branch (a sync merge) also has a main commit as its second parent, and must not make a branch
+# cut from that commit read as merged.
+merge_map=$(git log "$base_ref" --first-parent --merges --format='%h %P' | awk '{ for (i = 3; i <= NF; i++) print $i, $1 }')
 merge_commit_for() { printf '%s\n' "$merge_map" | awk -v t="$1" '$1 == t { print $2; exit }'; }
 
 full=$(git rev-parse HEAD)
