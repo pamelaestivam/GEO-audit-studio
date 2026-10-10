@@ -2116,7 +2116,13 @@ Return valid JSON matching the schema.`;
     for (const j of mine) void driveInline(j.id);
   }
   app.locals.afterListening = () =>
-    afterListening().catch((err) => console.error(`[store] could not resume interrupted audits: ${err?.message || err}`));
+    afterListening().catch(async (err) => {
+      console.error(`[store] could not resume interrupted audits: ${err?.message || err}`);
+      // Not silent: the owner can see that interrupted audits were left as they were (they end at the run-time limit).
+      await store
+        .recordIncident({ at: Date.now(), kind: 'invariant', detail: `Resuming interrupted audits at start-up failed: ${describeProviderError(err, 'The audit service').message}` })
+        .catch(() => undefined);
+    });
 
   return app;
 }

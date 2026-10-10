@@ -764,6 +764,13 @@ those files is a re-run, not a regression, but it must be recorded here.
   so three quick restarts within the 1.2 s / 0.6 s pauses end the audit with the three-tries sentence although no call
   was repeated; and a kill in the ~1 ms between saving the report and marking the job done saves a second copy of
   the report on resume (report ids are random). Neither spends beyond the plan.
+  Also found, reachable only by editing the database by hand, so recorded rather than built: when a step is exhausted,
+  its own start mark is cleared before the audit is closed, so if attempts 1 and 2 both died before any call started
+  and the failing step is the first one, the audit is recorded as free although a call may have been paid for; and a
+  running job whose steps are all done (no real path creates it) would sit running until the 15-minute reaper instead
+  of ending with a sentence and an `invariant` incident (step g's health checks are the place for that). A failure
+  inside the start-up resume itself is logged and recorded as an `invariant` incident; the interrupted audits are then
+  left as they were and end at the run-time limit.
 - **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
   HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
   says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). What a person actually sees if
