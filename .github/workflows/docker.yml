@@ -1,0 +1,121 @@
+name: Docker image (optional, not a merge gate)
+
+# Builds the production image and runs it with a real volume, the same shape as a
+# container deployment. It is deliberately NOT part of ci.yml: it needs a container
+# registry the code does not control, and anonymous Docker Hub pulls from shared
+# runners fail now and then (429 / 504, seen repeatedly on this repository, never a
+# Dockerfile error). A merge gate that fails for reasons outside the change teaches
+# people to ignore red. Everything the image proves about the app itself (clean
+# production install, boot, smoke, restart durability, backup) is also proved without
+# a container runtime by `scripts/prod-install-check.sh` in ci.yml.
+#
+# Runs when the files that shape the image change, weekly, and on demand.
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - package-lock.json
+      - scripts/backup.mjs
+      - .github/workflows/docker.yml
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - package.json
+      - package-lock.json
+      - scripts/backup.mjs
+      - .github/workflows/docker.yml
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Build image
+        # The official node image is mirrored on AWS ECR Public, which does not apply
+        # Docker Hub's anonymous pull limit. Try the mirror first, then Docker Hub, and
+        # retry both: a real Dockerfile failure fails every attempt and still turns the
+        # job red.
+        run: |
+          for attempt in 1 2 3; do
+            for image in public.ecr.aws/docker/library/node:22-slim node:22-slim; do
+              if docker build --build-arg NODE_IMAGE="$image" -t geo-audit-studio:ci .; then
+                echo "built from base image $image"
+                exit 0
+              fi
+              echo "docker build from $image failed (attempt $attempt)"
+            done
+            [ "$attempt" = 3 ] && break
+            sleep $((attempt * 30))
+          done
+          echo "docker build failed on every attempt and from both registries"
+          exit 1
+      - name: Run container
+        run: |
+          docker volume create geo-data
+          docker run -d --name app -p 3000:3000 -v geo-data:/data \
+            -e SESSION_SECRET=ci-session-secret-0123456789abcdef0123456789 \
+            -e ACCESS_CODES=ci-access-code-1 \
+            -e GEMINI_API_KEY=not-a-real-key \
+            geo-audit-studio:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/health && break
+            sleep 1
+          done
+      - name: Smoke test the container
+        run: node scripts/smoke.mjs http://127.0.0.1:3000
+      - name: Write real state, restart, and prove it survived
+        run: |
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:3000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","accessCode":"ci-access-code-1"}' | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).token))")
+          curl -sS http://127.0.0.1:3000/api/audit/readiness -H "Authorization: Bearer $TOKEN" > /dev/null
+          docker restart app
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/health && break
+            sleep 1
+          done
+          # Read the volume with the image's own node (no second registry pull).
+          docker run --rm --entrypoint node -v geo-data:/data geo-audit-studio:ci -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync('/data/geo-audit.sqlite');
+            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
+            console.log('probe rows surviving the restart:', n);
+            process.exit(n >= 1 ? 0 : 1);
+          "
+      - name: Back up the running database inside the container
+        run: |
+          docker exec app node scripts/backup.mjs /data /data/backups/ci.sqlite
+          if docker exec app node scripts/backup.mjs /data /data/backups/ci.sqlite 2>/tmp/second.err; then
+            echo "second backup run did not refuse to overwrite"; exit 1
+          fi
+          grep -q "refusing to overwrite" /tmp/second.err || { echo "refused for the wrong reason:"; cat /tmp/second.err; exit 1; }
+          docker run --rm --entrypoint node -v geo-data:/data geo-audit-studio:ci -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync('/data/backups/ci.sqlite');
+            const n = db.prepare(\"select count(*) as n from jobs where owner = 'readiness@system'\").get().n;
+            console.log('probe rows in the backup:', n);
+            process.exit(n >= 1 ? 0 : 1);
+          "
+      - name: Smoke test the restarted container
+        run: node scripts/smoke.mjs http://127.0.0.1:3000
+      - name: Container logs
+        if: always()
+        run: docker logs app

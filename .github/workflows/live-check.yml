@@ -1,0 +1,113 @@
+name: Live site check
+
+# Does the DEPLOYED site work? ci.yml proves the code; nothing else looks at the running
+# site, and every past deployment incident (API 404s, a crash on a missing import
+# extension, nested routes 404ing at the platform edge) passed the tests and was found
+# by a person in production. This runs scripts/smoke.mjs against the live URL every day
+# and after every push to main (a few minutes after the deploy has had time to finish).
+#
+# A failure is never only a red run nobody opens: it opens ONE issue (reused, never a
+# new one per run) with the failing checks, and a later green run closes it. The alert
+# path itself is watched by the run summary, which records when the check last ran.
+#
+# Set the repository variable LIVE_URL (Settings, Secrets and variables, Actions,
+# Variables) to point at a different deployment; it defaults to the production URL
+# recorded in TECH_DEBT.md.
+#
+# Note: GitHub pauses scheduled workflows in a repository with no activity for 60 days.
+# Any push re-enables them, and the push-triggered run covers the gap.
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Base URL to check (default: the LIVE_URL variable or production)'
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: live-check
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LIVE_URL: ${{ inputs.url || vars.LIVE_URL || 'https://geo-audit-studio-five.vercel.app' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Wait for a fresh deploy to settle
+        if: github.event_name == 'push'
+        run: sleep 240
+      - name: Smoke test the live site
+        id: smoke
+        # Up to three tries, a minute apart: a cold or just-deployed serverless site can
+        # answer slowly once. Three failures in a row is a real failure.
+        run: |
+          set +e
+          code=1
+          for attempt in 1 2 3; do
+            echo "::group::attempt $attempt against $LIVE_URL"
+            node scripts/smoke.mjs "$LIVE_URL" 2>&1 | tee live.log
+            code=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            [ "$code" = 0 ] && break
+            [ "$attempt" = 3 ] || sleep 60
+          done
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Live site check"
+            echo "- URL: $LIVE_URL"
+            echo "- Checked at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Result: $([ "$code" = 0 ] && echo passed || echo FAILED)"
+            echo
+            echo '```'
+            tail -n 60 live.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Open, update or close the one tracking issue
+        run: |
+          set +e
+          title="Live site check failing"
+          gh label create live-check --color B60205 --description "Opened by the live-check workflow" 2>/dev/null
+          number=$(gh issue list --state open --label live-check --json number --jq '.[0].number')
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ "${{ steps.smoke.outputs.code }}" = 0 ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "The live site check passed again at $(date -u +%Y-%m-%dT%H:%MZ). Run: $run_url"
+            fi
+            exit 0
+          fi
+          {
+            echo "The live check of $LIVE_URL failed three times in a row."
+            echo
+            echo "Run: $run_url"
+            echo
+            echo '```'
+            grep -E '^(FAIL|[0-9]+ check|Smoke)|could not reach' live.log | head -40
+            echo '```'
+            echo
+            echo "This issue is reused: later failures comment here, and a passing run closes it."
+          } > body.md
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file body.md
+          else
+            gh issue create --title "$title" --label live-check --body-file body.md
+          fi
+      - name: Fail the run if the site is failing
+        if: steps.smoke.outputs.code != '0'
+        run: exit 1

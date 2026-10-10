@@ -93,9 +93,9 @@ The image defaults `DATA_DIR=/data`; **the volume is what makes audits survive**
 (the host's proxy, Caddy, Cloudflare); the app itself speaks plain HTTP and
 trusts NO proxy for client IPs unless you set `TRUST_PROXY` (the image does not).
 
-CI builds this image, runs it with a volume, smoke-tests it, restarts it on the
+The `docker` workflow (`.github/workflows/docker.yml`; it runs when the image files change, weekly and on demand, and is not a merge gate) builds this image, runs it with a volume, smoke-tests it, restarts it on the
 same volume and smoke-tests again. The Dockerfile could not be built where it
-was written (Docker CLI present, no daemon), so its only evidence is that CI job:
+was written (Docker CLI present, no daemon), so its only evidence is that workflow:
 it built and passed on GitHub's runner for this repository, including the
 restart on the same volume. That is a build-and-smoke check against a fake
 Gemini endpoint, not a test of your host - run `scripts/smoke.mjs` against your
