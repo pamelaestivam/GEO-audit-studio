@@ -11,6 +11,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import { mergeDetectedDetails, containsFabricatedPlaceholder } from '../src/detection';
 import { describeProviderError, parseRetryDelaySeconds, summariseFailures } from '../src/errors';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
@@ -125,7 +126,7 @@ function assert(name: string, condition: boolean, detail = '') {
 }
 
 // ============================================================ live server contract
-const PORT = 3200 + Math.floor(Math.random() * 300);
+const PORT = randomPort(3200, 300);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 function post(path: string, body: unknown) {

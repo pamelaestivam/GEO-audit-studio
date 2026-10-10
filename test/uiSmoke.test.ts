@@ -13,6 +13,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -30,8 +31,8 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 5600 + Math.floor(Math.random() * 100);
-const APP_PORT = 5800 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(5600, 100);
+const APP_PORT = randomPort(5800, 300);
 const BASE = `http://127.0.0.1:${APP_PORT}`;
 let mode: FakeMode = 'ok';
 

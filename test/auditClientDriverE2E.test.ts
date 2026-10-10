@@ -18,6 +18,7 @@
  * Needs a current dist/. Run: npx tsx test/auditClientDriverE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { PortRange, randomPort } from './ports';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -37,8 +38,8 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-const GEMINI_PORT = 9000 + Math.floor(Math.random() * 100);
-const APP_PORT = 9100 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(9000, 100);
+const APP_PORT = randomPort(9100, 300);
 let mode: FakeMode = 'ok';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const QUERY = [{ id: 'q1', intent: 'direct_recommendation', queryText: 'best poke in Austin', targetPersona: 'Buyer' }];
@@ -48,9 +49,9 @@ async function main() {
   const fake = await startFakeGemini(GEMINI_PORT, () => mode, 1500);
   const dirs: string[] = [];
   const procs: ChildProcess[] = [];
-  let nextPort = APP_PORT;
+  const nextPort = new PortRange(9100, 300);
   const start = (env: Record<string, string> = {}, durable = true) => {
-    const port = nextPort++;
+    const port = nextPort.take();
     let dir: string | undefined;
     if (durable) {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'geo-client-driver-'));

@@ -16,6 +16,7 @@ import {
   formatDuration,
   summariseFailures,
   type ReadableError,
+  underlyingCause,
 } from './src/errors.js';
 import { QuotaBreaker } from './src/quotaBreaker.js';
 import crypto from 'crypto';
@@ -413,19 +414,6 @@ async function buildApp() {
    */
   const RATE_LIMIT_MAX_WAIT_MS = Number(process.env.GEMINI_RATE_LIMIT_MAX_WAIT_MS || 20000);
   const RATE_LIMIT_RETRIES = Number(process.env.GEMINI_RATE_LIMIT_RETRIES || 1);
-
-  /**
-   * The cause behind a provider error, for the server log only (never shown to a person): undici wraps every
-   * connection failure as "fetch failed", which hides whether the connection was refused, reset or closed, and the
-   * person-facing sentence says only "Could not reach Gemini". Short, no keys or URLs with query strings.
-   */
-  function underlyingCause(err: any): string {
-    const cause = err?.cause ?? err;
-    const code = cause?.code || err?.code;
-    const text = String(cause?.message || err?.message || '').replace(/\s+/g, ' ').replace(/[?&]key=[^&\s]+/gi, '').slice(0, 120);
-    const bits = [code, text && text !== 'fetch failed' ? text : ''].filter(Boolean);
-    return bits.length ? ` (${bits.join(': ')})` : '';
-  }
 
   async function generateContentWithRetry(
     aiInstance: GoogleGenAI,

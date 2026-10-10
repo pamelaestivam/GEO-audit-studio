@@ -369,6 +369,13 @@ have to be rediscovered from scratch, not so it can be skipped.
   precision end to end, that a failed analysis step is "not assessed" (not 100%
   accurate), that a failed audit carries no fabricated findings, and the rate
   limit / concurrency cap / JSON error behaviour (needs a current `dist/`)
+- `npx tsx test/ports.test.ts` — guards the ports the end-to-end suites use: Node's `fetch` refuses a fixed list
+  of ports (3659, 4045, 4190, 6000, 6566 and others) at once, so every suite draws ports through `test/ports.ts`;
+  checks the list against the running Node and fails if a suite draws ports by hand
+- `npx tsx test/diagnostics.test.ts` — the failure diagnostics themselves: what the server logs about a
+  failed Gemini request (the real cause, never a key), what the end-to-end suites print for a server when they fail,
+  and, against the real built server with Gemini on a closed port, that the log names ECONNREFUSED while the
+  person's sentence does not (needs a current `dist/`)
 - `npx tsx test/reportView.test.ts`, `npx tsx test/rateLimit.test.ts`,
   `npx tsx test/auth.test.ts`, `npx tsx test/store.test.ts`,
   `npx tsx test/queries.test.ts` — pure unit checks (presentation of headline

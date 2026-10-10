@@ -16,28 +16,37 @@ const ACCESS_LOG_LINE = /^\{"t":"[^"]+","id":"[^"]+","method":"/;
 
 /**
  * Collect the last `limit` characters of stdout and stderr, leaving out the per-request access log (counted instead).
- * The process must have been spawned with piped stdout and stderr.
+ * The process must have been spawned with piped stdout and stderr. Each stream keeps its own unfinished line (so a
+ * fragment on one cannot be glued to a line on the other), text is decoded as UTF-8 across chunk boundaries, and an
+ * unfinished line is bounded too.
  */
 export function captureOutput(proc: ChildProcess, limit = 20000): CapturedOutput {
   let buf = '';
-  let partial = '';
   let skipped = 0;
   let ended: string | null = null;
-  const add = (chunk: Buffer | string) => {
-    const lines = (partial + chunk.toString()).split('\n');
-    partial = lines.pop() ?? '';
-    for (const line of lines) {
-      if (ACCESS_LOG_LINE.test(line)) skipped++;
-      else buf += line + '\n';
-    }
-    if (buf.length > limit) buf = buf.slice(buf.length - limit);
+  const partials = { stdout: '', stderr: '' };
+  const watch = (stream: NodeJS.ReadableStream | null | undefined, name: 'stdout' | 'stderr') => {
+    if (!stream) return;
+    stream.setEncoding('utf8');
+    stream.on('data', (chunk: string) => {
+      const lines = (partials[name] + chunk).split('\n');
+      partials[name] = (lines.pop() ?? '').slice(-limit);
+      for (const line of lines) {
+        if (ACCESS_LOG_LINE.test(line)) skipped++;
+        else buf += line + '\n';
+      }
+      if (buf.length > limit) buf = buf.slice(buf.length - limit);
+    });
   };
-  proc.stdout?.on('data', add);
-  proc.stderr?.on('data', add);
+  watch(proc.stdout, 'stdout');
+  watch(proc.stderr, 'stderr');
   proc.on('exit', (code, signal) => {
     ended = signal ? `signal ${signal}` : `code ${code}`;
   });
-  return { text: () => buf + partial + (skipped ? `(${skipped} request-log line(s) left out)\n` : ''), exited: () => ended };
+  return {
+    text: () => buf + partials.stdout + (partials.stdout ? '\n' : '') + partials.stderr + (partials.stderr ? '\n' : '') + (skipped ? `(${skipped} request-log line(s) left out)\n` : ''),
+    exited: () => ended,
+  };
 }
 
 /** Print what a server said, for a run that has failures. A server that printed nothing says so. */

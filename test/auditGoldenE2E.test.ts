@@ -20,6 +20,7 @@
  * Needs a current dist/. Run: npx tsx test/auditGoldenE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import fs from 'fs';
 import path from 'path';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
@@ -54,8 +55,8 @@ function sortKeys(v: any): any {
   return v;
 }
 
-const GEMINI_PORT = 8300 + Math.floor(Math.random() * 100);
-const APP_PORT = 8400 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(8300, 100);
+const APP_PORT = randomPort(8400, 300);
 let mode: FakeMode = 'ok';
 
 const INPUT = {

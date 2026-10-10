@@ -13,6 +13,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { PortRange, randomPort } from './ports';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -39,8 +40,8 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 4900 + Math.floor(Math.random() * 100);
-let nextPort = 5100 + Math.floor(Math.random() * 400);
+const GEMINI_PORT = randomPort(4900, 100);
+const nextPort = new PortRange(5100, 400);
 let mode: FakeMode = 'ok';
 
 interface App {
@@ -49,7 +50,7 @@ interface App {
   port: number;
 }
 
-async function startApp(extraEnv: Record<string, string> = {}, port = nextPort++, unset: string[] = []): Promise<App | null> {
+async function startApp(extraEnv: Record<string, string> = {}, port = nextPort.take(), unset: string[] = []): Promise<App | null> {
   const childEnv: Record<string, string | undefined> = {
       ...process.env,
       PORT: String(port),
@@ -592,7 +593,7 @@ async function main() {
     }
 
     // --- a plain `node dist/server.cjs` with NODE_ENV unset and no config does not open the door
-    const NE = await startApp({ SESSION_SECRET: '', ACCESS_CODES: '', ALLOW_DEV_AUTH: '1' }, nextPort++, ['NODE_ENV']);
+    const NE = await startApp({ SESSION_SECRET: '', ACCESS_CODES: '', ALLOW_DEV_AUTH: '1' }, nextPort.take(), ['NODE_ENV']);
     assert('a server started with NODE_ENV unset starts', !!NE);
     if (NE) {
       apps.push(NE);

@@ -325,6 +325,32 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
 }
 
 /**
+ * The cause behind a provider error, for the server LOG only (never shown to a person): undici wraps every connection
+ * failure as "fetch failed", which hides whether the connection was refused, reset or closed, while the person-facing
+ * sentence says only "Could not reach Gemini". Returns " (CODE: short message)" or "". At most 120 characters of the
+ * message, whitespace collapsed. Removed from it: a `key=` query value, an `api-key`/`api_key`/`authorization` value
+ * and credentials in a URL (`user:pass@`). The Gemini client sends its key in a header and connection errors quote only
+ * an address, so these are belt and braces. It never throws: a log line must not be able to break the request.
+ */
+export function underlyingCause(err: any): string {
+  try {
+    const cause = err?.cause ?? err;
+    const code = cause?.code || err?.code;
+    const text = String(cause?.message || err?.message || '')
+      .replace(/\s+/g, ' ')
+      .replace(/[?&]key=[^&\s]+/gi, '')
+      .replace(/\b(?:x-goog-)?api[_-]?key\s*[:=]\s*\S+/gi, '[removed]')
+      .replace(/\bauthorization\s*[:=]\s*\S+(?:\s+\S+)?/gi, '[removed]')
+      .replace(/:\/\/[^/\s@]+@/g, '://')
+      .slice(0, 120);
+    const bits = [typeof code === 'string' || typeof code === 'number' ? code : '', text && text !== 'fetch failed' ? text : ''].filter(Boolean);
+    return bits.length ? ` (${bits.join(': ')})` : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Summarise several failures into one sentence. Prefers the most actionable
  * cause rather than whichever error happened to arrive first.
  */

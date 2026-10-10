@@ -8,6 +8,7 @@
  * Needs a current dist/ and Chromium. Run: npx tsx test/discardedClaimsUi.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -25,8 +26,8 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 6500 + Math.floor(Math.random() * 100);
-const APP_PORT = 6700 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(6500, 100);
+const APP_PORT = randomPort(6700, 300);
 const BASE = `http://127.0.0.1:${APP_PORT}`;
 
 async function main() {

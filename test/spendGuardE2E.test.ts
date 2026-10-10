@@ -7,6 +7,7 @@
  * Needs a current dist/. Run: npx tsx test/spendGuardE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
 
@@ -23,8 +24,8 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-const GEMINI_PORT = 8100 + Math.floor(Math.random() * 100);
-const APP_PORT = 8200 + Math.floor(Math.random() * 90);
+const GEMINI_PORT = randomPort(8100, 100);
+const APP_PORT = randomPort(8200, 90);
 const mode: FakeMode = 'ok';
 
 async function main() {
