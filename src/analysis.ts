@@ -104,6 +104,19 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
   const tokens: string[] = [];
   if (lower) tokens.push(lower);
 
+  // A name typed with its legal-entity suffix ("Acme Analytics, Inc.", "Hula Poke LLC") is almost never how an answer
+  // writes it. The name without that suffix is matched too, so a brand an engine names plainly is not reported as
+  // "cited without being named" (decision A made that distinction matter: a citation no longer rescues a miss).
+  // ONLY when what is left is two or more words: a single word left over ("Cargo Co" -> "cargo", "Coffee Company" ->
+  // "coffee") is a category word that would match every answer about cargo or coffee, the false-mention class the
+  // multi-word rule below exists to prevent. A single-word core adds nothing the domain root does not already give.
+  const core = lower
+    .replace(/(?:[\s,]+(?:(?:&|and)\s+)?(?:inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|gmbh|ag|plc|sa|bv|nv|pty|pte|oy|ab|as|srl|spa)\.?)+[\s,.&]*$/iu, '')
+    .replace(/[\s,.&]+$/u, '')
+    // A leading article is not part of a brand: "the coffee" would match any answer that says "the coffee shops".
+    .replace(/^(?:the|a|an)\s+/iu, '');
+  if (core && core !== lower && core.split(/\s+/).filter(Boolean).length >= 2 && core.length >= 3) tokens.push(core);
+
   /*
    * A multi-word brand is matched on its full name only.
    *
@@ -264,6 +277,11 @@ export interface BrandQueryResult {
   /** 1 = first brand named in the answer. null when not mentioned. */
   rank: number | null;
   citedAsSource: boolean;
+  /**
+   * The brand's own website was cited as a source but its NAME does not appear in the answer text. This is not a
+   * mention (it is never blended into visibility, rank or share of voice); it is reported as its own number.
+   */
+  citedOnly: boolean;
   /** 0-100; how early in the answer the brand appears. */
   prominence: number;
   excerpt: string;
@@ -293,8 +311,10 @@ export function analyseAnswer(
   const raw = matchers.map((m) => {
     const idx = findFirstMention(text, m);
     const citedAsSource = isCitedAsSource(evidence.citations, m);
-    const mentioned = idx >= 0 || citedAsSource;
-    return { matcher: m, idx, citedAsSource, mentioned };
+    // A brand is mentioned only when its NAME appears in the answer. A cited source is a different thing
+    // (docs/DECISIONS.md, decision A) and is counted separately as `citedOnly`.
+    const mentioned = idx >= 0;
+    return { matcher: m, idx, citedAsSource, mentioned, citedOnly: citedAsSource && !mentioned };
   });
 
   const ordered = raw
@@ -315,6 +335,7 @@ export function analyseAnswer(
       firstMentionIndex: r.idx,
       rank: rankIdx >= 0 ? rankIdx + 1 : null,
       citedAsSource: r.citedAsSource,
+      citedOnly: r.citedOnly,
       prominence,
       excerpt: excerptAround(text, r.idx),
     };
@@ -416,6 +437,8 @@ export interface BrandScorecard {
   timesMentioned: number;
   avgProminence: number;
   citedAsSourceCount: number;
+  /** Answers that cite this brand's website without naming it. Not part of visibility. */
+  citedOnlyCount: number;
 }
 
 export function buildScorecards(
@@ -450,6 +473,7 @@ export function buildScorecards(
       timesMentioned,
       avgProminence,
       citedAsSourceCount: rows.filter((r) => r.citedAsSource).length,
+      citedOnlyCount: rows.filter((r) => r.citedOnly).length,
     };
   });
 }

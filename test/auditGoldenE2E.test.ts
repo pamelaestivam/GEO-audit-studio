@@ -122,6 +122,8 @@ async function main() {
     { name: 'odd-narrative-values', mode: 'narrative_odd_values' },
     { name: 'invariant-violation', mode: 'ok', forced: true },
     { name: 'blank-optional-fields', mode: 'ok', body: { businessName: 'Poke House', queries: INPUT.queries } },
+    // Added with decision A (cited-only is its own number): captured from the build that introduced it, not from an older one.
+    { name: 'cited-only', mode: 'cited_only' },
   ];
 
   try {
@@ -142,6 +144,19 @@ async function main() {
       if (!report) {
         fail(label, 'the audit did not finish');
         continue;
+      }
+      if (s.name === 'cited-only') {
+        // The explicit contract, beside the golden: one answer names the brand (and cites it), one only cites its website.
+        const ok =
+          report.observationsWithEvidence === 2 &&
+          report.observationsMentioned === 1 &&
+          report.observationsCitedOnly === 1 &&
+          report.geoVisibilityScore === 50 &&
+          report.metricVersion === 2 &&
+          report.queriesTested.map((q: any) => [q.engines.Gemini.status === 'omitted', q.engines.Gemini.citedOnly === true]).flat().join() === 'true,true,false,false' &&
+          /In 1 more, the website of Poke House was cited as a source but the name "Poke House" as typed did not appear in the answer text; that is not counted as visibility\./.test(report.executiveSummary);
+        if (ok) pass('cited-only: visibility counts the named answer only (50%), the cited-only answer is its own number, and the summary says so');
+        else fail('cited-only: the contract', JSON.stringify({ m: report.observationsMentioned, c: report.observationsCitedOnly, v: report.geoVisibilityScore, mv: report.metricVersion, s: report.executiveSummary?.slice(0, 260) }));
       }
       const actual = JSON.stringify(normalise(report), null, 2) + '\n';
       const file = path.join(GOLDEN_DIR, `audit-${s.name}.json`);

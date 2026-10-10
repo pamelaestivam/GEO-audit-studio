@@ -196,6 +196,8 @@ export interface AuditSummary {
   accuracyRate: number | null;
   observationsWithEvidence?: number;
   observationsMentioned?: number;
+  observationsCitedOnly?: number;
+  metricVersion?: number;
   observationsAttempted?: number;
   measuredEngines?: string[];
   narrativeAvailable?: boolean;
@@ -322,6 +324,8 @@ export function summariseAudit(report: any): AuditSummary {
     accuracyRate: report.accuracyRate ?? null,
     observationsWithEvidence: report.observationsWithEvidence,
     observationsMentioned: report.observationsMentioned,
+    observationsCitedOnly: report.observationsCitedOnly,
+    metricVersion: report.metricVersion,
     observationsAttempted: report.observationsAttempted,
     measuredEngines: report.measuredEngines,
     narrativeAvailable: report.narrativeAvailable,

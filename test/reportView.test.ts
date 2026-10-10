@@ -17,6 +17,10 @@ import {
   formatScore,
   isLowSample,
   visibilityBasis,
+  citedOnlyLine,
+  isEarlierMetricRule,
+  CITED_ONLY_EXPLAINER,
+  metricVersionNote,
   visibilityRange,
   rangeExplanation,
   lowSampleReason,
@@ -154,8 +158,8 @@ check('...and answers otherwise', lowSampleReason({ observationsWithEvidence: 3,
 check('6 answers to 2 questions is still a LOW sample (they are 2 readings)', isLowSample({ degraded: false, observationsWithEvidence: 6, queriesAttempted: 2 }), true);
 check('6 answers to 6 questions is not', isLowSample({ degraded: false, observationsWithEvidence: 6, queriesAttempted: 6 }), false);
 check('an older report without the question count falls back to the answer count', isLowSample({ degraded: false, observationsWithEvidence: 3 }), true);
-check('a score badge never travels without what it rests on', formatScoreBadge({ degraded: false, geoVisibilityScore: 100, observationsWithEvidence: 3 }), '100% (3 answers)');
-check('a one-answer badge is singular', formatScoreBadge({ degraded: false, geoVisibilityScore: 100, observationsWithEvidence: 1 }), '100% (1 answer)');
+check('a score badge never travels without what it rests on', formatScoreBadge({ degraded: false, geoVisibilityScore: 100, observationsWithEvidence: 3, metricVersion: 2 }), '100% (3 answers)');
+check('a one-answer badge is singular', formatScoreBadge({ degraded: false, geoVisibilityScore: 100, observationsWithEvidence: 1, metricVersion: 2 }), '100% (1 answer)');
 check('a failed audit badge is a dash', formatScoreBadge({ degraded: true, geoVisibilityScore: 0, observationsWithEvidence: 0 }), NOT_MEASURED);
 check('models are named beside their engines', engineModelsLine({ measuredEngines: ['Gemini', 'Claude'], engineModels: { Gemini: 'gemini-3.6-flash' } }), 'Gemini (gemini-3.6-flash), Claude');
 check('an older report with no model stamp says nothing about models', engineModelsLine({ measuredEngines: ['Gemini'] }), null);
@@ -215,6 +219,15 @@ check('the panel for a new audit is an openable list; for an older audit it is p
 check('the singular reads correctly', notCountedView(nc({ inaccuraciesDiscarded: 1, notCounted: [nc().notCounted[0]] }))?.summary, '1 claim the analysis reported was not counted.');
 check('rows are capped in the report, and the rest are still counted', [notCountedView(nc({ inaccuraciesDiscarded: 25, notCounted: Array(20).fill(nc().notCounted[0]) }))?.moreCount, notCountedView(nc())?.moreCount], [5, 0]);
 check('an old saved audit with a count but no rows still shows the strip (and no invented rows)', [notCountedView(nc({ notCounted: undefined }))?.summary, notCountedView(nc({ notCounted: undefined }))?.rows.length, notCountedView(nc({ notCounted: undefined }))?.moreCount], ['2 claims the analysis reported were not counted.', 0, 2]);
+
+// ---- decision A: the cited-only sub-line and the note on reports measured under the earlier rule
+check('the cited-only sub-line states the number and who did what, with a plus sign', citedOnlyLine({ degraded: false, observationsWithEvidence: 6, observationsCitedOnly: 2 }), '+2 cite your site without naming you');
+check('...nothing when there are none, when it is absent, or when the audit failed', [citedOnlyLine({ degraded: false, observationsWithEvidence: 6, observationsCitedOnly: 0 }), citedOnlyLine({ degraded: false, observationsWithEvidence: 6 }), citedOnlyLine({ degraded: true, observationsWithEvidence: 0, observationsCitedOnly: 2 })], [null, null, null]);
+check('the explainer says a cited source is not a mention and is not in the percentage', /not a mention/.test(CITED_ONLY_EXPLAINER) && /not in the percentage/.test(CITED_ONLY_EXPLAINER), true);
+check('a report from before the rule change says so (even one so old it has no answer count); one on the current rule does not; a failed audit does not', [/earlier rule/.test(metricVersionNote({ degraded: false }) || ''), /earlier rule/.test(metricVersionNote({ degraded: false, metricVersion: undefined }) || ''), metricVersionNote({ degraded: false, metricVersion: 2 }), metricVersionNote({ degraded: true })], [true, true, null, null]);
+check('wherever scores are listed side by side, an old one is marked and a new one is not', [formatScoreBadge({ degraded: false, geoVisibilityScore: 100, observationsWithEvidence: 2 }), formatScoreBadge({ degraded: false, geoVisibilityScore: 50, observationsWithEvidence: 2, metricVersion: 2 }), formatScoreBadge({ degraded: false, geoVisibilityScore: 80 })], ['100% (2 answers) · earlier rule', '50% (2 answers)', '80% · earlier rule']);
+check('a failed audit is never marked as measured under any rule', formatScoreBadge({ degraded: true, geoVisibilityScore: 0, observationsWithEvidence: 0 }), NOT_MEASURED);
+check('the single definition of "earlier rule"', [isEarlierMetricRule({ degraded: false }), isEarlierMetricRule({ degraded: false, metricVersion: 1 }), isEarlierMetricRule({ degraded: false, metricVersion: 2 }), isEarlierMetricRule({ degraded: true })], [true, true, false, false]);
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

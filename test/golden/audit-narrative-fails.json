@@ -65,10 +65,12 @@
   "measuredEngines": [
     "Gemini"
   ],
+  "metricVersion": 2,
   "narrativeAvailable": false,
   "narrativeNote": "Gemini returned an unexpected error. Re-run the audit; if it persists the server logs have the detail. Visibility, share of voice and the evidence below are measured; accuracy, omissions and the remediation plan were not assessed. Re-run the audit to try again.",
   "notCounted": [],
   "observationsAttempted": 2,
+  "observationsCitedOnly": 0,
   "observationsMentioned": 2,
   "observationsWithEvidence": 2,
   "omissions": [],

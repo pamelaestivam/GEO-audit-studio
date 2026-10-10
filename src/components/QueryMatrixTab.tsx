@@ -501,6 +501,12 @@ export const QueryMatrixTab: React.FC<QueryMatrixTabProps> = ({ queries = [], bu
                         </div>
                       )}
 
+                      {res.citedOnly && (
+                        <div className="text-xs text-slate-300 bg-slate-800/60 border border-slate-700 p-2.5 rounded-lg">
+                          This answer cites your website but the name you typed does not appear in its text, so it is counted as omitted for visibility.
+                        </div>
+                      )}
+
                       {res.keyOmissionReason && (
                         <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg text-xs text-amber-300">
                           <HelpCircle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />

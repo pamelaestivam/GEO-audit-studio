@@ -124,6 +124,14 @@ const good = () => JSON.parse(JSON.stringify(report));
 check('a consistent report has no violations', assertReportInvariants(good()), []);
 check('a degraded report is not checked (it states no figures)', assertReportInvariants({ degraded: true, geoVisibilityScore: 999 }), []);
 check('a missing report is a violation', assertReportInvariants(null).length, 1);
+{
+  const withCited = (o: any) => ({ ...good(), ...o });
+  check('cited-only that fits beside the named answers is consistent (1 named + 2 cited-only of 3)', assertReportInvariants(withCited({ observationsCitedOnly: 2 })), []);
+  check('named plus cited-only more than the usable answers is impossible: they cannot overlap', assertReportInvariants(withCited({ observationsCitedOnly: 3 })).length, 1);
+  check('cited-only that is not a count is a violation', [assertReportInvariants(withCited({ observationsCitedOnly: -1 })).length, assertReportInvariants(withCited({ observationsCitedOnly: 1.5 })).length, assertReportInvariants(withCited({ observationsCitedOnly: '2' })).length], [1, 1, 1]);
+  check('an old report with no cited-only number is still consistent', assertReportInvariants(good()), []);
+  check('metricVersion 2 and the cited-only number travel together: one without the other is a violation', [assertReportInvariants(withCited({ metricVersion: 2 })).length, assertReportInvariants(withCited({ metricVersion: 2, observationsCitedOnly: 0 })).length, assertReportInvariants(withCited({ metricVersion: 'two' })).length], [1, 0, 1]);
+}
 
 function violates(name: string, mutate: (r: any) => void, mention: RegExp) {
   const r = good();

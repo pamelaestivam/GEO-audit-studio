@@ -519,5 +519,59 @@ check(
   check('accuracy never goes below 0', computeAccuracyRate(new Set(['0|Gemini']), ['0|Gemini', '0|Gemini', '0|Gemini']), 0);
 }
 
+// ---------------------------------------------------------------- decision A: cited-only is its own number
+{
+  const citedNoName = evidence({
+    answerText: 'The leading option is Adyen. PayPal is also popular.',
+    citations: [{ url: 'https://stripe.com/docs', title: 'Stripe Docs', domain: 'stripe.com' }],
+  });
+  const namedAndCited = evidence({
+    answerText: 'The leading option is Stripe. PayPal is also popular.',
+    citations: [{ url: 'https://stripe.com/docs', title: 'Stripe Docs', domain: 'stripe.com' }],
+  });
+  const neither = evidence({ answerText: 'The leading option is Adyen.', citations: [] });
+  const m = [stripe, buildBrandMatcher('Adyen')];
+  const a = analyseAnswer(citedNoName, m).find((r) => r.brand === 'Stripe')!;
+  check('a brand whose website is cited but whose name is absent is NOT mentioned', [a.mentioned, a.citedAsSource, a.citedOnly], [false, true, true]);
+  check('...so it has no rank and no prominence (only a name earns those)', [a.rank, a.prominence, a.firstMentionIndex], [null, 0, -1]);
+  const b = analyseAnswer(namedAndCited, m).find((r) => r.brand === 'Stripe')!;
+  check('named AND cited is a mention, not cited-only', [b.mentioned, b.citedAsSource, b.citedOnly], [true, true, false]);
+  const c = analyseAnswer(neither, m).find((r) => r.brand === 'Stripe')!;
+  check('neither named nor cited is neither', [c.mentioned, c.citedAsSource, c.citedOnly], [false, false, false]);
+  const cards = buildScorecards([analyseAnswer(citedNoName, m), analyseAnswer(namedAndCited, m), analyseAnswer(neither, m)], m);
+  const s = cards.find((x) => x.brand === 'Stripe')!;
+  check('over three answers: visibility counts the one that names the brand (33%), cited-only is 1, cited at all is 2', [s.visibility, s.timesMentioned, s.citedOnlyCount, s.citedAsSourceCount], [33, 1, 1, 2]);
+  check('share of voice does not count the cited-only answer either (1 of 3 mentions = 33%; counting it would give 2 of 4 = 50%)', s.shareOfVoice, 33);
+}
+
+// ---------------------------------------------------------------- a legal suffix typed after the name is not how answers write it
+{
+  const plain = 'The best option is Acme Analytics, followed by Foo.';
+  for (const typed of ['Acme Analytics Inc', 'Acme Analytics, Inc.', 'Acme Analytics LLC', 'Acme Analytics Ltd.', 'ACME ANALYTICS GmbH']) {
+    check(`"${typed}" is found when the answer writes "Acme Analytics"`, findFirstMention(plain, buildBrandMatcher(typed, 'acme.com')) >= 0, true);
+  }
+  check('...and a brand that is only a prefix of another name is still not matched on a different company', findFirstMention('Try Acme Cars for a ride.', buildBrandMatcher('Acme Analytics Inc', 'acme.com')), -1);
+  // A single word left over after the suffix is a category word, not a brand: it must NOT become a token.
+  for (const typed of ['Cargo Co', 'Coffee Company', 'Pizza Co.', 'Gym Ltd', 'Bar AS', 'Cars As', 'Orange SA']) {
+    const mm = buildBrandMatcher(typed);
+    check(`"${typed}" adds no single-word token (it would match every answer about the category)`, mm.tokens.every((t) => t.split(/\s+/).length >= 2 || t === typed.toLowerCase()), true);
+  }
+  // A leading article must not count toward the two words ("The Coffee Company" -> "the coffee" would match "the coffee shops").
+  for (const typed of ['The Coffee Company', 'The Pizza Co.', 'A Gym Ltd', 'An Orange SA']) {
+    check(`"${typed}" adds no token made of an article and one category word`, buildBrandMatcher(typed).tokens.every((t) => t === typed.toLowerCase() || t.split(/\s+/).length >= 2 && !/^(the|a|an)\s/.test(t)) && buildBrandMatcher(typed).tokens.length === 1, true);
+  }
+  check('"The Coffee Company" is not credited with "Locals love the coffee shops on South Congress."', findFirstMention('Locals love the coffee shops on South Congress.', buildBrandMatcher('The Coffee Company')), -1);
+  check('"The Acme Analytics Company" still matches plain "Acme Analytics" (the article is dropped from the core)', findFirstMention('The best option is Acme Analytics.', buildBrandMatcher('The Acme Analytics Company')) >= 0, true);
+  check('"Müller GmbH & Co" no longer leaves a junk "&" token', buildBrandMatcher('Müller GmbH & Co').tokens.every((t) => !/[&]$/.test(t)), true);
+  check('"Smith & Sons Ltd" keeps its ampersand inside and gains "smith & sons"', buildBrandMatcher('Smith & Sons Ltd').tokens.includes('smith & sons'), true);
+  check('"Cargo Co" is not credited with an answer that only mentions cargo', findFirstMention('Cargo ships carry most freight; air cargo is faster.', buildBrandMatcher('Cargo Co')), -1);
+  check('"Coffee Company" is not credited with an answer that only mentions coffee', findFirstMention('Many coffee shops in Austin serve pour-over.', buildBrandMatcher('Coffee Company')), -1);
+  check('a query about the category does not "name" a brand called "Cargo Co"', queryNamesBrand('best cargo shipping and coffee pizza', buildBrandMatcher('Cargo Co')), false);
+  check('repeated suffixes with punctuation are all stripped ("Acme Analytics Co., Ltd." -> "acme analytics")', buildBrandMatcher('Acme Analytics Co., Ltd.').tokens.includes('acme analytics'), true);
+  check('a name that is nothing but a suffix word adds no token (no empty or tiny match)', buildBrandMatcher('Inc', 'inc.com').tokens.every((t) => t.length >= 3), true);
+  const m = buildBrandMatcher('Hula Poke Co.', 'hula.com');
+  check('the name as typed and the name without its suffix are both matched, and nothing else is invented', m.tokens, ['hula poke co.', 'hula poke']);
+}
+
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

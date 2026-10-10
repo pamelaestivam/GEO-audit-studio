@@ -15,6 +15,9 @@ import {
   engineModelsLine,
   MEASUREMENT_DISCLOSURE,
   visibilityBasis,
+  citedOnlyLine,
+  CITED_ONLY_EXPLAINER,
+  metricVersionNote,
   rangeExplanation,
   visibilityRange,
   wasAssessed,
@@ -37,6 +40,8 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
   const accuracy = describeAccuracy(audit);
   const counts = findingCounts(audit);
   const basis = visibilityBasis(audit);
+  const citedOnly = citedOnlyLine(audit);
+  const versionNote = metricVersionNote(audit);
   const range = visibilityRange(audit);
   const rangeText = rangeExplanation(audit);
   const modelsLine = engineModelsLine(audit);
@@ -197,6 +202,13 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <p className="text-xs text-slate-400 mt-1 max-w-[200px] leading-tight">
               Share of captured answers that name your brand.
               {basis && <span className="block text-slate-300 font-medium mt-0.5">{basis}</span>}
+              {citedOnly && (
+                <span className="block text-slate-300 mt-0.5" title={CITED_ONLY_EXPLAINER}>
+                  {citedOnly}
+                  <span className="block text-[11px] text-slate-400 font-normal leading-snug">{CITED_ONLY_EXPLAINER}</span>
+                </span>
+              )}
+              {versionNote && <span className="block text-[11px] text-amber-300/90 mt-0.5 leading-snug">{versionNote}</span>}
               {range && (
                 <span className="block text-slate-400 mt-0.5">Rough 95% range from this sample: {range}.</span>
               )}

@@ -65,9 +65,11 @@
   "measuredEngines": [
     "Gemini"
   ],
+  "metricVersion": 2,
   "narrativeAvailable": true,
   "notCounted": [],
   "observationsAttempted": 2,
+  "observationsCitedOnly": 0,
   "observationsMentioned": 2,
   "observationsWithEvidence": 2,
   "omissions": [],

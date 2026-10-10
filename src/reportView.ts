@@ -64,12 +64,19 @@ export function isLowSample(audit: Pick<AuditReport, 'degraded' | 'observationsW
 
 /** "67% (3 answers)": the number a badge shows, with what it rests on, so a bare figure is never quoted alone. */
 export function formatScoreBadge(
-  audit: Pick<AuditReport, 'degraded' | 'geoVisibilityScore' | 'observationsWithEvidence'>
+  audit: Pick<AuditReport, 'degraded' | 'geoVisibilityScore' | 'observationsWithEvidence' | 'metricVersion'>
 ): string {
   const base = formatPercent(audit, audit.geoVisibilityScore);
   const n = sampleSize(audit);
-  if (!hasMeasurements(audit) || n === null) return base;
-  return `${base} (${n} ${n === 1 ? 'answer' : 'answers'})`;
+  if (!hasMeasurements(audit) || n === null) return isEarlierMetricRule(audit) ? `${base} · earlier rule` : base;
+  // A score saved before decision A also counted a cited website as a mention: it is marked wherever it is listed
+  // beside newer ones, so a drop between an old and a new audit of one brand is not read as the brand getting worse.
+  return `${base} (${n} ${n === 1 ? 'answer' : 'answers'})${isEarlierMetricRule(audit) ? ' · earlier rule' : ''}`;
+}
+
+/** True for a report measured before decision A (no metricVersion), when a cited website also counted as a mention. */
+export function isEarlierMetricRule(audit: Pick<AuditReport, 'degraded' | 'metricVersion'>): boolean {
+  return !audit.degraded && (audit.metricVersion === undefined || audit.metricVersion < 2);
 }
 
 /**
@@ -101,6 +108,29 @@ export function visibilityBasis(
     return `Named in ${audit.observationsMentioned} of ${answers}${where}${failed}`;
   }
   return `Based on ${answers}${where}${failed}`;
+}
+
+/**
+ * The brand's own website was cited in some answers that never named it. Its own number, shown under the headline and
+ * never added to it (docs/DECISIONS.md, decision A). Null when there is nothing to say or nothing was measured.
+ */
+export function citedOnlyLine(audit: Pick<AuditReport, 'degraded' | 'observationsWithEvidence' | 'observationsCitedOnly'>): string | null {
+  if (audit.degraded) return null;
+  const n = audit.observationsCitedOnly;
+  if (typeof n !== 'number' || n <= 0) return null;
+  return `+${n} cite your site without naming you`;
+}
+
+/** The one-line explanation that goes with `citedOnlyLine`. */
+export const CITED_ONLY_EXPLAINER = 'A cited source is not a mention: these answers linked to your website but the name you typed did not appear in their text, so they are not in the percentage above. If engines write your name differently, that is why.';
+
+/**
+ * A report measured before the rule changed (no metricVersion) counted a cited source as a mention. It is not
+ * silently reinterpreted: it says so. Null for reports on the current rule, and for ones with no measurements.
+ */
+export function metricVersionNote(audit: Pick<AuditReport, 'degraded' | 'metricVersion'>): string | null {
+  if (!isEarlierMetricRule(audit)) return null;
+  return 'Measured under the earlier rule, where citing your website also counted as a mention. New audits count only answers that name you, so this figure is not directly comparable.';
 }
 
 /**
