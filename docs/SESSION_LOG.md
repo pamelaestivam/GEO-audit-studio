@@ -124,3 +124,26 @@ registry, `generativelanguage.googleapis.com`, and git/GitHub through the proxy 
 `vercel.app`, `vercel.com`, `supabase.com` and `ai.google.dev` are not. The repository is public;
 this session can push but has no admin rights. GitHub Actions runners are outside this policy, so a
 workflow can act as the session's eyes on the live site, with its logs read through the GitHub tools.
+
+---
+
+## 2026-10-10 (later still): CI strategy merged, first measurement of the live site
+
+PRs #30 (honest first visit), #31 (hygiene) and #32 (CI strategy) are merged (19005fc, 09aaa88,
+01c4049). Each had its own fresh-context adversarial review and EVAL PM score; every first version
+had defects (the CI PR's live check would never have passed on the memory-only preview, a hung site
+would have skipped the alert, and its restart proof did not exercise the restarted server).
+
+**First measurement of the live site (MEASURED, GitHub Actions runner, the workspace cannot reach
+it):** run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38033024298 dispatched the
+new `live-check` workflow. The site loads and its API answers at every depth and refuses strangers.
+It is **not configured**: `SESSION_SECRET` and `ACCESS_CODES` are not set (so sign-in is
+impossible) and no engine key is set (so no audit can run). The workflow opened issue #36 by
+itself; that is the check working. Storage is memory only (a warning, not a failure, until the
+durable store ships). The action this needs from the owner is O-3 and O-2 in `docs/PROGRAM.md`.
+
+**Also observed:** Vercel's bot emits `deployment_status` events for Preview deployments, which fire
+`live-check.yml` (skipped by its condition). A Production event has not been observed yet.
+
+**Open:** PR #33 (report invariants and the zero-figure guard) is in review; the rest of
+`docs/PROGRAM.md` rows 5 to 7.

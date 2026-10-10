@@ -84,7 +84,7 @@ Google login; secrets must never be in the repo or in chat.
 3. Put the same key in the Vercel project (O-3).
 *Then:* record the date you confirmed "no billing" in the table in section 4.
 
-**O-3. Check the Vercel project.** *Why only you:* it needs your Vercel login.
+**O-3. Check the Vercel project.** *Why only you:* it needs your Vercel login. **Measured 2026-10-10 by the live check (issue #36): `SESSION_SECRET`, `ACCESS_CODES` and `GEMINI_API_KEY` are all missing on the live site, so sign-in is impossible today.**
 1. `vercel.com` then project `geo-audit-studio` then **Settings** then **Environment
    Variables**. Confirm these exist for Production and Preview: `SESSION_SECRET`
    (32 or more random characters), `ACCESS_CODES` (`yourname=a-long-code`),
@@ -133,7 +133,10 @@ branch-protection, ruleset, repository-settings or delete-branch tool (searched
 | Full suite on `main` after the 2026-10-09 merges | verified | `npm run verify`: 1,092 checks passed, 0 failed, 0 vulnerabilities; 2026-10-10 |
 | Start-up with no key, dev sign-in, empty engine list | verified | run on merged tree; 2026-10-10 |
 | Anything a real answer engine returns | **not verified** | no key, no network in the sandbox |
-| Live site loads, sign-in works, secrets present | **not verified** | sandbox cannot resolve `vercel.app` |
+| Live site loads and its API answers at every depth; strangers are refused | verified | `live-check` run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38033024298 (2026-10-10, 07:02 UTC): every frontend, API and refusal check passed against `https://geo-audit-studio-five.vercel.app` |
+| **Live site is configured: sign-in secrets and an engine key present** | **MEASURED: NOT CONFIGURED** | same run: `SESSION_SECRET` is not set, `ACCESS_CODES` is not set, no engine key is set (issue #36). Nobody can sign in to the live site and no audit can run until the owner sets these in Vercel (O-3, O-2). |
+| Live site storage | MEASURED: memory only | reported as a warning by the same run (`--warn-non-durable`) |
+| `live-check` trigger on a finished Production deployment | partly | Vercel's bot fires the workflow for Preview deployments (runs skipped by design, e.g. run 38032591841); a Production-environment event has not been observed yet |
 | Vercel function maximum duration on this project | **not verified** | AGENT says 300 s with fluid compute |
 | Gemini free grounded-prompt allowance | **not verified** | sources disagree (1,500 per day vs 5,000 per month) |
 | Google project has no billing (the $0 control) | **not verified** | owner action O-2 |
