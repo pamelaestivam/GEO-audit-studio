@@ -19,6 +19,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 installAuthFetch();
 
 let failures = 0;
@@ -99,6 +100,7 @@ function startFakeGemini(): Promise<http.Server> {
 interface App {
   base: string;
   proc: ChildProcess;
+  out: CapturedOutput;
 }
 
 async function startApp(extraEnv: Record<string, string> = {}): Promise<App | null> {
@@ -122,18 +124,21 @@ async function startApp(extraEnv: Record<string, string> = {}): Promise<App | nu
       GEMINI_MODEL: '',
       ...extraEnv,
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const out = captureOutput(proc);
   const base = `http://127.0.0.1:${port}`;
   const started = Date.now();
   while (Date.now() - started < 20000) {
     try {
-      if ((await fetch(`${base}/api/health`)).ok) return { base, proc };
+      if ((await fetch(`${base}/api/health`)).ok) return { base, proc, out };
     } catch {
       /* not up yet */
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  // A server that never answered /api/health: show what it said (a crash, a port already in use) before it is killed.
+  printCaptured('server that did not start', out);
   proc.kill();
   return null;
 }
@@ -169,6 +174,7 @@ const POKE = {
 async function main() {
   const fake = await startFakeGemini();
   const procs: ChildProcess[] = [];
+  const outs: [string, CapturedOutput][] = [];
 
   try {
     // ------------------------------------------------------------------
@@ -181,6 +187,7 @@ async function main() {
       return;
     }
     procs.push(A.proc);
+    outs.push(['server A', A.out]);
 
     // --- Vendor discovery and the share-of-voice denominator -------------
     mode = 'ok';
@@ -203,6 +210,7 @@ async function main() {
       const custom = await startApp({ GEMINI_MODEL: 'gemini-custom-override' });
       if (custom) {
         procs.push(custom.proc);
+        outs.push(['custom server', custom.out]);
         const r = (await runAudit(custom, POKE)).final?.report;
         check('GEMINI_MODEL overrides the model, and the report names the one actually used', r?.engineModels, { Gemini: 'gemini-custom-override' });
       }
@@ -299,6 +307,7 @@ async function main() {
     assert('server B starts', !!B);
     if (B) {
       procs.push(B.proc);
+      outs.push(['server B', B.out]);
       mode = 'ok';
       const statuses: number[] = [];
       for (let i = 0; i < 4; i++) {
@@ -320,6 +329,7 @@ async function main() {
     assert('server C starts', !!C);
     if (C) {
       procs.push(C.proc);
+      outs.push(['server C', C.out]);
       mode = 'slow';
       const first = await post(C, '/api/audit/run', POKE, { 'Idempotency-Key': 'click-1' });
       const firstBody = await first.json();
@@ -347,6 +357,7 @@ async function main() {
       check('once the running audit finishes, a new one is accepted', third.status, 202);
     }
   } finally {
+    if (failures > 0) outs.forEach(([label, out]) => printCaptured(label, out));
     procs.forEach((p) => p.kill());
     fake.close();
   }

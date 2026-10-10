@@ -414,6 +414,19 @@ async function buildApp() {
   const RATE_LIMIT_MAX_WAIT_MS = Number(process.env.GEMINI_RATE_LIMIT_MAX_WAIT_MS || 20000);
   const RATE_LIMIT_RETRIES = Number(process.env.GEMINI_RATE_LIMIT_RETRIES || 1);
 
+  /**
+   * The cause behind a provider error, for the server log only (never shown to a person): undici wraps every
+   * connection failure as "fetch failed", which hides whether the connection was refused, reset or closed, and the
+   * person-facing sentence says only "Could not reach Gemini". Short, no keys or URLs with query strings.
+   */
+  function underlyingCause(err: any): string {
+    const cause = err?.cause ?? err;
+    const code = cause?.code || err?.code;
+    const text = String(cause?.message || err?.message || '').replace(/\s+/g, ' ').replace(/[?&]key=[^&\s]+/gi, '').slice(0, 120);
+    const bits = [code, text && text !== 'fetch failed' ? text : ''].filter(Boolean);
+    return bits.length ? ` (${bits.join(': ')})` : '';
+  }
+
   async function generateContentWithRetry(
     aiInstance: GoogleGenAI,
     params: any,
@@ -515,10 +528,13 @@ async function buildApp() {
         }
 
         const retryable = readable.kind === 'timeout' || readable.kind === 'network';
+        if (retryable && attempt > maxRetries) {
+          console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}${underlyingCause(err)}; giving up`);
+        }
         if (!retryable || attempt > maxRetries) throw err;
 
         const waitMs = Math.min(20000, 5000 * attempt);
-        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}; retrying in ${Math.round(waitMs / 1000)}s`);
+        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}${underlyingCause(err)}; retrying in ${Math.round(waitMs / 1000)}s`);
         await delay(waitMs);
       }
     }

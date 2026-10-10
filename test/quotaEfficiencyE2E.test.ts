@@ -19,6 +19,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 import { DEFAULT_QUERY_COUNT } from '../src/queries';
 installAuthFetch();
 
@@ -134,6 +135,7 @@ async function waitForServer(timeoutMs = 20000): Promise<boolean> {
 async function main() {
   const fakeGemini = await startFakeGemini();
   let appServer: ChildProcess | null = null;
+  let appOut: CapturedOutput | null = null;
 
   try {
     appServer = spawn('node', ['dist/server.cjs'], {
@@ -148,8 +150,9 @@ async function main() {
         HTTP_PROXY: '',
         HTTPS_PROXY: '',
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    appOut = captureOutput(appServer);
 
     const up = await waitForServer();
     assert('the app server starts against the fake success endpoint', up);
@@ -225,6 +228,7 @@ async function main() {
     const hitsAfterLookup = fakeGemini.hitCount();
     check('the explicit brand-lookup endpoint costs exactly one Gemini call', hitsAfterLookup - hitsBeforeLookup, 1);
   } finally {
+    if (failures > 0) printCaptured('app server', appOut);
     appServer?.kill();
     fakeGemini.server.close();
   }

@@ -721,12 +721,38 @@ silently. That is the intended trade, but it makes the port fix above more worth
 three times in a row. The cause of that start failure was not captured because the
 suites spawn the server with `stdio: 'ignore'`; capturing its output on a failed start
 belongs with the same fix. `test/testHarness.test.ts` guards the early-return shape.
+
+Evidence gathered later the same day (what is and is not known): CI failed on three runs in about two hours
+(`quotaEfficiencyE2E` on PR #50's intermediate head, `mvpHardeningE2E` on PR #51's docs-only head, plus the two local
+runs above) and passed on others with no relevant code difference. The failing audit always takes about 15 s, which is
+exactly the server's network-retry schedule (try, wait 5 s, try, wait 10 s, try), and the fake Gemini always sees zero
+requests: the server could not connect to it three times in a row. It was NOT reproduced in 12 isolated runs of
+`quotaEfficiencyE2E` or in 3 back-to-back runs of the four neighbouring suites with nothing else running, so a port
+collision between overlapping random ranges (about 1 to 2 percent by chance) does not by itself explain a failure rate
+this high; the cause is not known. What was added so the next occurrence explains itself: the server logs the
+underlying cause of a retried or abandoned provider error (a refused connection, a reset, a bad port), and the four
+suites that fail this way (`quotaBreakerE2E`, `quotaEfficiencyE2E`, `retrySpendE2E`, `mvpHardeningE2E`) now keep the
+server's own output (minus the per-request log) and print it when they have failures (`test/serverOutput.ts`). Next
+step when it happens again: read that output in the CI log; do not guess.
 The guard is a tripwire for the shapes this repo's tests produce, not a proof. Known contrived
 misses (found in review, none present in the sources): a negated `if` and its return on
 one line after an `else`; a return inside a `try`/loop nested in the negated `if`; `return`
 without a semicolon; a template literal with text at column 0 inside the block; an object
 literal in the condition ahead of `=== false`; a status written only inside a string. A
 fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <why>`.
+
+### 2.16 Vercel's free deployment cap was reached on 2026-10-10 (low-medium; owner may need to look)
+
+At 23:08 UTC on 2026-10-10 Vercel reported on PR #51: "Resource is limited - try again in 24 hours (more than 100, code:
+`api-deployments-free-per-day`)". Every push to a branch makes a preview deployment, and roughly 100 commits were pushed
+that day across about 15 PRs, many of them review rounds. OBSERVED: previews stopped building after that. NOT KNOWN from
+here: whether production deployments of `main` were also refused (a live-check run was queued for `main` 64bc0ae at
+23:21 UTC, which suggests a Production deployment status did arrive, but no one has opened the Vercel dashboard; owner
+action O-3 step 3 already asks the owner to confirm the latest Production deployment says Ready, and that is the check
+that settles it). Mitigations that cost nothing: push once per review round, not once per fix; batch docs-only follow-ups
+into the PR they belong to. A build-skipping rule for commits that touch only `docs/`, `test/` or `*.md` (a Vercel
+`ignoreCommand` in `vercel.json`) would remove most of the load, but its exit-code semantics could not be checked
+offline, so it is not added blind.
 
 ### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
 

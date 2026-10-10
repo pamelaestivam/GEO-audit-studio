@@ -29,6 +29,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 installAuthFetch();
 
 let failures = 0;
@@ -184,6 +185,7 @@ const AUDIT_BODY = {
 async function main() {
   const fakeGemini = await startFakeGemini();
   let appServer: ChildProcess | null = null;
+  let appOut: CapturedOutput | null = null;
 
   try {
     appServer = spawn('node', ['dist/server.cjs'], {
@@ -198,8 +200,9 @@ async function main() {
         HTTP_PROXY: '',
         HTTPS_PROXY: '',
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    appOut = captureOutput(appServer);
 
     const up = await waitForServer();
     assert('the app server starts against the fake Gemini endpoint', up);
@@ -376,6 +379,7 @@ async function main() {
     }
 
   } finally {
+    if (failures > 0) printCaptured('app server', appOut);
     appServer?.kill();
     fakeGemini.server.close();
   }
