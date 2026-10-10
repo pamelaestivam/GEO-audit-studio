@@ -113,7 +113,9 @@ own deployment (section 6).
 | `ALLOW_DEV_AUTH` | no | Local development only: `npm run dev` passes `--dev`, which has the same effect. Never honoured in production, and only from the same machine. Do not set it on a server behind a local reverse proxy without `TRUST_PROXY` (every request would look local) |
 | `JOB_MAX_RUN_MS` | no (900000) | An audit still running after this long is reported as stopped (it is recorded if it later finishes) |
 | `DATA_DIR` | yes for durability | Directory for the SQLite file. Unset = nothing is saved |
-| `PERPLEXITY_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | no | Adds an engine. Each multiplies per-audit spend |
+| `PERPLEXITY_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | no | Adds a PAID engine, but only together with `ALLOW_PAID_ENGINES=1`; a key alone is ignored and `/api/audit/status` lists it under `spend.paidEnginesBlocked`. Each engine multiplies per-audit spend |
+| `ALLOW_PAID_ENGINES` | no (off) | `1` accepts that ChatGPT, Perplexity and Claude cost money per call. Leave unset to stay at $0 |
+| `GEMINI_DAILY_CALL_CAP` | no (none) | A positive whole number: the most Gemini calls this server process makes per UTC day. Counted per process (on serverless each instance counts alone, so the cap is a brake against loops, not a guarantee). The money control is a Google project with no billing account |
 | `GEMINI_MODEL` etc. | no | Override a model id without a code change |
 | `USER_AUDITS_PER_DAY` | no (10) | Rolling 24h audits **per access code**. People sharing a code share this allowance; changing the email does not reset it. `0` disables |
 | `GLOBAL_AUDITS_PER_DAY` | no (100) | Rolling 24h audits for everyone. `0` disables |

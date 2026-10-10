@@ -43,6 +43,7 @@ import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
 import { guardSummary, containsFigure, assertReportInvariants } from './src/reportGuard.js';
+import { CallCounter, dailyCallCap, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
 import {
   askEngine,
   configuredEngines,
@@ -339,6 +340,14 @@ async function buildApp() {
    * to wait, which meant every retry failed too.
    */
   /** Thrown when the circuit breaker refuses a call - carries the reason directly. */
+  /** Calls this process has made to Gemini, per UTC day (a safeguard, not the money control: see src/spendGuard.ts). */
+  const geminiCalls = new CallCounter();
+  class CallCapReachedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'CallCapReachedError';
+    }
+  }
   class QuotaExhaustedError extends Error {
     constructor(message: string) {
       super(message);
@@ -387,9 +396,16 @@ async function buildApp() {
             const status = geminiBreaker.status();
             throw new QuotaExhaustedError(`${status.reason} (${formatDuration(status.msRemaining)} remaining)`);
           }
+          // The operator's daily safety cap on Gemini calls (src/spendGuard.ts): checked and counted
+          // right where the call is made, so no code path can spend around it.
+          const cap = dailyCallCap(process.env);
+          if (geminiCalls.wouldExceed(cap)) throw new CallCapReachedError(capReachedMessage(cap as number));
+          geminiCalls.record();
           return aiInstance.models.generateContent(params);
         });
       } catch (err: any) {
+        // Our own safety cap is not a provider failure: no retry, no breaker, no wait.
+        if (err instanceof CallCapReachedError) throw err;
         attempt++;
         const readable = describeProviderError(err, 'Gemini');
 
@@ -513,6 +529,13 @@ async function buildApp() {
       // this deployment: can people sign in, and will their audits be kept.
       storage: store.info(),
       auth: { mode: auth.mode, problem: auth.problem },
+      // What this server will and will not spend (owner directive D-1, $0). Counts are for this process only.
+      spend: {
+        paidEnginesBlocked: paidEnginesBlocked(process.env),
+        geminiCallsToday: geminiCalls.today(),
+        geminiDailyCap: dailyCallCap(process.env),
+        scope: 'this server instance only',
+      } satisfies SpendStatus,
     });
   });
 

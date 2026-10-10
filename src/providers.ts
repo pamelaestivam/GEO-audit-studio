@@ -12,6 +12,7 @@
 
 import { extractDomain } from './analysis.js';
 import { describeProviderError, type ReadableError } from './errors.js';
+import { paidEnginesAllowed } from './spendGuard.js';
 
 export type EngineName = 'Gemini' | 'ChatGPT' | 'Perplexity' | 'Claude';
 
@@ -79,12 +80,19 @@ function dedupeCitations(raw: { url: string; title: string }[]) {
   return out;
 }
 
+/**
+ * The engines this server will actually query. A paid engine (ChatGPT, Perplexity, Claude) is queried
+ * only when its key is set AND the operator opted in with ALLOW_PAID_ENGINES=1: owner directive D-1
+ * is $0, so a key left in the environment by accident must cost nothing. Engines switched off this
+ * way are listed by `paidEnginesBlocked` (src/spendGuard.ts) and shown in /api/audit/status.
+ */
 export function configuredEngines(): EngineName[] {
   const engines: EngineName[] = [];
+  const paid = paidEnginesAllowed(process.env);
   if (process.env.GEMINI_API_KEY) engines.push('Gemini');
-  if (process.env.OPENAI_API_KEY) engines.push('ChatGPT');
-  if (process.env.PERPLEXITY_API_KEY) engines.push('Perplexity');
-  if (process.env.ANTHROPIC_API_KEY) engines.push('Claude');
+  if (paid && process.env.OPENAI_API_KEY) engines.push('ChatGPT');
+  if (paid && process.env.PERPLEXITY_API_KEY) engines.push('Perplexity');
+  if (paid && process.env.ANTHROPIC_API_KEY) engines.push('Claude');
   return engines;
 }
 

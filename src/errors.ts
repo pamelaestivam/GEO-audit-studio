@@ -208,6 +208,10 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
   if (err instanceof Error && err.name === 'QuotaExhaustedError') {
     return { kind: 'quota', message: err.message };
   }
+  // The operator's own daily call cap (src/spendGuard.ts): a finished sentence, not a provider failure.
+  if (err instanceof Error && err.name === 'CallCapReachedError') {
+    return { kind: 'quota', message: err.message };
+  }
 
   const raw = typeof err === 'string' ? err : String((err as any)?.message || err || '');
   const lower = raw.toLowerCase();

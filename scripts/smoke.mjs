@@ -79,6 +79,9 @@ try {
     check('storage is durable (audits survive a restart)', durable, status.json?.storage?.note || 'Audits are kept in memory only.');
   }
 
+  const blocked = status.json?.spend?.paidEnginesBlocked || [];
+  if (blocked.length) console.log(`note  paid engine(s) switched off because this server is set to spend nothing: ${blocked.join(', ')} (set ALLOW_PAID_ENGINES=1 to use them)`);
+
   // --- strangers are refused
   const noToken = await get('/api/audit/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessName: 'Smoke Test' }) });
   check('POST /api/audit/run without a session is refused (401)', noToken.status === 401 || noToken.status === 503, `status ${noToken.status} - an open endpoint spends quota for anyone`);
