@@ -255,6 +255,8 @@ export interface Store {
   recordIncident(incident: Omit<Incident, 'id'>): Promise<void>;
   /** Newest first. */
   listIncidents(opts?: { jobId?: string; limit?: number }): Promise<Incident[]>;
+  /** Audits that started since `sinceMs` and ended in error, counted by failure code ('none' when none was recorded). */
+  countFailedJobsSince(sinceMs: number): Promise<Record<string, number>>;
   /** Jobs still running that started within `maxAgeMs`. */
   /**
    * Jobs still running that started within `maxAgeMs`. With `staleAfterMs`, a job nobody has touched for that
@@ -465,6 +467,13 @@ export class MemoryStore implements Store {
       .sort((a, b) => b.id - a.id)
       .slice(0, clampLimit(opts.limit))
       .map((i) => ({ ...i }));
+  }
+  async countFailedJobsSince(sinceMs: number) {
+    const out: Record<string, number> = {};
+    for (const j of this.jobs.values()) {
+      if (j.status === 'error' && j.startedAt >= sinceMs) out[j.failCode ?? 'none'] = (out[j.failCode ?? 'none'] ?? 0) + 1;
+    }
+    return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
   }
   async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     let n = 0;
@@ -898,6 +907,12 @@ export class SqliteStore implements Store {
       ? this.db.prepare('SELECT * FROM incidents WHERE job_id = ? ORDER BY id DESC LIMIT ?').all(opts.jobId, clampLimit(opts.limit))
       : this.db.prepare('SELECT * FROM incidents ORDER BY id DESC LIMIT ?').all(clampLimit(opts.limit));
     return rows.map((r: Row) => ({ id: r.id, jobId: r.job_id ?? undefined, at: r.at, kind: r.kind, detail: r.detail }) as Incident);
+  }
+  async countFailedJobsSince(sinceMs: number) {
+    const rows = this.db
+      .prepare("SELECT COALESCE(fail_code, 'none') AS code, COUNT(*) AS n FROM jobs WHERE status = 'error' AND started_at >= ? GROUP BY code")
+      .all(sinceMs) as { code: string; n: number }[];
+    return Object.fromEntries(rows.map((r) => [r.code, Number(r.n)] as const).sort(([a], [b]) => a.localeCompare(b)));
   }
   async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     return staleAfterMs === undefined

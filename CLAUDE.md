@@ -330,6 +330,7 @@ have to be rediscovered from scratch, not so it can be skipped.
   once and says so (a repeated call and an incident); one killed three times on the same step stops with a sentence
   and the calls are capped; a page-driven audit carries on when the page asks again; a job with no plan is failed at
   boot with a code and a sentence (needs a current `dist/`)
+- `npx tsx test/recentTrouble.test.ts` — the "recent trouble" sentence the deep readiness check reports: quiet is healthy, a step that threw or ran out of tries is a fault, restarts and slow audits are noted but are not (pure checks; the end-to-end proof is in `auditStepsE2E`)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
   quota-breaker rule (including the several-engine cases no end-to-end test can reach)
 - `npx tsx test/auditStepsE2E.test.ts` — the real built server, a fake Gemini that counts hits, and the real

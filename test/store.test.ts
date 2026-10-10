@@ -431,6 +431,17 @@ async function stepSuite(t: (n: string) => string, make: () => Promise<Store>) {
   check(t('releasing leases not held by this instance frees the other\'s and keeps this instance\'s'), [await rr.releaseLeasesNotHeldBy(rr.instanceId), (await rr.claimStep('rr-planned', 'inline:me:rr-planned', LEASE, NOW + 2, 3)).outcome, (await rr.claimStep('rr-planned-2', 'client:other:x', LEASE, NOW + 2, 3)).outcome], [1, 'claimed', 'busy']);
   check(t('...the step taken over after a release is attempt 2'), (await rr.getJobSteps('rr-planned'))[0].attempt, 2);
 
+  // --- failed audits are counted by reason, inside a window
+  const fc = await make();
+  await fc.createJob(job({ id: 'fc-a', status: 'error', failCode: 'stuck', startedAt: NOW - 1000 }));
+  await fc.createJob(job({ id: 'fc-b', status: 'error', failCode: 'stuck', startedAt: NOW - 2000 }));
+  await fc.createJob(job({ id: 'fc-c', status: 'error', startedAt: NOW - 3000 }));
+  await fc.createJob(job({ id: 'fc-old', status: 'error', failCode: 'restarted', startedAt: NOW - 10 * DAY }));
+  await fc.createJob(job({ id: 'fc-ok', status: 'done', startedAt: NOW - 1000 }));
+  await fc.createJob(job({ id: 'fc-run', status: 'running', startedAt: NOW - 1000 }));
+  check(t('failed audits are counted by reason; finished, running and out-of-window ones are not, and a missing reason reads "none"'), await fc.countFailedJobsSince(NOW - DAY), { none: 1, stuck: 2 });
+  check(t('...an empty window counts nothing'), await fc.countFailedJobsSince(NOW + DAY), {});
+
   // --- pruning removes a pruned job's steps and old incidents
   const before = NOW + 1000;
   await s.createPlannedJob(job({ id: 'old1', startedAt: NOW - 10 * DAY }), PLAN);

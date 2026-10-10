@@ -750,6 +750,11 @@ those files is a re-run, not a regression, but it must be recorded here.
   is too small to hit from outside), and when it fires the page-driven request just answers `busy`. Jobs that end in
   error (a failed or exhausted step, a driver error) are not compacted, so their raw step answers stay for the
   seven-day retention; the person gets no report in those cases.
+- **Readiness `recent trouble` (step g, first slice) limits:** it reads the last 24 hours from the store, so on a memory
+  store (Vercel today) it only covers what that one instance has seen since it started; it counts, it does not
+  list (no job ids or names are exposed by a check that the daily live-site check prints); a server that is down or
+  cannot sign in cannot report it (the live check's other steps catch that); the readiness answer is cached for five
+  minutes, so a fault shows up within that. The page that shows the owner the list itself is not built.
 - **Step e resume (slice S5) limits:** resume happens at start-up only. There is no periodic sweeper, so a job whose
   holder dies without the whole process dying (not a case the server has today) is not picked up until the next
   restart or, for a page-driven job, until the page asks again. The supported topology is ONE server process per

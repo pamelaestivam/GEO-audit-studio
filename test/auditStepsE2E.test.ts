@@ -195,6 +195,17 @@ async function main() {
     ]);
     check('...the person gets a measured report from the one answer, which says the written analysis was not produced', [job.report?.degraded !== true, job.report?.narrativeAvailable, job.report?.observationsWithEvidence], [true, false, 1]);
     mode = 'ok';
+
+    // ---- the deep readiness check reads that trouble back: quiet is healthy, a broken step is not
+    const troubleOf = async (base: string) => {
+      const res = await fetch(`${base}/api/audit/readiness?refresh=1`);
+      const body: any = await res.json();
+      return body.checks?.find((c: any) => c.name === 'recent trouble');
+    };
+    const quiet = await troubleOf(normal.base);
+    check('readiness on a server whose audits all finished says there was no trouble', [quiet?.ok, quiet?.verified, /No audit failed and no incident/.test(quiet?.detail || '')], [true, true, true]);
+    const trouble = await troubleOf(broken.base);
+    check('readiness on a server where a step broke is not ok, says so, and names the kind of incident', [trouble?.ok, /1 step exception/.test(trouble?.detail || ''), /look at the incidents/.test(trouble?.detail || '')], [false, true, true]);
   } finally {
     for (const p of procs) p.kill();
     fake.close();

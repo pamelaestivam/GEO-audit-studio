@@ -52,6 +52,7 @@ import {
   type AuditProgress,
   type StoredAuditPlan,
 } from './src/auditSteps.js';
+import { summariseRecentTrouble } from './src/recentTrouble.js';
 import { CallCounter, dailyCallCap, capProblem, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
 import {
   askEngine,
@@ -641,6 +642,18 @@ async function buildApp() {
       });
     } catch (err: any) {
       checks.push({ name: 'storage', verified: true, ok: false, detail: `The store could not be written: ${err?.message || err}` });
+    }
+
+    // Has the server been failing audits? Everything it records about a bad ending is read together here, so the
+    // daily live-site check opens its issue when audits have been breaking quietly (counts only; no names or ids).
+    try {
+      const windowHours = 24;
+      const since = Date.now() - windowHours * 60 * 60 * 1000;
+      const incidents = (await store.listIncidents({ limit: 200 })).filter((i) => i.at >= since);
+      const trouble = summariseRecentTrouble({ failedByCode: await store.countFailedJobsSince(since), incidents, windowHours, durable: info.durable });
+      checks.push({ name: 'recent trouble', verified: true, ok: trouble.ok, detail: trouble.detail });
+    } catch (err: any) {
+      checks.push({ name: 'recent trouble', verified: true, ok: false, detail: `The record of failed audits could not be read: ${err?.message || err}` });
     }
 
     const ai = getGeminiClient();
