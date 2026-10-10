@@ -194,7 +194,10 @@ async function main() {
 
     const up = await waitForServer();
     assert('the built server starts and answers /api/health', up);
-    if (!up) return;
+    if (!up) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
 
     // ---- brand lookup must not invent business facts
     const parseRes = await post('/api/audit/parse-url', { input: 'City Sports' });

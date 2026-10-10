@@ -180,7 +180,10 @@ async function main() {
     const dataDir = tmp();
     const A = await startApp({ DATA_DIR: dataDir });
     assert('configured server starts', !!A);
-    if (!A) return;
+    if (!A) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
     apps.push(A);
 
     // --- public surface
@@ -283,7 +286,10 @@ async function main() {
     await stopApp(A);
     const A2 = await startApp({ DATA_DIR: dataDir }, A.port);
     assert('the server restarts on the same data directory', !!A2);
-    if (!A2) return;
+    if (!A2) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
     apps.push(A2);
     const afterRestart = await (await rawFetch(`${A2.base}/api/audits`, { headers: authed(alice.body.token) })).json();
     check('after a restart the same session still works (stateless token)', afterRestart.audits?.length, 2);
@@ -302,7 +308,10 @@ async function main() {
     mode = 'ok';
     const A3 = await startApp({ DATA_DIR: dataDir }, A.port);
     assert('the server restarts after being killed mid-audit', !!A3);
-    if (!A3) return;
+    if (!A3) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
     apps.push(A3);
     let orphan: Response | null = null;
     let orphanBody: any = null;

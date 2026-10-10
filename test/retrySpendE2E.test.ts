@@ -203,7 +203,10 @@ async function main() {
 
     const up = await waitForServer();
     assert('the app server starts against the fake Gemini endpoint', up);
-    if (!up) return;
+    if (!up) {
+      process.exitCode = 1; // a failed start is a failed run: returning here skips the exit status below
+      return;
+    }
 
     // ---------------------------------------------------------------- 1
     // One click, delivered four times because the connection kept stalling.
