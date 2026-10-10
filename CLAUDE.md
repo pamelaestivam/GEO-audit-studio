@@ -317,8 +317,8 @@ have to be rediscovered from scratch, not so it can be skipped.
 - `npm start` — run the built server
 - `npm run lint` — `tsc --noEmit`
 - `npm test` — build, then every check below, in order
-- `npx tsx test/auditGoldenE2E.test.ts` — the real built server and a fake Gemini; nine scenarios' reports
-  compared byte for byte with `test/golden/` (captured before `src/auditPipeline.ts` was split out).
+- `npx tsx test/auditGoldenE2E.test.ts` — the real built server and a fake Gemini; twelve scenarios' reports
+  compared with `test/golden/` after dropping per-run values and sorting keys (captured before `src/auditPipeline.ts` was split out).
   A deliberate change to the report is `UPDATE_GOLDEN=1`, then read the diff (needs a current `dist/`)
 - `npx tsx test/analysis.test.ts` — deterministic analysis + vendor-extraction
   unit checks, no server involved

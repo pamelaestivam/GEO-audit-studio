@@ -17,6 +17,7 @@ import {
   computeAccuracyRate,
   dedupeMatchers,
   extractCandidateVendors,
+  normaliseDomain,
   notCountedItems,
   queryNamesBrand,
   sourcesForBrand,
@@ -26,9 +27,15 @@ import { endSentence } from './errors.js';
 import { engineModelId, type EngineName } from './providers.js';
 import { assertReportInvariants, containsFigure, guardSummary } from './reportGuard.js';
 
-/** Vendors the answers actually named, by text extraction only (never a model call). First-seen casing kept. */
+/**
+ * Vendors the answers actually named, found with zero model calls. This used to ask Gemini to list vendors
+ * and then verify every returned name literally occurs in the source text, so the model's answer was being
+ * fully re-derived from the text anyway. That verification alone (extractCandidateVendors) is enough, and
+ * removing the call took one Gemini request out of every audit: it was the largest reason a one-query
+ * audit cost far more than one query's worth of quota (TECH_DEBT 2.6a). First-seen casing is kept.
+ */
 export function discoverVendors(evidenceForQuery: QueryEvidence[], excludeMatchers: any[]): string[] {
-  const usable = evidenceForQuery.filter((e) => !e.error && e.answerText.trim().length > 0);
+  const usable = evidenceForQuery.filter(isUsableEvidence);
   if (usable.length === 0) return [];
 
   // Merge candidates across every answer, keeping the first-seen casing
@@ -41,6 +48,63 @@ export function discoverVendors(evidenceForQuery: QueryEvidence[], excludeMatche
     }
   }
   return Array.from(byKey.values());
+}
+
+/** An answer counts only if it did not fail and says something. The one definition. */
+export function isUsableEvidence(e: QueryEvidence): boolean {
+  return !e.error && e.answerText.trim().length > 0;
+}
+
+/** What was asked for, cleaned: the same input always plans the same audit. */
+export interface AuditPlan {
+  businessName: string;
+  cleanDomain: string;
+  industry: any;
+  coreOfferings: any;
+  targetAudience: any;
+  competitorList: string[];
+  queryList: any[];
+}
+
+/**
+ * Turn the request body into the audit to run: the bare host of the domain, the competitors that are
+ * real strings, and the questions (the person's own, or the template ones when none were given). Pure.
+ * `fallbackQueries` is injected because the template questions live with the server's other templates.
+ */
+export function planAudit(
+  body: any,
+  deps: {
+    fallbackQueries: (businessName: string, cleanDomain: string, industry: any, coreOfferings: any, competitorList: string[]) => any[];
+    maxQueries: number;
+  }
+): AuditPlan | { error: string; badRequest: true } {
+  const { businessName, domain, industry, coreOfferings, targetAudience, competitors, queries } = body;
+
+  if (!businessName) {
+    return { error: 'businessName is required', badRequest: true };
+  }
+
+  // Users paste full URLs into the domain field; store the bare host so
+  // links render correctly and source matching compares like with like.
+  const cleanDomain = normaliseDomain(domain || '');
+  const competitorList = (Array.isArray(competitors) ? competitors : [competitors])
+    .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
+    .map((c: string) => c.trim());
+
+  const suppliedQueries = Array.isArray(queries) ? queries.filter((q: any) => q?.queryText) : [];
+
+  // Template-generated, not a Gemini call: a one-query audit should cost
+  // one query's worth of quota, not one call to invent the query on top
+  // of it. The LLM-authored version of this (generateAuditQueries) is
+  // still available, but only behind the explicit "Generate Query
+  // Matrix" step in the Run Audit modal - a deliberate spend the user
+  // opted into, not something every default audit pays silently.
+  const generatedQueries =
+    suppliedQueries.length === 0 ? deps.fallbackQueries(businessName, cleanDomain, industry, coreOfferings, competitorList) : [];
+
+  const queryList = [...generatedQueries, ...suppliedQueries].slice(0, deps.maxQueries);
+
+  return { businessName, cleanDomain, industry, coreOfferings, targetAudience, competitorList, queryList };
 }
 
 /** What the deterministic analysis of the usable evidence produced. */
@@ -69,7 +133,7 @@ export function analyseEvidence(input: {
 }): EvidenceAnalysis {
   const { businessName, cleanDomain, competitorList, evidenceByQuery } = input;
   const allEvidence = evidenceByQuery.flat();
-  const usableEvidence = allEvidence.filter((e) => !e.error && e.answerText.trim().length > 0);
+  const usableEvidence = allEvidence.filter(isUsableEvidence);
 
   const clientMatcher = buildBrandMatcher(businessName, cleanDomain);
   const clientLabel = clientMatcher.label;
@@ -429,4 +493,5 @@ export function assembleReport(input: {
     };
   }
 
-  return { report };}
+  return { report };
+}

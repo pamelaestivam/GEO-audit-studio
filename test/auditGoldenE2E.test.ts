@@ -7,9 +7,15 @@
  * A unit test of the new functions would only prove they agree with themselves. This one fails if any
  * string, number, key or the order of rows moves.
  *
- * Only values that are different on every run are removed before comparing (the audit id, the
- * timestamps). To accept a deliberate change to the report, regenerate with UPDATE_GOLDEN=1 and read
+ * Compared after removing the values that differ on every run (the audit id and the timestamps) and
+ * sorting object keys, so the order of KEYS is not checked; the order of rows in every list is. To accept a deliberate change to the report, regenerate with UPDATE_GOLDEN=1 and read
  * the diff in review: the diff IS the change a person will see.
+ *
+ * What it does NOT guard (mutations that still pass, checked 2026-10-10): the tie order and the
+ * zero-mention filter of `untrackedRivals` (all fixture vendors are mentioned once), `dedupeMatchers`
+ * (the typed competitor already absorbs its variants), which evidence list feeds `sourcesForBrand`, and
+ * whether discovered vendor names are masked from the summary guard. Only Gemini answers in these
+ * scenarios, so multi-engine success paths are not exercised. Add a scenario before touching those.
  *
  * Needs a current dist/. Run: npx tsx test/auditGoldenE2E.test.ts
  */
@@ -111,6 +117,9 @@ async function main() {
     { name: 'remediation', mode: 'narrative_remediation' },
     { name: 'narrative-fails', mode: 'narrative_fails' },
     { name: 'all-engines-fail', mode: 'unauthorized' },
+    { name: 'many-vendors', mode: 'many_vendors' },
+    { name: 'partial-failure', mode: 'partial_failure' },
+    { name: 'odd-narrative-values', mode: 'narrative_odd_values' },
     { name: 'invariant-violation', mode: 'ok', forced: true },
     { name: 'blank-optional-fields', mode: 'ok', body: { businessName: 'Poke House', queries: INPUT.queries } },
   ];

@@ -35,7 +35,7 @@ import {
 import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
-import { analyseEvidence, assembleReport, discoverVendors } from './src/auditPipeline.js';
+import { analyseEvidence, assembleReport, discoverVendors, isUsableEvidence, planAudit } from './src/auditPipeline.js';
 import { CallCounter, dailyCallCap, capProblem, capReachedMessage, paidEnginesBlocked, type SpendStatus } from './src/spendGuard.js';
 import {
   askEngine,
@@ -1213,16 +1213,6 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
   }
 
   /**
-   * Layer 2a - Vendor discovery.
-   *
-   * Ranking a brand only against the competitors the user happened to type
-   * overstates its position: if the engine names four vendors and the user
-   * tracks one, the client can look like #2 while actually placing #5. So we
-   * read the vendors named in each answer, then DISCARD any that do not
-   * literally appear in the source text. The model is used to perceive names,
-   * never to judge - anything it invents is dropped before it can affect a metric.
-   */
-  /**
    * Layer 3 - Narrative interpretation.
    * The model receives captured evidence and the already-computed metrics, and
    * is asked only for qualitative judgement. It is never asked for a number.
@@ -1377,42 +1367,11 @@ Return valid JSON matching the schema.`;
     onProgress: (p: AuditProgress) => void = () => {}
   ): Promise<any> {
     try {
-      const {
-        businessName,
-        domain,
-        industry,
-        coreOfferings,
-        targetAudience,
-        competitors,
-        queries,
-      } = req.body;
-
-      if (!businessName) {
-        return { error: 'businessName is required', badRequest: true };
-      }
+      const plan = planAudit(req.body, { fallbackQueries: getFallbackQueries, maxQueries: MAX_AUDIT_QUERIES });
+      if ('error' in plan) return plan;
+      const { businessName, cleanDomain, industry, coreOfferings, targetAudience, competitorList, queryList } = plan;
 
       const ai = getGeminiClient();
-      // Users paste full URLs into the domain field; store the bare host so
-      // links render correctly and source matching compares like with like.
-      const cleanDomain = normaliseDomain(domain || '');
-      const competitorList = (Array.isArray(competitors) ? competitors : [competitors])
-        .filter((c: any) => typeof c === 'string' && c.trim().length > 0)
-        .map((c: string) => c.trim());
-
-      const suppliedQueries = Array.isArray(queries) ? queries.filter((q: any) => q?.queryText) : [];
-
-      // Template-generated, not a Gemini call: a one-query audit should cost
-      // one query's worth of quota, not one call to invent the query on top
-      // of it. The LLM-authored version of this (generateAuditQueries) is
-      // still available, but only behind the explicit "Generate Query
-      // Matrix" step in the Run Audit modal - a deliberate spend the user
-      // opted into, not something every default audit pays silently.
-      const generatedQueries =
-        suppliedQueries.length === 0
-          ? getFallbackQueries(businessName, cleanDomain, industry, coreOfferings, competitorList)
-          : [];
-
-      const queryList = [...generatedQueries, ...suppliedQueries].slice(0, MAX_AUDIT_QUERIES);
 
       const engines = configuredEngines();
 
@@ -1448,7 +1407,7 @@ Return valid JSON matching the schema.`;
       onProgress({ phase: 'analysing', done: queryList.length, total: queryList.length });
 
       const allEvidence = evidenceByQuery.flat();
-      const usableEvidence = allEvidence.filter((e) => !e.error && e.answerText.trim().length > 0);
+      const usableEvidence = allEvidence.filter(isUsableEvidence);
 
       if (usableEvidence.length === 0) {
         // The breaker can trip during query generation, before any per-query
@@ -1512,7 +1471,6 @@ Return valid JSON matching the schema.`;
       if (!narrative && !narrativeFailure) {
         narrativeFailure = 'The analysis step returned nothing usable.';
       }
-      const narrativeAvailable = narrativeFailure === null;
 
       // ---------- Layer 4: assemble an honest report (src/auditPipeline.ts) ----------
       return assembleReport({
