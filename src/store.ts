@@ -470,7 +470,8 @@ export class MemoryStore implements Store {
     let n = 0;
     for (const j of this.jobs.values()) {
       if (j.status !== 'running' || now - j.startedAt > maxAgeMs) continue;
-      if (staleAfterMs !== undefined && now - (j.heartbeatAt ?? j.startedAt) > staleAfterMs) continue;
+      // Only a job the PAGE drives can be abandoned; a server-driven one is still being worked on however long a step takes.
+      if (staleAfterMs !== undefined && (j.plan as any)?.driver === 'client' && now - (j.heartbeatAt ?? j.startedAt) > staleAfterMs) continue;
       n++;
     }
     return n;
@@ -498,7 +499,9 @@ export class MemoryStore implements Store {
         j.status = 'error';
         j.error = reason;
         j.finishedAt = now;
-        j.billable = false;
+        // A reaped audit that had already made an engine call spent real quota: it keeps counting against the
+        // person's allowance. Only one that never reached an engine is free.
+        j.billable = (this.steps.get(j.id) || []).some((st) => st.callStartedAt !== undefined);
         j.failCode = STUCK_FAIL_CODE;
         n++;
       }
@@ -900,7 +903,9 @@ export class SqliteStore implements Store {
     return staleAfterMs === undefined
       ? this.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ?").get(now - maxAgeMs).n
       : this.db
-          .prepare("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ? AND COALESCE(heartbeat_at, started_at) >= ?")
+          .prepare(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= ? AND (COALESCE(json_extract(plan, '$.driver'), '') <> 'client' OR COALESCE(heartbeat_at, started_at) >= ?)"
+          )
           .get(now - maxAgeMs, now - staleAfterMs).n;
   }
   async countJobsSince(sinceMs: number, owner?: string) {
@@ -917,7 +922,11 @@ export class SqliteStore implements Store {
   async failStuck(maxAgeMs: number, reason: string, now = Date.now()) {
     return Number(
       this.db
-        .prepare("UPDATE jobs SET status = 'error', error = ?, finished_at = ?, billable = 0, fail_code = ? WHERE status = 'running' AND started_at < ?")
+        .prepare(
+          `UPDATE jobs SET status = 'error', error = ?, finished_at = ?, fail_code = ?,
+             billable = CASE WHEN EXISTS (SELECT 1 FROM job_steps s WHERE s.job_id = jobs.id AND s.call_started_at IS NOT NULL) THEN 1 ELSE 0 END
+           WHERE status = 'running' AND started_at < ?`
+        )
         .run(reason, now, STUCK_FAIL_CODE, now - maxAgeMs).changes
     );
   }

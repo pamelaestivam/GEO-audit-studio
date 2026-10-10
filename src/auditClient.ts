@@ -56,6 +56,8 @@ export function progressPercent(progress: AuditProgress | null | undefined): num
 
 const POLL_INTERVAL_MS = 2500;
 const MAX_CONSECUTIVE_POLL_FAILURES = 4;
+/** The shortest wait between two requests when the last one did not advance anything (busy or idle). */
+const MIN_WAIT_AFTER_NO_PROGRESS_MS = 1000;
 
 /** How far an audit had got, as the server last reported it. */
 export interface AuditSteps {
@@ -82,9 +84,9 @@ export class AuditInterrupted extends Error {
 export function interruptedMessage(steps: AuditSteps | null): string {
   const how = steps && steps.total > 0
     ? ` It had finished ${steps.done} of ${steps.total} steps and made at least ${steps.callsMade} engine ${steps.callsMade === 1 ? 'call' : 'calls'}.`
-    : '';
+    : ' It is not known whether any engine call had been made.';
   const again = steps && steps.plannedCalls > 0 ? ` Running it again can use up to ${steps.plannedCalls} engine ${steps.plannedCalls === 1 ? 'call' : 'calls'}.` : '';
-  return `The server that was running your audit was replaced before it finished, and this deployment does not keep saved state, so the audit could not continue.${how} Nothing from the interrupted run is shown as a measurement.${again} Please run it again.`;
+  return `The server that answered no longer had your audit, and this deployment does not keep saved state, so the audit could not continue.${how} Nothing from the interrupted run is shown as a measurement.${again} Please run it again.`;
 }
 
 export async function runAuditJob(
@@ -136,16 +138,20 @@ export async function runAuditJob(
       res = driven
         ? await apiFetch(`/api/audit/job/${start.jobId}/advance`, { method: 'POST', retries: 0, timeoutMs: 120000 })
         : await apiFetch(`/api/audit/job/${start.jobId}`, { retries: 1, timeoutMs: 15000 });
-      consecutivePollFailures = 0;
     } catch {
       consecutivePollFailures += 1;
-      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
-        throw new Error(
-          'Lost connection to the audit service. The audit may still be running on the server - check your connection and try refreshing shortly.'
-        );
-      }
+      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) throw new Error(lostConnectionMessage(driven));
       continue;
     }
+
+    // A gateway or platform error (502, 503, 504) says something about the server, not about the audit: ask
+    // again, like any other blip, instead of ending the audit on it.
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      consecutivePollFailures += 1;
+      if (consecutivePollFailures >= MAX_CONSECUTIVE_POLL_FAILURES) throw new Error(lostConnectionMessage(driven));
+      continue;
+    }
+    consecutivePollFailures = 0;
 
     const data = await res.json().catch(() => ({}));
 
@@ -158,7 +164,7 @@ export async function runAuditJob(
     if (data.status === 'running') {
       const seconds = Math.round((data.elapsedMs || 0) / 1000);
       onProgress?.(describeProgress(data.progress, seconds), data.progress ?? null);
-      if (driven) waitMs = Math.max(0, Number(data.nextStepAfterMs) || 0);
+      if (driven) waitMs = driveWaitMs(data.outcome, data.nextStepAfterMs);
       continue;
     }
     if (!res.ok || data.status === 'error') {
@@ -172,5 +178,28 @@ export async function runAuditJob(
     return { ...data, report: { ...data.report, saved: !!data.saved } } as StartAuditResult;
   }
 
-  throw new Error('The audit is taking longer than expected. It may still finish - please try again in a few minutes.');
+  throw new Error(
+    driven
+      ? 'The audit did not finish in time. It only moves forward while this page is open and asking, so it has stopped. Please run it again.'
+      : 'The audit is taking longer than expected. It may still finish - please try again in a few minutes.'
+  );
+}
+
+/** What a person reads when the page cannot reach the server four times running. */
+function lostConnectionMessage(driven: boolean): string {
+  return driven
+    ? 'Lost connection to the audit service. This audit only moves forward while this page is connected, so it is paused. Check your connection and run it again.'
+    : 'Lost connection to the audit service. The audit may still be running on the server - check your connection and try refreshing shortly.';
+}
+
+/**
+ * How long the page waits before asking a server-driven-by-page audit for its next step. After a step that
+ * advanced, the server's own pause (0 when none is wanted). After anything else (busy, idle) never less than a
+ * second, and an idle answer waits a full poll, so a server that keeps saying "nothing to do" cannot be hammered.
+ */
+export function driveWaitMs(outcome: string | undefined, serverWaitMs: unknown): number {
+  const asked = Math.max(0, Number(serverWaitMs) || 0);
+  if (outcome === 'advanced') return asked;
+  if (outcome === 'idle' || outcome === 'gone') return POLL_INTERVAL_MS;
+  return Math.max(asked, MIN_WAIT_AFTER_NO_PROGRESS_MS);
 }

@@ -752,13 +752,28 @@ those files is a re-run, not a regression, but it must be recorded here.
   seven-day retention; the person gets no report in those cases.
 - **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
   HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
-  says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). A step longer than the limit is
-  killed, its lease expires, the page asks again, and after three tries the audit ends with a sentence
-  (`step_attempts_exceeded`): visible, not silent. A hidden browser tab throttles timers, so a page-driven audit
-  slows in the background. On Vercel with the memory store most advances may land on a different instance
+  says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). What a person actually sees if
+  a step hangs or is killed: the page keeps asking and is told `busy` (the lease is 10 minutes, `AUDIT_LEASE_MS`),
+  gives up at its own 8 minutes with a sentence that says the audit has stopped, and the reaper stops the job at
+  15 minutes (`JOB_MAX_RUN_MS`). The "three tries then `step_attempts_exceeded`" ending is NOT reachable from a
+  page on the default numbers (the page gives up before the lease can expire); it is what a restart-and-resume
+  (S5) or a shorter `AUDIT_LEASE_MS` reaches. A gateway error (502/503/504) on an advance is asked again by the
+  page, up to four in a row, then ends with a sentence that says the audit is paused. A hidden browser tab
+  throttles timers, so a page-driven audit slows in the background. On Vercel with the memory store most advances may land on a different instance
   from the one that took the job, so `AuditInterrupted` may be common until the durable database (row 8).
-  A page-driven audit that is abandoned still counts toward the daily budget until the reaper stops it (it
-  spent nothing, and the reaper marks it not billable after `JOB_MAX_RUN_MS`).
+  A page-driven audit that is abandoned keeps its concurrent-audit slot for `AUDIT_STALL_MS` (3 minutes) and is
+  stopped by the reaper after `JOB_MAX_RUN_MS`; if it had already started an engine call it stays billable (it spent
+  quota), and only one that never reached an engine is recorded as free (found in the S4 review: it used to be
+  recorded as free either way, which let abandon-after-one-step escape both daily budgets). The stall window
+  applies only to page-driven audits: a server-driven audit is being worked on however long one step takes. A
+  step that ends `step_attempts_exceeded` or `step_exception` is recorded as not billable even if calls were made
+  (its sentence says "nothing from it is counted"); reaching that takes three lease expiries, so it is slow to
+  repeat, but it is a known gap in the allowance. An old page bundle open across a deploy only polls: against a
+  page-driven audit nothing runs and it ends at its own timeout (spending nothing); a reload fixes it.
+  `AUDIT_LEASE_MS` shorter than the longest step lets a second advance repeat the call (accounted: `attempt` 2,
+  `repeated_calls`, a `lease_expired_midcall` incident); there is no floor on it. Not delivered in S4 and moved to
+  S7, where the page first needs them: the additive GET fields `phase`, `step`, `callsMade`, `repeatedCalls`, `storage`,
+  `instanceId` (the GET job view is unchanged; the advance reply carries the `steps` summary, `storage` is in the 404); the plan's `wait` outcome was replaced by `nextStepAfterMs` plus `idle`.
 - **Step e engine (slice S3) tests:** the several-engine path (steps for each paid engine, one after another) has
   no end-to-end test because only Gemini can be faked; `planSteps`, the ordering and the breaker rule have unit
   tests (`test/auditSteps.test.ts`). `closeJobAfterFailedStep` (a claim reporting an exhausted or failed step) cannot
