@@ -238,6 +238,10 @@ export function assertReportInvariants(report: any): string[] {
   if (isNum(attempted) && isNum(withEvidence) && withEvidence > attempted) v.push(`${withEvidence} usable answers out of ${attempted} attempted`);
   if (isNum(withEvidence) && isNum(mentioned) && mentioned > withEvidence) v.push(`named in ${mentioned} of only ${withEvidence} usable answers`);
   const citedOnly = report.observationsCitedOnly;
+  if (report.metricVersion !== undefined && report.metricVersion >= 2 && citedOnly === undefined) {
+    v.push('metricVersion 2 is stated but observationsCitedOnly is missing: the two travel together');
+  }
+  if (report.metricVersion !== undefined && !isNum(report.metricVersion)) v.push(`metricVersion is ${JSON.stringify(report.metricVersion)}, not a number`);
   if (citedOnly !== undefined) {
     if (!isNum(citedOnly) || citedOnly < 0 || !Number.isInteger(citedOnly)) v.push(`observationsCitedOnly is ${JSON.stringify(citedOnly)}, not a count`);
     else if (isNum(withEvidence) && isNum(mentioned) && mentioned + citedOnly > withEvidence) {

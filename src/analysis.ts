@@ -104,6 +104,15 @@ export function buildBrandMatcher(name: string, domain?: string): BrandMatcher {
   const tokens: string[] = [];
   if (lower) tokens.push(lower);
 
+  // A name typed with its legal-entity suffix ("Acme Analytics, Inc.", "Hula Poke LLC") is almost never how an answer
+  // writes it. The name without that suffix is matched too, so a brand an engine names plainly is not reported as
+  // "cited without being named" (decision A made that distinction matter: a citation no longer rescues a miss).
+  const core = lower
+    .replace(/[\s,.]+$/u, '')
+    .replace(/(?:[\s,]+(?:inc|incorporated|llc|llp|lp|ltd|limited|corp|corporation|co|company|gmbh|ag|plc|sa|bv|nv|pty|pte|oy|ab|as|srl|spa))+\.?$/iu, '')
+    .replace(/[\s,.]+$/u, '');
+  if (core && core !== lower && core.length >= 3) tokens.push(core);
+
   /*
    * A multi-word brand is matched on its full name only.
    *

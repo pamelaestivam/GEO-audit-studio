@@ -454,7 +454,7 @@ export function assembleReport(input: {
   // person typed or the audit found ("3M", "7-Eleven", a query "top 10 ...") are not figures.
   const citedOnlyClause =
     clientScore.citedOnlyCount > 0
-      ? ` In ${clientScore.citedOnlyCount} more, ${businessName}'s website was cited as a source without ${businessName} being named; that is not counted as visibility.`
+      ? ` In ${clientScore.citedOnlyCount} more, the website of ${businessName} was cited as a source but the name "${businessName}" as typed did not appear in the answer text; that is not counted as visibility.`
       : '';
   const factualSentence = `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.${citedOnlyClause}`;
   const guarded = narrativeAvailable

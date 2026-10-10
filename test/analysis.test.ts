@@ -544,5 +544,17 @@ check(
   check('share of voice does not count the cited-only answer either (1 of 3 mentions = 33%; counting it would give 2 of 4 = 50%)', s.shareOfVoice, 33);
 }
 
+// ---------------------------------------------------------------- a legal suffix typed after the name is not how answers write it
+{
+  const plain = 'The best option is Acme Analytics, followed by Foo.';
+  for (const typed of ['Acme Analytics Inc', 'Acme Analytics, Inc.', 'Acme Analytics LLC', 'Acme Analytics Ltd.', 'ACME ANALYTICS GmbH']) {
+    check(`"${typed}" is found when the answer writes "Acme Analytics"`, findFirstMention(plain, buildBrandMatcher(typed, 'acme.com')) >= 0, true);
+  }
+  check('...and a brand that is only a prefix of another name is still not matched on a different company', findFirstMention('Try Acme Cars for a ride.', buildBrandMatcher('Acme Analytics Inc', 'acme.com')), -1);
+  check('a name that is nothing but a suffix word adds no token (no empty or tiny match)', buildBrandMatcher('Inc', 'inc.com').tokens.every((t) => t.length >= 3), true);
+  const m = buildBrandMatcher('Hula Poke Co.', 'hula.com');
+  check('the name as typed and the name without its suffix are both matched, and nothing else is invented', m.tokens, ['hula poke co.', 'hula poke']);
+}
+
 console.log(failures === 0 ? '\nAll analysis checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

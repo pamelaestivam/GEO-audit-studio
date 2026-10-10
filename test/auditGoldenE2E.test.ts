@@ -154,7 +154,7 @@ async function main() {
           report.geoVisibilityScore === 50 &&
           report.metricVersion === 2 &&
           report.queriesTested.map((q: any) => [q.engines.Gemini.status === 'omitted', q.engines.Gemini.citedOnly === true]).flat().join() === 'true,true,false,false' &&
-          /In 1 more, Poke House's website was cited as a source without Poke House being named; that is not counted as visibility\./.test(report.executiveSummary);
+          /In 1 more, the website of Poke House was cited as a source but the name "Poke House" as typed did not appear in the answer text; that is not counted as visibility\./.test(report.executiveSummary);
         if (ok) pass('cited-only: visibility counts the named answer only (50%), the cited-only answer is its own number, and the summary says so');
         else fail('cited-only: the contract', JSON.stringify({ m: report.observationsMentioned, c: report.observationsCitedOnly, v: report.geoVisibilityScore, mv: report.metricVersion, s: report.executiveSummary?.slice(0, 260) }));
       }
