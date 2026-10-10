@@ -1,0 +1,81 @@
+{
+  "accuracyRate": null,
+  "businessName": "Poke House",
+  "competitorBenchmarks": [
+    {
+      "domain": "poke.house",
+      "mainCitationSources": [],
+      "name": "Poke House (Your Business)",
+      "shareOfVoice": 0,
+      "topRecommendedCount": 0
+    },
+    {
+      "domain": "",
+      "mainCitationSources": [],
+      "name": "Pokeworks",
+      "shareOfVoice": 0,
+      "topRecommendedCount": 0
+    },
+    {
+      "domain": "",
+      "mainCitationSources": [],
+      "name": "Sweetgreen",
+      "shareOfVoice": 0,
+      "topRecommendedCount": 0
+    }
+  ],
+  "competitors": [
+    "Pokeworks",
+    "Sweetgreen"
+  ],
+  "coreOfferings": "poke bowls",
+  "degraded": true,
+  "degradedReason": "Gemini rejected the API key. Check the key configured in the server environment.",
+  "domain": "poke.house",
+  "enginesRequested": [
+    "Gemini"
+  ],
+  "executiveSummary": "Audit could not complete: Gemini rejected the API key. Check the key configured in the server environment. No evidence was collected, so nothing below is a finding about Poke House.",
+  "geoVisibilityScore": 0,
+  "inaccuracies": [],
+  "industry": "Restaurants",
+  "leaderShare": 0,
+  "measuredEngines": [],
+  "narrativeAvailable": false,
+  "omissions": [],
+  "queriesTested": [
+    {
+      "engines": {
+        "Gemini": {
+          "citations": [],
+          "engine": "Gemini",
+          "excerpt": "No answer was captured from Gemini: Gemini rejected the API key. Check the key configured in the server environment.",
+          "position": null,
+          "status": "retrieval_failed"
+        }
+      },
+      "id": "q1",
+      "intent": "direct_recommendation",
+      "queryText": "best poke in Austin",
+      "targetPersona": "Buyer"
+    },
+    {
+      "engines": {
+        "Gemini": {
+          "citations": [],
+          "engine": "Gemini",
+          "excerpt": "No answer was captured from Gemini: Gemini rejected the API key. Check the key configured in the server environment.",
+          "position": null,
+          "status": "retrieval_failed"
+        }
+      },
+      "id": "q2",
+      "intent": "direct_recommendation",
+      "queryText": "poke house menu",
+      "targetPersona": "Buyer"
+    }
+  ],
+  "remediationPlan": [],
+  "shareOfVoice": 0,
+  "targetAudience": ""
+}
