@@ -676,8 +676,10 @@ Written 2026-10-09 so none of these is rediscovered:
   failed with a sentence (and is not counted against the daily budget); the
   person re-runs it. A job reaped as stuck after 15 minutes that later finishes
   is still recorded.
-- **No automated backups.** Copy `DATA_DIR/geo-audit.sqlite` or use the host's
-  disk snapshots. Deleting an access code does not delete that person's saved
+- **No automated backups.** `node scripts/backup.mjs` makes a consistent
+  snapshot (a plain copy of `geo-audit.sqlite` alone loses recent writes - they
+  are in the WAL), but nothing schedules it or copies it off the host. Use the
+  host's disk snapshots too. Deleting an access code does not delete that person's saved
   audits.
 - **`node:sqlite` is marked experimental by Node 22** (it prints a warning at
   start). It is stable in practice but the API could change; `engines` pins
