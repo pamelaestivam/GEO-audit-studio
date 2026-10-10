@@ -24,9 +24,9 @@ unreported. They apply here with the same force.
 2. **Merge at the end of every round that contained development.** A round ends with
    the change on `main` (a real GitHub pull request, merged as a merge commit), not
    parked on a branch. The gates make that safe, they are not optional: green CI, a
-   fresh-context adversarial review, an EVAL PM SHIP. A red gate, or an explicit
-   owner instruction to hold the merge, is the only legitimate reason a round ends
-   unmerged; then say which and what closes it.
+   fresh-context adversarial review, an EVAL PM SHIP. A red gate, a review finding that
+   could not be fixed in the round, or an explicit owner instruction to hold the merge are
+   the only legitimate reasons a round ends unmerged; then say which and what closes it.
    Being late or the change being "mostly docs" is not a reason.
 3. **No stale branches.** One short-lived branch per change, merged the same round.
    `scripts/branch-status.sh` lists merged remote branches that were never deleted (it

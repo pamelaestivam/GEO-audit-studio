@@ -32,7 +32,7 @@ absent "...and no stale line when nothing is merged" "$out" "Stale:"
 
 g checkout -q -b claude/feature
 out=$(status)
-check "a new branch with no commits is not reported merged" "$out" "no commits of its own yet (nothing to merge)"
+check "a new branch with no commits is not reported merged" "$out" "nothing to merge (every commit on it is already on main)"
 absent "...and is never called MERGED" "$out" "MERGED"
 
 g commit -q --allow-empty -m "work"
@@ -57,7 +57,7 @@ g push -q origin claude/feature
 
 # Merge it into main with a merge commit (the way pull requests are merged here).
 g checkout -q main
-g merge -q --no-ff -m "Merge pull request #1" claude/feature
+g merge -q --no-ff -m "Merge pull request #1 from owner/claude/feature" claude/feature
 g push -q origin main
 g checkout -q claude/feature
 g fetch -q origin
@@ -72,14 +72,13 @@ g checkout -q -b claude/fresh
 g push -q origin claude/fresh
 g fetch -q origin
 out=$(status)
-check "a fresh branch with no commits of its own" "$out" "no commits of its own yet"
+check "a fresh branch with no commits of its own" "$out" "nothing to merge (every commit on it is already on main)"
 absent "...is not listed as stale itself" "$(printf '%s\n' "$out" | grep '^Stale:')" "claude/fresh"
 check "...while the really merged one still is" "$out" "claude/feature"
 
 # Deleting the merged branch on the remote clears the stale line.
 git -C "$tmp/origin.git" branch -q -D claude/feature
-g fetch -q --prune origin
-out=$(status)
+out=$(status)  # the script itself prunes; the test does not fetch
 absent "after the remote branch is deleted there is no stale line for it" "$out" "claude/feature"
 
 # A sync merge (main merged INTO a feature branch) must not make a new branch cut from
@@ -95,13 +94,52 @@ g checkout -q claude/syncer
 g merge -q --no-ff -m "Merge main into syncer" main
 # ...and the feature branch is then merged to main, so the sync merge is in main's history.
 g checkout -q main
-g merge -q --no-ff -m "Merge pull request #2" claude/syncer
+g merge -q --no-ff -m "Merge pull request #2 from owner/claude/syncer" claude/syncer
 g push -q origin main
 g fetch -q origin
 g checkout -q -b claude/cut-from-main-tip main~1
 out=$(status)
-check "a branch cut at a main commit that a sync merge brought in is not merged" "$out" "no commits of its own yet"
+check "a branch cut at a main commit that a sync merge brought in is not merged" "$out" "nothing to merge (every commit on it is already on main)"
 absent "...and is not called MERGED" "$out" "MERGED"
+
+
+# A merge commit made ON main by a plain `git pull` must not make an unrelated branch read as merged:
+# only a merge whose subject names the branch counts.
+g checkout -q main
+g reset -q --hard origin/main
+g commit -q --allow-empty -m "local main work"
+tipold=$(g rev-parse origin/main)
+git -C "$tmp/work" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "x" 2>/dev/null
+g checkout -q -b scratch-remote origin/main
+g commit -q --allow-empty -m "remote moves"
+g push -q origin scratch-remote:main
+g checkout -q main
+g fetch -q origin
+g merge -q --no-ff -m "Merge branch 'main' of github.com:owner/repo" origin/main
+g push -q origin main
+g fetch -q origin
+g checkout -q -b claude/never-worked "$tipold"
+out=$(status)
+absent "a branch cut at a commit that a pull-merge on main brought in is not called MERGED" "$out" "MERGED"
+check "...it has nothing of its own" "$out" "nothing to merge (every commit on it is already on main)"
+
+# A fast-forward merge leaves a branch with nothing ahead: said plainly, not as MERGED and not as 'not merged'.
+g checkout -q main
+g checkout -q -b claude/ff
+g commit -q --allow-empty -m "ff work"
+g checkout -q main
+g merge -q --ff-only claude/ff
+g push -q origin main
+g checkout -q claude/ff
+g fetch -q origin
+out=$(status)
+check "a fast-forwarded branch reads as having nothing left to merge" "$out" "nothing to merge (every commit on it is already on main)"
+absent "...and is not reported as unmerged" "$out" "NOT merged"
+
+# A shallow clone cannot be judged.
+git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/shallow" 2>/dev/null
+out=$(cd "$tmp/shallow" && bash "$script" 2>/dev/null)
+check "a shallow clone says the status is unknown" "$out" "shallow clone"
 
 # Main behind and ahead.
 g checkout -q main
