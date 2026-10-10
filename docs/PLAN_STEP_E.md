@@ -129,23 +129,27 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    `spend.scope` becomes `'shared store'` when durable. Tests: two processes, every inter-hit gap at least
    the interval; a daily 429 tripped on A means 0 further hits from B; a cap of 2 over two processes gives
    exactly 2 hits.
-   *Scoped 2026-10-10, deferred on purpose (read before building).* Every part of S6 only pays off when more than one
-   process shares a database, and the supported topology is one process per database file (S5). Measured on the
-   code: (a) a holder that hangs without the process dying is already bounded: `failStuck(JOB_MAX_RUN_MS)` (15 minutes)
-   runs on every submit, every `GET /api/audit/job/:id` (the page polls it) and every `advance`, so the audit ends
-   with a sentence the next time anyone looks; (b) a periodic sweeper would only change WHEN that sentence appears
-   for an audit nobody is watching, and an unwatched audit is not a silent failure to anyone; (c) a shared pacer,
-   breaker and counter would be used only by a second server on the same file, which the boot release of other
-   holders' claims forbids (a store-level version could be tested with spawned processes, as `test/store.test.ts`
-   already races real processes, but an end-to-end test of it needs two servers on one file), so building it now would
-   add a topology we then have to forbid. On Vercel with the memory store the pacer, breaker and counter stay per
-   instance whatever is built here. Build S6
-   together with step f (a hosted database with a transactional claim), or when a two-process topology is wanted.
-   Residual exposure, said plainly: an audit that hangs and that NOBODY reads or submits after stays `running` in the
-   store until someone does, and the owner health view stays green meanwhile (`/api/audits` does not reap, the readiness
-   `recent trouble` check reads only audits that have ended). The person who started it sees the sentence when they
-   return. A cheap check that closes this without S6 is recorded in TECH_DEBT (readiness reports a job running past the
-   maximum). Until then S7 is the next slice that changes what a person sees.
+   *Scoped 2026-10-10, deferred on purpose (read before building).* Why it is not built now, and what that leaves open:
+   - **Bounded means the job row, not the process.** `failStuck(JOB_MAX_RUN_MS)` (15 minutes) runs on every submit, every
+     `GET /api/audit/job/:id` and every `advance`, so a hung audit ends with a sentence the next time anyone touches it and
+     stops holding a slot. It only edits the row. A Gemini call that never settles still blocks the in-process Gemini queue
+     (`scheduleGeminiCall` chains every call behind the previous one and the client sets no HTTP timeout) until the
+     process restarts. A periodic sweeper does not fix that; a per-call HTTP timeout does (the open S4 item in TECH_DEBT).
+   - **The breaker, the call counter and the pacer are in memory, so a restart resets them** even for one process, and S5
+     now re-drives interrupted inline audits after a restart. A store-backed version would help a single process too. It
+     is deferred for priority, not because it has no benefit: the cost of a repeat is capped per step by
+     `MAX_STEP_ATTEMPTS` and the real $0 control is the key's project having no billing (O-2).
+   - **The shared (two-process) part** would need a supported two-process topology. The supported one is one process per
+     database file (DEPLOYMENT.md), and the boot release of other holders' claims assumes it. A store-level version could
+     be tested with spawned processes (as `test/store.test.ts` already races real ones); an end-to-end test of it needs
+     two servers on one file. On Vercel with the memory store the pacer, breaker and counter stay per instance whatever
+     is built here.
+   - **Residual exposure, said plainly:** an audit that hangs and that NOBODY reads or submits after stays `running` in
+     the store until someone does, and the owner health view stays green meanwhile (`/api/audits` does not reap, the
+     readiness `recent trouble` check reads only audits that have ended). The person who started it sees the sentence
+     when they return. A cheap check that closes this without S6 is recorded in TECH_DEBT.
+   Build the store-backed breaker, counter and pacer together with step f (a hosted database with a transactional
+   claim), or when a two-process topology is wanted. The next slice that changes what a person sees is S7.
 7. **S7 stalled / Resume / Discard in the UI, visible retries.** Also adds the GET job-view fields S4 did not deliver (`phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId`). Boundary tests as well as browser ones:
    discard on a leased or running step makes 0 provider hits and is owner-scoped (another user's job gives
    404); resume never auto-resubmits (0 new POST `/api/audit/run`). Persist `{jobId, startedAt}` in

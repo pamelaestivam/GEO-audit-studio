@@ -787,6 +787,20 @@ fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <
   (counts, kind labels and one incident sentence; no ids, names or provider payloads); an incident sentence is built
   from step keys and describeProviderError text only. The page that shows the owner the list is not built. It reads the newest 200 incidents; above that a burst of
   minor ones could push a serious one out of the window (the failure counts, read separately, still show it).
+- **A Gemini call that never settles wedges the process's Gemini queue (found 2026-10-10 in the S6 scoping review; code
+  reading and a simulation of the chain logic, NOT reproduced against the built server):** `scheduleGeminiCall` chains every
+  call behind the previous one and the Gemini client sets no HTTP timeout (see the S4 limits entry), so one call that
+  never settles blocks every later Gemini call in that process (brand lookup, query generation, the readiness probe, every
+  audit) until restart. `failStuck` only edits the job row, so each new audit is admitted once the 15-minute age frees its
+  slot, marks a call started (billable) before the queued call ever runs, and is reaped in turn. Node's own fetch timeouts
+  (about 300 s of silence) make a true wedge unlikely, but three retries of that size also exceed the 15-minute reaper, so
+  an audit the person was told "took too long" can keep spending: `decideClaim` still lets the inline driver finish a job
+  whose `failCode` is stuck. Fix: a per-call timeout (AbortSignal) shorter than the step lease, with a test whose fake
+  Gemini never answers and which expects the step to fail visibly and the next call to run. Not a sweeper.
+- **Breaker, call counter and pacer reset on restart (found 2026-10-10):** all three are in memory of one process, and S5
+  now re-drives interrupted inline audits after a restart, so a tripped daily breaker or a used `GEMINI_DAILY_CALL_CAP`
+  is forgotten and the first resumed call fires with no pacing gap. Bounded per step by `MAX_STEP_ATTEMPTS`; the real $0
+  control is the key's project having no billing (O-2). A store-backed version is the S6 persistence half.
 - **A hung audit nobody reads is not surfaced (found 2026-10-10 in the S6 scoping review):** the reaper runs on submit,
   on `GET /api/audit/job/:id` and on `advance`, so a hung audit ends with a sentence the next time anyone touches it, but
   `/api/audits` does not reap and the readiness `recent trouble` check reads only audits that have ended. Until someone
