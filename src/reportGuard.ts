@@ -3,21 +3,24 @@
  *
  * Two jobs, both from docs/RELIABILITY.md (failure class 4, "logic"):
  *
- *  1. assertReportInvariants - a report whose own figures contradict each other
- *     must never be shown as done. A violation is a bug in this code, not a finding
- *     about the client, so the caller turns it into a visible failure.
+ *  1. guardSummary - the model writes the qualitative summary, but it is never the source of
+ *     a figure. The server states every measured figure itself, in its own sentence, so the
+ *     model's prose is allowed NO figure at all: any sentence containing one (digits, spelled-out
+ *     numbers, "double", "threefold", "a third", "10k") is removed, and the removal is reported,
+ *     not hidden. Matching a figure against the "computed set" was tried first and rejected: a
+ *     wrong figure that happens to equal some count or rate (0 to 6 nearly always do) passes as
+ *     "verified", and the inverse of a rate passes as arithmetic.
  *
- *  2. guardSummary - the model writes the qualitative summary, but it is never the
- *     source of a number. Any sentence containing a figure that is not in the
- *     computed set (spelled-out figures included: "three of four") is removed, and
- *     the removal is reported, not hidden.
+ *  2. assertReportInvariants - a report whose own figures contradict each other must never be
+ *     shown as done. A violation is a bug in this code, not a finding about the client, so the
+ *     caller turns it into a visible failure.
  *
- * Both lean toward the safe direction: a false violation costs a re-run, a false
- * keep puts an unverified figure in front of a client.
+ * Both lean toward the safe direction: a false violation costs a re-run, a false removal costs a
+ * sentence of prose, a false keep puts an unverified figure in front of a client.
  */
 
 // ---------------------------------------------------------------------------
-// Numbers in text
+// Figures in text
 // ---------------------------------------------------------------------------
 
 const UNITS: Record<string, number> = {
@@ -28,52 +31,83 @@ const UNITS: Record<string, number> = {
 const TENS: Record<string, number> = {
   twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
 };
-const SCALES: Record<string, number> = { hundred: 100, thousand: 1000, million: 1_000_000, half: 0.5, dozen: 12 };
+const SCALES: Record<string, number> = {
+  hundred: 100, thousand: 1000, million: 1_000_000, half: 0.5, halves: 0.5, dozen: 12,
+  third: 1 / 3, thirds: 1 / 3, quarter: 0.25, quarters: 0.25,
+};
+/**
+ * Words that state a size of change or a fraction without a digit ("will double", "threefold",
+ * "twice as many"). They are figures with no value (NaN).
+ */
+const MULTIPLIER_WORDS = ['double', 'doubled', 'doubles', 'doubling', 'twice', 'triple', 'tripled', 'triples', 'tripling', 'quadruple', 'quadrupled', 'quintuple', 'quintupled'];
 
 const UNIT_WORDS = Object.keys(UNITS).filter((w) => UNITS[w] <= 9).join('|');
 const TENS_WORDS = Object.keys(TENS).join('|');
 const ALL_UNIT_WORDS = Object.keys(UNITS).join('|');
 const SCALE_WORDS = Object.keys(SCALES).join('|');
 
-// Digits first, then "twenty-five" / "twenty five", then any single number word.
+// Digits (optionally with a k/m/b suffix), "-fold" words, multiplier words, "twenty-five" / "twenty five",
+// then any single number word.
 const NUMBER_RE = new RegExp(
-  String.raw`\d[\d,]*(?:\.\d+)?` +
+  String.raw`\d[\d,]*(?:\.\d+)?(?:\s?[kKmMbB]\b)?` +
+    String.raw`|\b(?:${ALL_UNIT_WORDS}|${TENS_WORDS}|hundred|thousand|million)[-\s]?fold\b` +
+    String.raw`|\b(?:${MULTIPLIER_WORDS.join('|')})\b` +
     String.raw`|\b(?:${TENS_WORDS})(?:[-\s](?:${UNIT_WORDS}))?\b` +
-    String.raw`|\b(?:${ALL_UNIT_WORDS}|${SCALE_WORDS})\b`,
+    String.raw`|\b(?:${ALL_UNIT_WORDS}|${SCALE_WORDS}|none)\b`,
   'gi'
 );
 
+/** Digits of any script (fullwidth, Arabic-Indic, ...) as ASCII digits. */
+function asciiDigits(text: string): string {
+  return text.normalize('NFKC').replace(/\p{Nd}/gu, (ch) => {
+    let base = ch.codePointAt(0)!;
+    const cp = base;
+    while (/\p{Nd}/u.test(String.fromCodePoint(base - 1))) base--;
+    return String((cp - base) % 10);
+  });
+}
+
+/** A count stated with a noun: "only one answer", "none of the answers". */
+const ONE_AS_COUNT = /^\s+(?:answers?|quer(?:y|ies)|questions?|engines?|times?|mentions?|results?|sources?|citations?|competitors?|brands?|vendors?)\b/i;
+const ONE_IN = /^\s+(?:in|out of)\s+/i;
+const ONE_OF_N = /^\s+of\s+(?:\d|zero|two|three|four|five|six|seven|eight|nine|ten)/i;
+const NONE_OF = /^\s+of\s+(?:the|these|those|our|its|their)\s+(?:answers|queries|questions|engines|results)/i;
+
 /**
- * Every figure a sentence states, as numbers. "one" is the English pronoun far more often
- * than a figure ("one of the leading tools", "no one"), so it only counts where it is
- * plainly a count: "one in four", "one out of 3", "one of 3".
+ * Every figure a sentence states, as numbers (NaN for a size-of-change word). "one" is the
+ * English pronoun far more often than a figure ("one of the leading tools", "no one"), so it
+ * only counts where it is plainly a count: "one in four", "one of 3", "only one answer".
  */
 export function extractNumbers(text: string): number[] {
+  const t = asciiDigits(String(text ?? ''));
   const found: number[] = [];
-  for (const m of text.matchAll(NUMBER_RE)) {
+  for (const m of t.matchAll(NUMBER_RE)) {
     const token = m[0].toLowerCase();
+    const end = (m.index ?? 0) + m[0].length;
     if (/^\d/.test(token)) {
-      const value = Number(token.replace(/,/g, ''));
-      if (Number.isFinite(value)) found.push(value);
+      const mult = /[kmb]$/.test(token) ? ({ k: 1e3, m: 1e6, b: 1e9 } as any)[token.slice(-1)] : 1;
+      // A digit run too long to be a number is still a figure: Infinity is never "fine".
+      found.push(Number(token.replace(/,/g, '').replace(/\s?[kmb]$/, '')) * mult);
+      continue;
+    }
+    if (/fold$/.test(token) || MULTIPLIER_WORDS.includes(token)) {
+      found.push(NaN);
+      continue;
+    }
+    if (token === 'none') {
+      if (NONE_OF.test(t.slice(end, end + 40))) found.push(0);
       continue;
     }
     if (token === 'one') {
-      const after = text.slice((m.index ?? 0) + token.length, (m.index ?? 0) + token.length + 16).toLowerCase();
-      if (/^\s+(?:in|out of)\s+/.test(after) || /^\s+of\s+(?:\d|zero|two|three|four|five|six|seven|eight|nine|ten)/.test(after)) {
-        found.push(1);
-      }
+      const after = t.slice(end, end + 24);
+      if (ONE_IN.test(after) || ONE_OF_N.test(after) || ONE_AS_COUNT.test(after)) found.push(1);
       continue;
     }
     const parts = token.split(/[-\s]/);
-    if (parts.length === 2 && TENS[parts[0]] !== undefined && UNITS[parts[1]] !== undefined) {
-      found.push(TENS[parts[0]] + UNITS[parts[1]]);
-    } else if (TENS[token] !== undefined) {
-      found.push(TENS[token]);
-    } else if (UNITS[token] !== undefined) {
-      found.push(UNITS[token]);
-    } else if (SCALES[token] !== undefined) {
-      found.push(SCALES[token]);
-    }
+    if (parts.length === 2 && TENS[parts[0]] !== undefined && UNITS[parts[1]] !== undefined) found.push(TENS[parts[0]] + UNITS[parts[1]]);
+    else if (TENS[token] !== undefined) found.push(TENS[token]);
+    else if (UNITS[token] !== undefined) found.push(UNITS[token]);
+    else if (SCALES[token] !== undefined) found.push(SCALES[token]);
   }
   return found;
 }
@@ -86,68 +120,56 @@ export function splitSentences(text: string): string[] {
     .filter(Boolean);
 }
 
+function escapeRegExp(v: string): string {
+  return v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Text with the things that merely CONTAIN digits blanked out, so they are not read as figures:
+ * names the person typed or the audit found (a brand called "3M", a rival "7-Eleven", a query
+ * "top 10 ..."), identifiers that start with letters ("B2B", "GPT-5", "Q3"), and calendar years.
+ */
+function withoutIdentifiers(text: string, names: readonly string[]): string {
+  let out = text;
+  const list = names.map((n) => String(n ?? '').trim()).filter((n) => n.length >= 2).sort((a, b) => b.length - a.length);
+  for (const n of list) out = out.replace(new RegExp(escapeRegExp(n), 'gi'), ' ');
+  return out
+    .replace(/\b[A-Za-z]+-?\d+[A-Za-z0-9]*\b/g, ' ')
+    .replace(/\b(?:19|20)\d{2}\b(?!\s?(?:%|percent|per\s?cent))/g, ' ');
+}
+
+/** True if the sentence states a figure (see extractNumbers), ignoring identifiers. */
+export function containsFigure(sentence: string, names: readonly string[] = []): boolean {
+  return extractNumbers(withoutIdentifiers(sentence, names)).length > 0;
+}
+
 export interface GuardResult {
   /** The sentences that survived, joined. May be empty. */
   text: string;
-  /** Sentences removed because they stated a figure outside the allowed set. */
+  /** Sentences removed because they stated a figure. */
   removed: number;
   /** Sentences found in the model's text. */
   total: number;
 }
 
-/** Keep only sentences whose every figure is in `allowed`. */
-export function guardSummary(modelText: string, allowed: ReadonlySet<number>): GuardResult {
-  const sentences = splitSentences(String(modelText ?? ''));
-  const kept = sentences.filter((s) => extractNumbers(s).every((n) => allowed.has(n)));
-  return { text: kept.join(' '), removed: sentences.length - kept.length, total: sentences.length };
-}
-
-// ---------------------------------------------------------------------------
-// The computed set
-// ---------------------------------------------------------------------------
-
-function isNum(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
-}
-
 /**
- * Every figure the summary may state: the report's own counts and percentages, the
- * complements that are plain arithmetic on them, and any figure the person typed
- * themselves (a brand called "3M", a query "top 10 ...").
+ * Keep only the sentences that state no figure. `names` are strings the person typed or the audit
+ * found (business, domain, competitors, rivals, industry, offerings, audience, query texts):
+ * digits inside them are not figures.
  */
-export function allowedFigures(report: any, userText: string[] = []): Set<number> {
-  const allowed = new Set<number>();
-  const add = (v: unknown) => {
-    if (isNum(v)) allowed.add(v);
-  };
-  // "Not named in 67%" is arithmetic on a rate, so the complement of a rate is allowed.
-  // A prominence score is not a rate of anything: its complement means nothing.
-  for (const p of [report?.geoVisibilityScore, report?.shareOfVoice, report?.leaderShare, report?.accuracyRate]) {
-    add(p);
-    if (isNum(p) && p >= 0 && p <= 100) add(100 - p);
-  }
-  add(report?.avgProminence);
-  for (const k of [
-    'queriesAttempted', 'questionsAnswered', 'queriesNamingBrand', 'observationsAttempted',
-    'observationsWithEvidence', 'observationsMentioned', 'inaccuraciesDiscarded',
-  ]) add(report?.[k]);
-  if (isNum(report?.observationsWithEvidence) && isNum(report?.observationsMentioned)) {
-    add(report.observationsWithEvidence - report.observationsMentioned);
-  }
-  for (const k of ['measuredEngines', 'enginesRequested', 'inaccuracies', 'omissions', 'remediationPlan', 'competitors', 'queriesTested', 'citationSources', 'untrackedRivals']) {
-    if (Array.isArray(report?.[k])) add(report[k].length);
-  }
-  for (const b of Array.isArray(report?.competitorBenchmarks) ? report.competitorBenchmarks : []) {
-    add(b?.shareOfVoice);
-    add(b?.topRecommendedCount);
-  }
-  for (const t of userText) for (const n of extractNumbers(String(t ?? ''))) allowed.add(n);
-  return allowed;
+export function guardSummary(modelText: string, names: readonly string[] = []): GuardResult {
+  const sentences = splitSentences(String(modelText ?? ''));
+  const kept = sentences.filter((s) => !containsFigure(s, names));
+  return { text: kept.join(' '), removed: sentences.length - kept.length, total: sentences.length };
 }
 
 // ---------------------------------------------------------------------------
 // Invariants
 // ---------------------------------------------------------------------------
+
+function isNum(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
 
 const PERCENT_FIELDS = ['geoVisibilityScore', 'shareOfVoice', 'leaderShare', 'avgProminence'] as const;
 
@@ -188,6 +210,19 @@ export function assertReportInvariants(report: any): string[] {
   }
   if (isNum(withEvidence) && withEvidence === 0 && isNum(report.geoVisibilityScore) && report.geoVisibilityScore !== 0) {
     v.push(`visibility ${report.geoVisibilityScore}% is stated with no usable answer behind it`);
+  }
+
+  if (isNum(report.queriesNamingBrand) && isNum(report.queriesAttempted) && report.queriesNamingBrand > report.queriesAttempted) {
+    v.push(`${report.queriesNamingBrand} questions name the brand out of ${report.queriesAttempted} asked`);
+  }
+  if (report.inaccuraciesDiscarded !== undefined && (!isNum(report.inaccuraciesDiscarded) || report.inaccuraciesDiscarded < 0)) {
+    v.push(`inaccuraciesDiscarded is ${JSON.stringify(report.inaccuraciesDiscarded)}, not a count`);
+  }
+  for (const o of Array.isArray(report.omissions) ? report.omissions : []) {
+    const n = o?.affectedQueriesCount;
+    if (!isNum(n) || n < 0 || !Number.isInteger(n) || (isNum(report.queriesAttempted) && n > report.queriesAttempted)) {
+      v.push(`omission ${o?.id} affects ${JSON.stringify(n)} questions out of ${report.queriesAttempted} asked`);
+    }
   }
 
   if (isNum(report.questionsAnswered) && isNum(report.queriesAttempted) && report.questionsAnswered > report.queriesAttempted) {

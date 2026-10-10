@@ -42,7 +42,7 @@ import {
 import { openStore, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
-import { guardSummary, allowedFigures, assertReportInvariants } from './src/reportGuard.js';
+import { guardSummary, containsFigure, assertReportInvariants } from './src/reportGuard.js';
 import {
   askEngine,
   configuredEngines,
@@ -1267,7 +1267,7 @@ Write the analysis. Rules:
 - "remediationPlan": 4-7 concrete tasks, each targeting a gap visible in the evidence, naming the exact source domains to pursue. Include valid JSON-LD in codeSnippet only where genuinely useful.
   priority: "P0 Critical" | "P1 High" | "P2 Medium" | "P3 Maintenance"
   effort: "Quick Win (< 2h)" | "Moderate (1-2 days)" | "Strategic (1-2 weeks)"
-- "executiveSummary": 3-5 sentences a CMO can read: the visibility position, who owns the answer surface and why, and the highest-leverage move.
+- "executiveSummary": 3-5 sentences a CMO can read: the visibility position, who owns the answer surface and why, and the highest-leverage move. Do not state any number, percentage, count or multiple in it (not even "twice" or "a third"): the report states the measured figures itself, and any sentence containing a figure is removed.
 
 Return valid JSON matching the schema.`;
 
@@ -1633,6 +1633,13 @@ Return valid JSON matching the schema.`;
         .slice(0, 8)
         .map((s) => s.brand);
 
+      // Strings whose digits are not "figures": what the person typed and what the audit found.
+      const guardNames: string[] = [
+        businessName, cleanDomain, industry, coreOfferings, targetAudience,
+        ...competitorList, ...discovered, ...scorecards.map((s) => s.brand),
+        ...queryList.map((q: any) => q.queryText || ''),
+      ].map((v) => String(v ?? ''));
+
       const report = {
         id: `audit-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
         createdAt: new Date().toISOString(),
@@ -1655,7 +1662,7 @@ Return valid JSON matching the schema.`;
         inaccuraciesDiscarded,
         avgProminence: clientScore.avgProminence,
 
-        // Filled in below, once the figures it may state are known (see summariseSafely).
+        // Filled in below, once the figures it may state are known.
         executiveSummary: '',
 
         // Whether the qualitative analysis ran. The three arrays below are
@@ -1671,7 +1678,12 @@ Return valid JSON matching the schema.`;
           id: `om-${i + 1}`,
           category: o.category,
           description: o.description,
-          affectedQueriesCount: o.affectedQueriesCount ?? totalObservations - clientScore.timesMentioned,
+          // A model-supplied count is bounded by the number of questions actually asked; an
+          // impossible one is replaced by the count of answers that did not name the brand.
+          affectedQueriesCount:
+            Number.isInteger(o.affectedQueriesCount) && o.affectedQueriesCount >= 0 && o.affectedQueriesCount <= queryList.length
+              ? o.affectedQueriesCount
+              : Math.min(queryList.length, Math.max(0, totalObservations - clientScore.timesMentioned)),
           rootCause: o.rootCause,
           recommendation: o.recommendation,
         })),
@@ -1681,7 +1693,10 @@ Return valid JSON matching the schema.`;
           category: t.category,
           priority: t.priority,
           effort: t.effort,
-          expectedGain: t.expectedGain || 'Improved answer-engine citation rate',
+          // Free text from the model that states a figure ("+40% visibility in 30 days") is a forecast
+          // nobody measured: it is replaced by the plain default.
+          expectedGain:
+            t.expectedGain && !containsFigure(String(t.expectedGain), guardNames) ? t.expectedGain : 'Improved answer-engine citation rate',
           description: t.description,
           stepByStepInstructions: t.stepByStepInstructions || [],
           codeSnippet: t.codeSnippet,
@@ -1723,12 +1738,13 @@ Return valid JSON matching the schema.`;
         enginesRequested: engines,
       };
 
-      // The model writes the qualitative summary; the figures come from the measurements. A
-      // sentence stating a figure that is not in the computed set is removed and the removal
-      // is said, never hidden (docs/RELIABILITY.md section 4).
+      // The model writes the qualitative summary; the figures come from the measurements, stated
+      // by the server in the first sentence. A model sentence that states ANY figure is removed and
+      // the removal is said, never hidden (docs/RELIABILITY.md section 4). Digits inside names the
+      // person typed or the audit found ("3M", "7-Eleven", a query "top 10 ...") are not figures.
       const factualSentence = `${businessName} was named in ${clientScore.timesMentioned} of ${totalObservations} answers captured across ${measuredEngines.join(', ')} (${clientScore.visibility}% visibility), holding ${clientScore.shareOfVoice}% share of voice against every vendor the engines named.`;
       const guarded = narrativeAvailable
-        ? guardSummary(String(narrative?.executiveSummary || ''), allowedFigures(report, [businessName, cleanDomain, ...competitorList, ...queryList.map((q: any) => q.queryText || '')]))
+        ? guardSummary(String(narrative?.executiveSummary || ''), guardNames)
         : null;
       report.executiveSummary = [
         factualSentence,
@@ -1737,8 +1753,8 @@ Return valid JSON matching the schema.`;
         .filter(Boolean)
         .join(' ');
       if (guarded && guarded.removed > 0) {
-        (report as any).summaryNote = `${guarded.removed} ${guarded.removed === 1 ? 'sentence' : 'sentences'} from the written summary ${guarded.removed === 1 ? 'was' : 'were'} removed because ${guarded.removed === 1 ? 'it' : 'they'} contained a figure we could not verify. Every figure on this page is measured.`;
-        console.warn(`[guard] removed ${guarded.removed} of ${guarded.total} summary sentences with unverified figures`);
+        (report as any).summaryNote = `${guarded.removed} ${guarded.removed === 1 ? 'sentence' : 'sentences'} from the written summary ${guarded.removed === 1 ? 'was' : 'were'} removed because ${guarded.removed === 1 ? 'it' : 'they'} contained a figure we could not verify. Only the figures in the first sentence are measured.`;
+        console.warn(`[guard] removed ${guarded.removed} of ${guarded.total} summary sentences that stated a figure`);
       }
 
       // A report whose own figures contradict each other is a bug in this code, not a finding
@@ -1751,6 +1767,8 @@ Return valid JSON matching the schema.`;
           report: {
             ...generateSynthesizedAudit(businessName, cleanDomain, industry, coreOfferings, competitorList, queryList, engines),
             degraded: true,
+            executiveSummary:
+              'This audit finished collecting answers, but its figures failed an internal consistency check, so none of them are shown and nothing here is a measurement.',
             degradedReason:
               'This audit finished, but its figures failed an internal consistency check, so none of them are shown. Nothing was guessed. Please run the audit again; if it happens twice, tell the owner.',
           },

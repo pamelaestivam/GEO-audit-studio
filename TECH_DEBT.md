@@ -715,18 +715,24 @@ those files is a re-run, not a regression, but it must be recorded here.
 
 ### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
 
-- **Report checks cover the summary, not the other written fields.** `src/reportGuard.ts` removes
-  sentences with unverified figures from the executive summary only. Omission descriptions and
-  remediation text (where "within 30 days" is ordinary advice) are not guarded; a figure there is
-  not claimed to be measured, but a reader may take it that way. A wider guard needs a decision
-  about which advice numbers are acceptable.
-- **The invariants check relations between figures, not the figures against the raw answers.**
-  It catches a report that contradicts itself (visibility not matching its own numerator and
-  denominator, an inaccuracy about an unmeasured engine). It cannot catch a wrong brand match.
+- **The number guard covers the executive summary, model forecasts (`expectedGain`) and the
+  "questions affected" count only.** Claimed and actual facts, omission descriptions, root causes,
+  recommendations and remediation descriptions are model free text and are not guarded; a figure
+  there is not measured, and the summary note says only what was checked. Saved audits written
+  before the guard keep their old summaries.
+- **The guard works on extraction.** It removes any sentence in which it finds a figure. It can miss
+  a figure written in a way it does not know (a script or phrase not in its lists); a hand-written
+  corpus of bad and good phrasings in `test/reportGuard.test.ts` is the only recall evidence, and
+  real model phrasing has not been sampled. It removes more than strictly needed (a sentence
+  repeating a measured figure, "named twice" as prose), which is the safe direction.
+- **The invariants check relations between the report's own figures, not the figures against the raw
+  answers.** It cannot catch a wrong brand match, and on realistic reports it holds by construction
+  today; it is a tripwire for future code changes, not evidence of correctness. A violation costs
+  the audit's collected evidence and the quota behind it (it is not billable to the person), and has
+  no incident id: only a server log line.
 - **"Not counted" strip and panel, and cited-only as its own number** (RELIABILITY step c, second
   half) are not built. Until they are, discarded items are only a count (`inaccuraciesDiscarded`).
-- **The summary-note line on screen and in the export has no browser test** (the API sets it and is
-  tested end to end; the rendering is a conditional paragraph).
+- **Browser coverage:** the summary-note line on screen and in the export has no browser test.
 - **First-visit review leftovers (PR #30):** "Add & Audit Query" in the query tab ignores the
   no-engine state; the model-written query count path (`DEFAULT_QUERY_COUNT` in the prompt and
   slice) has no test that fails if removed; three components each poll the status endpoint.

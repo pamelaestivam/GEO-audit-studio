@@ -57,8 +57,8 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
             ? JSON.stringify({
                 executiveSummary:
                   mode === 'narrative_invented_numbers'
-                    ? // One sentence of verified figures, one invented digit figure, one invented spelled-out figure, one plain sentence.
-                      'Poke House is named in 2 of 2 answers. Expect traffic to grow 47% after the fix. Revenue should double within three months. Pokeworks is the main rival.'
+                    ? // One sentence of verified figures, an invented digit figure, a size-of-change word with no digit, an invented spelled-out figure, and one plain sentence.
+                      'Poke House is named in 2 of 2 answers. Expect traffic to grow 47% after the fix. Traffic will double. Sales should improve within three months. Pokeworks is the main rival.'
                     : 'Narrative ok.',
                 // 'narrative_findings': two claims about the SAME real answer, one about a
                 // query that was never asked, one naming an engine that was never measured.
@@ -77,9 +77,15 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
                           { engine: 'ChatGPT', queryText: 'what are the best alternatives to poke house', claimedFact: 'g', actualFact: 'h', impactSeverity: 'high' },
                         ]
                       : [],
-                omissions: [],
+                omissions:
+                  mode === 'narrative_invented_numbers'
+                    ? // an impossible count for a 2-question audit
+                      [{ category: 'Schema & Entity Data', description: 'Missing markup', affectedQueriesCount: 47, rootCause: 'None', recommendation: 'Add markup' }]
+                    : [],
                 remediationPlan:
-                  mode === 'narrative_remediation'
+                  mode === 'narrative_invented_numbers'
+                    ? [{ title: 'Add schema', category: 'Schema & Entity Data', priority: 'P1 High', effort: 'Quick Win (< 2h)', description: 'Add JSON-LD', stepByStepInstructions: ['Add it'], targetUrls: [], expectedGain: '+40% visibility in 30 days' }]
+                    : mode === 'narrative_remediation'
                     ? [{ title: 'Add schema', category: 'Schema & Entity Data', priority: 'P1 High', effort: 'Quick Win (< 2h)', description: 'Add JSON-LD', stepByStepInstructions: ['Add it'], targetUrls: [] }]
                     : [],
               })
