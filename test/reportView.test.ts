@@ -160,6 +160,24 @@ check('questions that actually answered cap the readings, not the number planned
 check('...and that is a low sample with the right reason', [isLowSample({ degraded: false, observationsWithEvidence: 6, queriesAttempted: 8, questionsAnswered: 2 }), lowSampleReason({ observationsWithEvidence: 6, queriesAttempted: 8, questionsAnswered: 2 })], [true, 'Only 2 questions behind these 6 answers']);
 check('a brand named once in 7 answers from 3 questions is never "plausibly 0%": the rescaled count keeps at least one mention', visibilityRange({ degraded: false, observationsWithEvidence: 7, observationsMentioned: 1, queriesAttempted: 3, questionsAnswered: 3 })?.startsWith('0%'), false);
 check('a brand missed in one answer is never "plausibly 100%-certain": the rescaled count keeps at least one miss', visibilityRange({ degraded: false, observationsWithEvidence: 7, observationsMentioned: 6, queriesAttempted: 3, questionsAnswered: 3 })?.endsWith('-100%'), false);
+check('one question behind several answers reads "1 reading", not "1 readings"', /as if there were 1 reading\./.test(rangeExplanation({ degraded: false, observationsWithEvidence: 3, observationsMentioned: 2, queriesAttempted: 1, questionsAnswered: 1 }) || ''), true);
+{
+  // Invariant: the range printed beside a score always contains that score, for any counts, including
+  // answers-per-question beyond what four engines can produce today (a fifth engine or repeat samples).
+  let outside = 0;
+  for (let q = 1; q <= 6; q++) {
+    for (let a = q; a <= 40; a++) {
+      for (let m = 0; m <= a; m++) {
+        const r = visibilityRange({ degraded: false, observationsWithEvidence: a, observationsMentioned: m, queriesAttempted: q, questionsAnswered: q });
+        const [lo, hi] = (r || '').split('-').map((x) => parseInt(x, 10));
+        const headline = (m / a) * 100;
+        if (!r || headline < lo - 1e-9 || headline > hi + 1e-9) outside++;
+      }
+    }
+  }
+  check('the range always contains the headline percentage (no case in a 6 x 40 x all-mentions grid falls outside)', outside, 0);
+}
+check('2 of 3 answers from a single question: the range is wide (0%-80%) and still contains the 67% headline', visibilityRange({ degraded: false, observationsWithEvidence: 3, observationsMentioned: 2, queriesAttempted: 1, questionsAnswered: 1 }), '0%-80%');
 
 console.log(failures === 0 ? '\nAll report view checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

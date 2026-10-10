@@ -159,8 +159,9 @@ function intervalCounts(
   if (typeof answers !== 'number' || typeof mentioned !== 'number' || answers <= 0) return null;
   const n = independentReadings(audit) ?? answers;
   let k = Math.round((mentioned * n) / answers);
-  // Rescaling must not contradict the headline: if the brand was named at all, k >= 1; if it was
-  // not named in every answer, k <= n - 1.
+  // Rescaling should not turn "named in some answers" into "named in none" or "in all": keep k off
+  // the ends when the headline is. (With a single reading the upper clamp wins and k can reach 0;
+  // visibilityRange widens the result to contain the headline whatever happens here.)
   if (mentioned > 0) k = Math.max(1, k);
   if (mentioned < answers) k = Math.min(n - 1, k);
   return { k: Math.max(0, Math.min(n, k)), n };
@@ -173,7 +174,12 @@ export function visibilityRange(
   if (!hasMeasurements(audit)) return null;
   const counts = intervalCounts(audit);
   const range = counts ? wilsonInterval(counts.k, counts.n) : null;
-  return range ? `${range.low}%-${range.high}%` : null;
+  if (!range || counts === null) return null;
+  // Whatever the rescaling did, the range must contain the percentage printed beside it.
+  const headline = ((audit.observationsMentioned as number) / (audit.observationsWithEvidence as number)) * 100;
+  const low = Math.min(range.low, Math.floor(headline + 1e-9));
+  const high = Math.max(range.high, Math.ceil(headline - 1e-9));
+  return `${low}%-${high}%`;
 }
 
 /** The sentence that says what the range is and is not; one place for the card and the export. */
@@ -186,7 +192,7 @@ export function rangeExplanation(
   const readings = independentReadings(audit) as number;
   const basis =
     readings < answers
-      ? ` These ${answers} answers come from only ${readings} ${readings === 1 ? 'question' : 'questions'}, and answers to the same question are not independent, so the range is computed as if there were ${readings} readings.`
+      ? ` These ${answers} answers come from only ${readings} ${readings === 1 ? 'question' : 'questions'}, and answers to the same question are not independent, so the range is computed as if there ${readings === 1 ? 'were 1 reading' : `were ${readings} readings`}.`
       : ' Answers to different questions asked once are not fully independent, so the real uncertainty is a little wider.';
   return `If these were independent readings, the true rate would plausibly lie between ${range}.${basis}`;
 }
