@@ -304,7 +304,16 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
     };
   }
 
-  if (lower.includes('abort') || lower.includes('timeout') || lower.includes('etimedout')) {
+  // Includes the provider's own deadline: the SDK tells Google how long it will wait (an X-Server-Timeout header) whenever
+  // a request time limit is set, and a slow answer can come back as a 504 DEADLINE_EXCEEDED instead of our abort.
+  if (
+    lower.includes('abort') ||
+    lower.includes('timeout') ||
+    lower.includes('etimedout') ||
+    lower.includes('deadline_exceeded') ||
+    lower.includes('deadline expired') ||
+    /(^|[^\d])504([^\d]|$)/.test(lower)
+  ) {
     return {
       kind: 'timeout',
       message: `${provider} did not respond in time. This usually clears on a re-run.`,

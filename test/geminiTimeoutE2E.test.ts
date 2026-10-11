@@ -2,10 +2,11 @@
  * End to end, against the real built server and a fake Gemini that goes quiet: a request that is accepted and never
  * answered must end as an ordinary, reported timeout, and must not hold up the calls behind it.
  *
- * Before: the Gemini client had no HTTP timeout and every call runs behind the one before it (scheduleGeminiCall), so
- * one request that never answered blocked every later call in the process (brand lookup, query generation, the
- * readiness probe, every audit) until a restart, and nothing reported it. The audit's job row was reaped after 15
- * minutes, but the queue stayed blocked.
+ * Before: the Gemini client set no HTTP timeout and every call runs behind the one before it (scheduleGeminiCall), so
+ * one request that never answered held every later call in the process (brand lookup, query generation, the readiness
+ * probe, every audit) behind it for as long as Node's own fetch took to give up on a silent server (about 301 s per
+ * attempt), and nothing reported it. The audit's job row was reaped after 15 minutes, but the queue stayed blocked in
+ * the meantime. This test shows the hold for as long as it waits (25 to 60 s) with the limit removed.
  *
  * Proved here, with the limit set short (GEMINI_HTTP_TIMEOUT_MS=1500):
  *   1. an audit whose first Gemini request never answers still completes, because the timeout is retried like any
@@ -13,8 +14,8 @@
  *   2. a brand lookup (which never retries) against a provider that never answers comes back within seconds as an
  *      honest "not detected" with a sentence, and the very next lookup, with the provider answering again, is served
  *      at once with exactly one more hit, so the queue was not left blocked;
- *   3. a GEMINI_HTTP_TIMEOUT_MS that is not a number is refused with a warning and the default (90 s) is used: the
- *      server must still start and serve an audit.
+ *   3. a GEMINI_HTTP_TIMEOUT_MS that is not a number does not stop the server starting or an audit completing (that the
+ *      value is refused and the default used is the rule in src/httpTimeout.ts, tested by test/httpTimeout.test.ts).
  *
  * Needs a current dist/. Run: npx tsx test/geminiTimeoutE2E.test.ts
  */
@@ -22,6 +23,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
 import { randomPort } from './ports';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 
 installAuthFetch();
 
@@ -48,8 +50,10 @@ async function waitForServer(): Promise<boolean> {
   return false;
 }
 
+let lastOutput: CapturedOutput | null = null;
+
 function spawnApp(extraEnv: Record<string, string>): ChildProcess {
-  return spawn('node', ['dist/server.cjs'], {
+  const proc = spawn('node', ['dist/server.cjs'], {
     env: {
       ...process.env,
       PORT: String(APP_PORT),
@@ -66,8 +70,10 @@ function spawnApp(extraEnv: Record<string, string>): ChildProcess {
       ...TEST_AUTH_ENV,
       ...extraEnv,
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  lastOutput = captureOutput(proc);
+  return proc;
 }
 
 async function runOneQueryAudit(timeoutMs: number) {
@@ -149,15 +155,18 @@ async function main() {
     await new Promise((r) => setTimeout(r, 500));
     mode = 'ok';
     app = spawnApp({ GEMINI_HTTP_TIMEOUT_MS: 'soon' });
+    const badValueOutput = lastOutput as CapturedOutput | null;
     const up2 = await waitForServer();
     assert('a bad GEMINI_HTTP_TIMEOUT_MS does not stop the server starting', up2);
     if (up2) {
+      assert('the server says it refused the value and what it uses instead', /GEMINI_HTTP_TIMEOUT_MS="soon" is not a number of milliseconds between 100 and 2147483647; using 90000\./.test(badValueOutput?.text() ?? ''), badValueOutput?.text().slice(-400));
       const ok = await runOneQueryAudit(60000);
       assert('and an audit still completes with the default limit', ok.final?.status === 'done' && ok.final?.report?.degraded !== true, JSON.stringify(ok.final?.status));
     } else {
       process.exitCode = 1;
     }
   } finally {
+    if (failures > 0) printCaptured('app server', lastOutput);
     app?.kill();
     (fake as any).closeAllConnections?.();
     fake.close();

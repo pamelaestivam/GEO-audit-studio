@@ -19,6 +19,7 @@ import {
   underlyingCause,
 } from './src/errors.js';
 import { QuotaBreaker } from './src/quotaBreaker.js';
+import { parseMillisecondsSetting } from './src/httpTimeout.js';
 import crypto from 'crypto';
 import { IdempotencyStore, readIdempotencyKey } from './src/idempotency.js';
 import {
@@ -323,21 +324,20 @@ async function buildApp() {
       .slice(0, MAX_COMPETITORS);
 
   /**
-   * How long ONE Gemini request may take before it is abandoned. Without a limit a request that never answers
-   * (a connection that goes quiet and stays open) holds the single Gemini queue (`scheduleGeminiCall` runs calls
-   * one behind the other) so every later call, in every audit, waits behind it until the process restarts, and
-   * nothing reports it. The limit turns that into an ordinary `timeout` error, which the retry loop already
-   * handles (a few waits and tries, then a sentence). It must stay well under the step lease (10 minutes) and
-   * the audit maximum (15 minutes) after counting every try: 90 s x 3 tries plus the pauses is about 5 minutes.
-   * Grounded answers normally take well under 30 s. The timer also covers reading the answer body.
+   * How long ONE Gemini request may take before it is abandoned. Calls run one behind the other (`scheduleGeminiCall`),
+   * so a request that is accepted and never answered holds every later call in every audit behind it. Before this limit
+   * the only bound was Node's own fetch header timeout (about 301 s of silence, measured on a bare fetch), so each
+   * attempt held the queue for about 5 minutes and a step with three tries for about 15, as long as the audit reaper.
+   * The limit turns a hung request into an ordinary `timeout` error after 90 s, which the retry loop already handles
+   * (a few waits and tries, then a sentence). Worst case per step is about 5 minutes (90 s x 3 tries plus the pauses),
+   * inside the step lease (10 minutes) and the audit maximum (15 minutes) when the queue is not contended. A legitimate
+   * answer slower than the limit is cut and asked again (a second call). The timer also covers reading the answer body.
+   * The value must be at most 2147483647: a Node timer clamps anything larger to 1 ms.
    */
   const GEMINI_HTTP_TIMEOUT_MS = (() => {
-    const raw = process.env.GEMINI_HTTP_TIMEOUT_MS;
-    if (raw === undefined || raw === '') return 90 * 1000;
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 100) return n;
-    console.warn(`GEMINI_HTTP_TIMEOUT_MS=${JSON.stringify(raw)} is not a number of milliseconds of at least 100; using 90000.`);
-    return 90 * 1000;
+    const { ms, warning } = parseMillisecondsSetting('GEMINI_HTTP_TIMEOUT_MS', process.env.GEMINI_HTTP_TIMEOUT_MS, 90 * 1000, 100);
+    if (warning) console.warn(warning);
+    return ms;
   })();
 
   // Initialize Gemini Client server-side
