@@ -215,3 +215,17 @@ mutation-checked). Not proven: that all five red runs of the day were this (the 
 also fixed three bugs in the output capture (multibyte characters split across chunks, stdout and stderr fragments glued
 together, an unbounded line) and the wording of the Vercel-cap note (production did build after the cap message).
 
+**Gemini per-request time limit (2026-10-11):** the S6 scoping review argued from the code that one Gemini request that is
+accepted and never answered holds every later Gemini call in the process behind it (the client had no HTTP timeout and calls
+run one behind the other). The review of the fix then corrected the size of that claim: it is not "until a restart", because
+Node's own fetch gives up on a silent server after about 301 s, so each attempt held the queue about 5 minutes and a
+three-try step about 15 (as long as the audit reaper). The hold was REPRODUCED against the built server with a fake Gemini
+that never answers (`test/geminiTimeoutE2E.test.ts`; with the limit removed the audit never finishes and the next lookup,
+with the provider answering again, also hangs, for the whole 25 to 60 s the test waits). `GEMINI_HTTP_TIMEOUT_MS` (default
+90 s per request, validated to between 100 and 2147483647, applied by the SDK per attempt and while the body is read; the SDK
+is given no retry options, so it adds no hidden calls) turns it into the ordinary timeout the retry loop handles: with the
+limit at 1.5 s the audit completes with 3 hits (1 hung, 1 retry, the narrative) and the next lookup is served at once with
+exactly one more hit. The review also found that a value above 2147483647 would make every request abort at once (a timer
+clamps it to 1 ms) and that the first version's bad-value check could not fail: the rule is now a pure function with its own
+test. A provider 504 `DEADLINE_EXCEEDED` is now the retried timeout kind. The 90 s default is a judgement, not a measurement
+against the real provider.

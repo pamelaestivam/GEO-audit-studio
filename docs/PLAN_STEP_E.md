@@ -101,7 +101,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    late-finish-after-reap behaviour (the foundation E2E check "a job reaped as stuck that later finishes is
    still recorded", `test/foundationE2E.test.ts` near line 661, must pass untouched). Boundary test (`test/auditStepsE2E.test.ts`): a 1-query audit makes exactly 2 fake
    Gemini hits and the SQLite file holds 3 `done` steps with `attempt=1`.
-4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** *Delivered 2026-10-10 except: the Gemini HTTP timeout and `vercel.json` `maxDuration` (neither has a principled value until the owner reports the real function limit, O-3; recorded in TECH_DEBT); the additive GET fields `phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId` that S3 deferred here (the GET job view is unchanged; the advance reply carries a `steps` summary with `callsMade` and `repeatedCalls`, and `storage` appears only in the 404; the GET fields move to S7, where the page first needs them); the `wait` outcome (replaced by `nextStepAfterMs` plus `idle`); `repeatedCalls`/`callsMade` are reported as 'at least' (a collector can retry inside a step).* `AUDIT_DRIVER=client`:
+4. **S4 client driver, advance endpoint, visible lost state (the Vercel slice).** *Delivered 2026-10-10 except: `vercel.json` `maxDuration` (no principled value until the owner reports the real function limit, O-3; recorded in TECH_DEBT); the Gemini HTTP timeout was delivered later the same day (`GEMINI_HTTP_TIMEOUT_MS`, `test/geminiTimeoutE2E.test.ts`); the additive GET fields `phase`, `step`, `callsMade`, `repeatedCalls`, `storage`, `instanceId` that S3 deferred here (the GET job view is unchanged; the advance reply carries a `steps` summary with `callsMade` and `repeatedCalls`, and `storage` appears only in the 404; the GET fields move to S7, where the page first needs them); the `wait` outcome (replaced by `nextStepAfterMs` plus `idle`); `repeatedCalls`/`callsMade` are reported as 'at least' (a collector can retry inside a step).* `AUDIT_DRIVER=client`:
    `POST /api/audit/job/:id/advance` returns the view plus `outcome advanced | busy | finished | wait`
    and `nextStepAfterMs`; 404 `job_not_found`; `src/auditClient.ts` branches on the driver the 202
    returns and throws `AuditInterrupted`; exempt `/api/audit/job/*` from `spendLimiter`; make
@@ -132,9 +132,10 @@ is impossible; only a server log line exists, and the sentence must not claim ot
    *Scoped 2026-10-10, deferred on purpose (read before building).* Why it is not built now, and what that leaves open:
    - **Bounded means the job row, not the process.** `failStuck(JOB_MAX_RUN_MS)` (15 minutes) runs on every submit, every
      `GET /api/audit/job/:id` and every `advance`, so a hung audit ends with a sentence the next time anyone touches it and
-     stops holding a slot. It only edits the row. A Gemini call that never settles still blocks the in-process Gemini queue
-     (`scheduleGeminiCall` chains every call behind the previous one and the client sets no HTTP timeout) until the
-     process restarts. A periodic sweeper does not fix that; a per-call HTTP timeout does (the open S4 item in TECH_DEBT).
+     stops holding a slot. It only edits the row. A Gemini request that never answers holds the in-process Gemini queue
+     (`scheduleGeminiCall` chains every call behind the previous one) for as long as the request lasts: about 5 minutes per
+     attempt before the time limit existed (Node's own fetch gave up after about 301 s), 90 s now. A periodic sweeper does not
+     fix that; a per-call HTTP timeout does, and that was delivered (`GEMINI_HTTP_TIMEOUT_MS`).
    - **The breaker, the call counter and the pacer are in memory, so a restart resets them** even for one process, and S5
      now re-drives interrupted inline audits after a restart. A store-backed version would help a single process too. It
      is deferred for priority, not because it has no benefit: the cost of a repeat is capped per step by
@@ -164,7 +165,7 @@ is impossible; only a server log line exists, and the sentence must not claim ot
 - `MAX_CONCURRENT_AUDITS` slots: abandoned client-driven jobs must stop counting (heartbeat).
 - `maxDuration` is unverified (300 s AGENT-level, or 10 s on an older default); a worst-case step (pacing gap,
   call, a 20 s rate-limit wait, 5 s and 10 s retries) can exceed 60 s, and one ordinary step (6.5 s gap plus
-  a call) can already exceed 10 s. Mitigations: HTTP timeout (S4), deferred waits (S6); until then the lease and
+  a call) can already exceed 10 s. Mitigations: HTTP timeout (delivered later as `GEMINI_HTTP_TIMEOUT_MS`), deferred waits (S6); until then the lease and
   attempt cap keep it bounded and visible.
 - A hidden browser tab throttles timers, so a client-driven audit slows in the background.
 - Vercel plus memory will look louder before it looks better: each advance may land on another instance,

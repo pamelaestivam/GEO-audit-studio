@@ -304,7 +304,18 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
     };
   }
 
-  if (lower.includes('abort') || lower.includes('timeout') || lower.includes('etimedout')) {
+  // Includes the provider's own deadline: the SDK tells Google how long it will wait (an X-Server-Timeout header) whenever
+  // a request time limit is set, and a slow answer can come back as a 504 DEADLINE_EXCEEDED instead of our abort.
+  if (
+    lower.includes('abort') ||
+    lower.includes('timeout') ||
+    lower.includes('etimedout') ||
+    lower.includes('deadline_exceeded') ||
+    lower.includes('deadline expired') ||
+    // A 504 only where it is a status: `"code":504`, `status: 504`, `http 504`, `504 gateway`. A bare 504 inside a request id
+    // or a token count (`req7f504a9c`, `count 504`) is not a timeout, and retrying it would spend more calls for nothing.
+    /"code"\s*:\s*504\b|\bstatus:?\s*504\b|\bhttp\s*504\b|\b504\s+gateway/.test(lower)
+  ) {
     return {
       kind: 'timeout',
       message: `${provider} did not respond in time. This usually clears on a re-run.`,

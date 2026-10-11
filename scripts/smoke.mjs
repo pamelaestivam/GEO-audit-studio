@@ -103,7 +103,7 @@ try {
       check('the session is accepted', me.status === 200, `status ${me.status}`);
       const list = await get('/api/audits', { headers: auth });
       check('saved audits can be listed', list.status === 200 && Array.isArray(list.json?.audits), `status ${list.status}`);
-      const ready = await get('/api/audit/readiness', { headers: auth, signal: AbortSignal.timeout(90000) }); // makes a real model call
+      const ready = await get('/api/audit/readiness', { headers: auth, signal: AbortSignal.timeout(120000) }); // makes a real model call; the server's own Gemini limit is 90 s, so wait longer than that to hear its answer
       check('deep readiness answers', ready.status === 200 && Array.isArray(ready.json?.checks), `status ${ready.status}: ${ready.text.slice(0, 120)}`);
       for (const c of ready.json?.checks || []) {
         // See scripts/readinessLine.mjs: a check that passed only because it could not look, or the storage entry on a

@@ -359,6 +359,13 @@ have to be rediscovered from scratch, not so it can be skipped.
   a fake Gemini endpoint; proves a retried submit costs one audit's quota
   rather than four, and that a transient per-minute 429 is waited out instead
   of destroying the audit (needs a current `dist/`)
+- `npx tsx test/httpTimeout.test.ts` — the rule for `GEMINI_HTTP_TIMEOUT_MS` as a pure function: unset is the
+  default, a number of at least 100 is used, anything else (text, NaN, 0, negative, Infinity) is refused with a
+  warning and can never become "no limit"
+- `npx tsx test/geminiTimeoutE2E.test.ts` — spawns the real built server against
+  a fake Gemini that accepts requests and never answers; proves the per-request
+  time limit (`GEMINI_HTTP_TIMEOUT_MS`) turns that into an ordinary retried
+  timeout and does not leave the Gemini queue blocked (needs a current `dist/`)
 - `npx tsx test/vercelServerless.test.ts` — proves `api/[...path].ts` (the
   Vercel entry point) actually answers `/api/*` on a real socket, and that
   it does not fall back to serving the frontend for a non-API path; also
