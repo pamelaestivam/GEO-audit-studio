@@ -206,8 +206,8 @@ Nothing on the live site, and no real audit, can change until the owner does O-2
 **The intermittent end-to-end failure: cause found (2026-10-10, correction to earlier entries):** this log and TECH_DEBT
 2.14 had put the intermittent "Could not reach Gemini" / "the app server starts" failures down to load and to overlapping
 random port ranges. Both were wrong. The cause is that Node's built-in `fetch` refuses a fixed list of "bad ports"
-(3659, 4045, 4190, 6000, 6566 and others) instantly, and four suites each had one inside their random range (about 4.7
-percent of full runs). It was found because the diagnostics added first (server logs the underlying cause; suites print
+(3659, 4045, 4190, 6000, 6566 and others) instantly, and seven suites each had one inside their random range (a computed
+about 4.6 percent chance per full run of drawing one; four of the seven are the suites that failed). It was found because the diagnostics added first (server logs the underlying cause; suites print
 the server's output) printed `(bad port)` in my own forced-failure demonstration, and an independent review reproduced
 both shapes deterministically. Fixed by drawing every suite's ports through `test/ports.ts`, guarded by
 `test/ports.test.ts` (checks the list against the running Node, the helpers, and that no suite draws ports by hand;

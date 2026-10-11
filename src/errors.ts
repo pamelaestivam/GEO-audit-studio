@@ -328,8 +328,8 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
  * The cause behind a provider error, for the server LOG only (never shown to a person): undici wraps every connection
  * failure as "fetch failed", which hides whether the connection was refused, reset or closed, while the person-facing
  * sentence says only "Could not reach Gemini". Returns " (CODE: short message)" or "". At most 120 characters of the
- * message, whitespace collapsed. Removed from it: a `key=` query value, an `api-key`/`api_key`/`authorization` value
- * and credentials in a URL (`user:pass@`). The Gemini client sends its key in a header and connection errors quote only
+ * message, whitespace collapsed. Removed from it, the common key shapes only: a `key=` query value, an `api-key`/`api_key`/`authorization` value
+ * and credentials in a URL (`user:pass@`); a bare bearer token, `token=...` or a JSON `"key"` field are not recognised. The Gemini client sends its key in a header and connection errors quote only
  * an address, so these are belt and braces. It never throws: a log line must not be able to break the request.
  */
 export function underlyingCause(err: any): string {

@@ -72,6 +72,8 @@ async function capturedFrom(script: string) {
   assert('an unfinished stdout line is not glued to a stderr line', split.text().includes('BBB') && !split.text().includes('AAABBB') && split.text().includes('AAACCC'), JSON.stringify(split.text()));
   const longLine = await capturedFrom(`process.stdout.write('z'.repeat(3000000)); process.stdout.write('\\nafter\\n');`);
   assert('one enormous line cannot make the capture unbounded', longLine.text().length < 45000 && longLine.text().includes('after'), `${longLine.text().length}`);
+  const unfinished = await capturedFrom(`process.stdout.write('q'.repeat(3000000));`);
+  assert('an unfinished line is bounded too', unfinished.text().length < 45000 && unfinished.text().length > 100, `${unfinished.text().length}`);
   const big = await capturedFrom(`for (let i=0;i<4000;i++) console.log('line '+i+' '+'x'.repeat(40));`);
   assert('output is bounded to the last part, not the first', big.text().length < 25000 && big.text().includes('line 3999') && !big.text().includes('line 0 '), `${big.text().length}`);
 

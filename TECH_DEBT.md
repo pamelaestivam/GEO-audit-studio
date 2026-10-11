@@ -702,14 +702,16 @@ boundaries. **Still true, and not fixed:**
 - A tracked competitor whose name contains the client's ("BP Pulse" beside "BP")
   is dropped by `dedupeMatchers`, the same as "Stripe Atlas" beside "Stripe".
 
-### 2.14 End-to-end suites drew ports that Node's fetch refuses (FIXED 2026-10-10; low)
+### 2.14 End-to-end suites drew ports that Node's fetch refuses (mechanism FIXED 2026-10-10; reopen if a red run's log does not show `bad port`; low)
 
 **Cause.** Node's built-in `fetch` (undici) refuses to connect to a fixed list of "bad ports" (the WHATWG Fetch list of
 ports reserved for other protocols) and fails at once with `TypeError: fetch failed`, cause `bad port`, without
 connecting. On the Node used here that is 82 ports between 1 and 12000, among them 3659, 4045, 4190, 5060, 6000 and 6566.
-Four suites each had exactly one such port inside a random range they drew from: `quotaEfficiencyE2E` and `quotaBreakerE2E`
-(3659), `retrySpendE2E` (4045), `mvpHardeningE2E` (4190); `uiSmoke`, `narrativeAttributionE2E` and `discardedClaimsUi` were
-exposed too (6000, 6566). About 4.7 percent of full runs drew one (computed by the reviewer from the ranges).
+Seven suites each had exactly one such port inside a random range they drew from: `quotaEfficiencyE2E` and `quotaBreakerE2E`
+(3659), `retrySpendE2E` (4045), `mvpHardeningE2E` (4190), `uiSmoke` (6000), `narrativeAttributionE2E` and
+`discardedClaimsUi` (6566). The chance that one full run draws at least one of them is about 4.6 percent (the per-suite
+chances 0.5, 0.5, 1, 1, 0.33, 0.33 and 1 percent, computed from the ranges, not observed). The four suites that failed
+in the observed red runs account for about 3 percent of that.
 
 **Two shapes, both seen.** (1) The port was the FAKE Gemini's: the server's fetch to it failed instantly three times (the
 retry schedule try, wait 5 s, try, wait 10 s, try is the audit's 15 s), the fake saw no request, and the audit ended
@@ -727,17 +729,18 @@ no suite's own ranges overlap.
 
 **Fix.** Every suite draws ports through `test/ports.ts` (`randomPort`, `PortRange`), which never returns a refused port.
 `test/ports.test.ts` fails if the list stops covering every port the running Node's fetch refuses (it asks fetch about
-ports 1 to 12000), if the helpers can hand one out, or if any test goes back to raw random port arithmetic; it is in
+ports 1 to 12000), if the helpers can hand one out, or if any test goes back to the raw random port arithmetic this repo used (a tripwire for that shape, not a proof: a
+reversed expression, a port built another way, or `scripts/prod-install-check.sh`'s `RANDOM` port would not be seen); it is in
 the `npm test` chain first after the harness guard. Mutation-checked: removing 3659 from the list, or putting one suite
 back on `4100 + Math.floor(Math.random() * 100)`, fails it.
 
 **Diagnostics kept.** The server logs the underlying cause of a retried or abandoned provider error (`underlyingCause`,
-`src/errors.ts`; the error code and at most 120 characters of the message, with key-like values removed; log only). The
+`src/errors.ts`; the error code and at most 120 characters of the message, with the common key shapes removed; log only). The
 four suites that failed this way keep the server's output (minus its per-request log) and print it when a check failed or
 an exception is in flight (`test/serverOutput.ts`), and their health checks say what the last error was. `test/diagnostics.test.ts`
 tests all of it, including against the real server with Gemini on a closed port.
 
-**Still true and not fixed.** Suites still pick random ports, so a port another process already holds is possible (rare;
+**Still true and not fixed.** The list is checked against Node's `fetch`, not against Chromium's list (used by `uiSmoke`, `discardedClaimsUi`, `lookupAndBlankDomainE2E`, `citedOnlyUi`; believed to match, not checked). Suites still pick random ports, so a port another process already holds is possible (rare;
 `listen(0)` and reading the port back would remove it); the other suites still start the server with `stdio: 'ignore'`.
 
 **Earlier the same day (PR #50).** A server that missed its 20-second start window used to print FAIL and still exit 0
@@ -752,7 +755,8 @@ after a `!`/`!==` check needs `// harness-ok: <why>`.
 
 At 23:08 UTC on 2026-10-10 Vercel reported on PR #51: "Resource is limited - try again in 24 hours (more than 100, code:
 `api-deployments-free-per-day`)". Every push to a branch makes a preview deployment, and a great many commits were pushed
-that day across about fifteen PRs, many of them review rounds (the exact count was not taken). OBSERVED: the preview for
+that day across about twenty-five PRs (the GitHub API lists 25 created before the cap message), many of them review rounds
+(the number of commits was not counted). OBSERVED: the preview for
 that push was refused. ALSO OBSERVED: Vercel's commit status for `main` at 64bc0ae (the merge of #51, 23:20 UTC) reads
 "success: Deployment has completed" at 23:21 UTC, so the Production deployment still built after the cap message. NOT
 KNOWN from here: whether later pushes today will build, and what the dashboard shows (owner action O-3 step 3, confirming

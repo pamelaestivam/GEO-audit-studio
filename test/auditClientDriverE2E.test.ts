@@ -39,7 +39,6 @@ function check(name: string, actual: any, expected: any) {
 }
 
 const GEMINI_PORT = randomPort(9000, 100);
-const APP_PORT = randomPort(9100, 300);
 let mode: FakeMode = 'ok';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const QUERY = [{ id: 'q1', intent: 'direct_recommendation', queryText: 'best poke in Austin', targetPersona: 'Buyer' }];

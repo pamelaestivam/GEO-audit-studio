@@ -2,11 +2,11 @@
  * Ports for the end-to-end suites. Node's built-in `fetch` (undici) refuses to connect to a fixed list of "bad ports"
  * (the WHATWG Fetch list of ports reserved for other protocols: 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665-6669,
  * 6679, 6697 among others) and fails at once with `TypeError: fetch failed`, cause `bad port`, without ever connecting.
- * A suite whose random port range contained one of them failed on that draw about 1 run in 100: a server that was
+ * A suite whose random port range contained one of them failed on that draw (a 1-in-100 to 1-in-300 chance per run, depending on the width of its range): a server that was
  * running fine looked dead to the test's own health check, or a fake Gemini that was listening looked unreachable to the
  * server (the audit then took about 15 s, the server's 5 s + 10 s retry waits, and the fake saw no request).
  * Found 2026-10-10 (TECH_DEBT 2.14). Every suite draws its ports through this file; test/ports.test.ts checks the list
- * against the running Node and fails if a suite goes back to raw random arithmetic.
+ * against the running Node and fails if a suite goes back to the raw random arithmetic this repo used (a tripwire for that shape).
  */
 export const FETCH_BAD_PORTS: ReadonlySet<number> = new Set([
   1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110,

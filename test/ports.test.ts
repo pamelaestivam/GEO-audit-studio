@@ -1,11 +1,12 @@
 /**
  * Guards the ports the end-to-end suites use (see test/ports.ts for why): Node's `fetch` refuses a fixed list of "bad
  * ports" at once, so a suite that happened to draw one saw a healthy server as dead, or a listening fake Gemini as
- * unreachable, about one run in a hundred. This test fails if
+ * unreachable (a 1-in-100 to 1-in-300 chance per run for each suite whose range held one). This test fails if
  *   - the list no longer covers every port the running Node's fetch refuses (the list is a copy of a spec, and Node
  *     versions differ), checked by asking fetch itself about every port from 1 to 12000;
  *   - the helpers can hand out a refused port;
- *   - any suite goes back to drawing ports with raw random arithmetic instead of the helpers.
+ *   - any suite goes back to drawing ports with the raw random arithmetic this repo used (`1234 + Math.floor(Math.random() * N)`)
+ *     instead of the helpers; a tripwire for that shape, not a proof (a reversed expression or another construction is not seen).
  * Run: npx tsx test/ports.test.ts
  */
 import fs from 'fs';
@@ -37,9 +38,10 @@ async function main() {
   refused.sort((a, b) => a - b);
   const missing = refused.filter((p) => !FETCH_BAD_PORTS.has(p));
   assert(`this Node's fetch refuses ${refused.length} ports between 1 and ${LAST}: the list covers every one`, refused.length > 20 && missing.length === 0, `not in test/ports.ts: ${missing.join(', ')}`);
-  for (const known of [3659, 4045, 4190, 5060, 6000, 6566]) {
-    assert(`port ${known} is among the ports fetch refuses on this Node`, refused.includes(known), `refused: ${refused.filter((p) => p >= 3000).join(', ')}`);
-  }
+  // These six are the ports that actually bit this repo. An older Node may not refuse all of them, so a miss is a note,
+  // not a failure: the real check is the coverage assertion above.
+  const notRefusedHere = [3659, 4045, 4190, 5060, 6000, 6566].filter((p) => !refused.includes(p));
+  if (notRefusedHere.length) console.log(`note  this Node does not refuse ${notRefusedHere.join(', ')} (older undici?); they stay in the list because other Node versions and browsers do`);
 
   // ---- the helpers never hand one out
   let handedOut = 0;
@@ -62,7 +64,7 @@ async function main() {
       if (handRolled.test(line)) offenders.push(`${f}:${i + 1}: ${line.trim()}`);
     });
   }
-  assert('no test draws a port with raw random arithmetic (use randomPort / PortRange from test/ports.ts)', offenders.length === 0, offenders.join('\n        '));
+  assert('no test draws a port with the raw random arithmetic this repo used (use randomPort / PortRange from test/ports.ts)', offenders.length === 0, offenders.join('\n        '));
   assert('the scan found the test sources to read', files.length > 20, `${files.length} files`);
 
   console.log(failures === 0 ? '\nPort checks passed.' : `\n${failures} check(s) failed.`);
