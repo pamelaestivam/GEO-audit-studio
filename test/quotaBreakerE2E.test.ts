@@ -13,8 +13,10 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 installAuthFetch();
 
 let failures = 0;
@@ -36,10 +38,10 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 3400 + Math.floor(Math.random() * 200);
-const APP_PORT = 3600 + Math.floor(Math.random() * 200);
+const GEMINI_PORT = randomPort(3400, 200);
+const APP_PORT = randomPort(3600, 200);
 const APP_BASE = `http://127.0.0.1:${APP_PORT}`;
-const APP2_PORT = 3800 + Math.floor(Math.random() * 200);
+const APP2_PORT = randomPort(3800, 200);
 const APP2_BASE = `http://127.0.0.1:${APP2_PORT}`;
 
 /** A fake Gemini endpoint that always returns a per-minute 429, and counts hits. */
@@ -92,15 +94,17 @@ async function runAudit(base: string, body: unknown, timeoutMs = 60000) {
 
 async function waitForServer(base: string, timeoutMs = 20000): Promise<boolean> {
   const started = Date.now();
+  let lastError = '';
   while (Date.now() - started < timeoutMs) {
     try {
       const res = await fetch(`${base}/api/health`);
       if (res.ok) return true;
-    } catch {
-      /* not up yet */
+    } catch (err: any) {
+      lastError = String(err?.cause?.message ?? err?.message ?? err); // kept: a refused port and a dead server look the same otherwise
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  console.log(`  (the health check never succeeded; last error: ${lastError || 'none, it answered but not ok'})`);
   return false;
 }
 
@@ -108,6 +112,9 @@ async function main() {
   const fakeGemini = await startFakeGemini();
 
   let appServer: ChildProcess | null = null;
+  let appOut: CapturedOutput | null = null;
+  let finishedNormally = false;
+  let app2Out: CapturedOutput | null = null;
   const t0 = Date.now();
 
   try {
@@ -124,8 +131,9 @@ async function main() {
         HTTP_PROXY: '',
         HTTPS_PROXY: '',
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    appOut = captureOutput(appServer);
 
     const up = await waitForServer(APP_BASE);
     assert('the app server starts against the fake Gemini endpoint', up);
@@ -216,8 +224,9 @@ async function main() {
           HTTP_PROXY: '',
           HTTPS_PROXY: '',
         },
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
+      app2Out = captureOutput(app2);
       const app2Up = await waitForServer(APP2_BASE);
       assert('the second server instance starts for the concurrency check', app2Up);
 
@@ -253,7 +262,12 @@ async function main() {
     check('the status endpoint reports quota unavailable', status.quota?.available, false);
     assert('the status endpoint gives a readable reason', typeof status.quota?.reason === 'string' && status.quota.reason.length > 0, JSON.stringify(status));
     assert('the status endpoint gives a reset time', typeof status.quota?.resetAt === 'string', JSON.stringify(status));
+    finishedNormally = true;
   } finally {
+    if (failures > 0 || !finishedNormally) {
+      printCaptured('app server', appOut);
+      printCaptured('second app server', app2Out);
+    }
     appServer?.kill();
     fakeGemini.server.close();
   }

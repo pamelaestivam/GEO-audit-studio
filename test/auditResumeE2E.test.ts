@@ -13,6 +13,7 @@
  * Needs a current dist/. Run: npx tsx test/auditResumeE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { PortRange, randomPort } from './ports';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -32,8 +33,8 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-const GEMINI_PORT = 9500 + Math.floor(Math.random() * 100);
-let nextPort = 9600 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(9500, 100);
+const nextPort = new PortRange(9600, 300);
 let mode: FakeMode = 'ok';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const Q1 = { id: 'q1', intent: 'direct_recommendation', queryText: 'best poke in Austin', targetPersona: 'Buyer' };
@@ -129,7 +130,7 @@ async function main() {
     // ---- killed between steps: during the pause between two questions
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       mode = 'ok';
       const before = fake.hits();
       let proc = await boot(dir, port);
@@ -156,7 +157,7 @@ async function main() {
     // ---- killed in the middle of a call: the call is made again, once, and said so
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       mode = 'slow';
       const before = fake.hits();
       let proc = await boot(dir, port);
@@ -177,7 +178,7 @@ async function main() {
     // ---- killed three times on the same step: it stops, with a sentence, and the calls are capped
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       mode = 'slow';
       const before = fake.hits();
       let proc = await boot(dir, port);
@@ -200,7 +201,7 @@ async function main() {
     // ---- an audit older than the maximum run time is stopped with a sentence, never resumed
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       mode = 'slow';
       const before = fake.hits();
       const env = { JOB_MAX_RUN_MS: '3000' };
@@ -224,7 +225,7 @@ async function main() {
     // ---- a second process that cannot bind the port leaves the live process's audit alone
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       mode = 'slow';
       const before = fake.hits();
       const proc = await boot(dir, port);
@@ -246,7 +247,7 @@ async function main() {
     // ---- an audit the page drives survives a restart and carries on when the page asks again
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       mode = 'ok';
       const before = fake.hits();
       let proc = await boot(dir, port, { AUDIT_DRIVER: 'client' });
@@ -271,7 +272,7 @@ async function main() {
     // ---- a job made before audits were stepped (no plan) cannot be resumed: it is failed with a sentence
     {
       const dir = newDir();
-      const port = nextPort++;
+      const port = nextPort.take();
       let proc = await boot(dir, port);
       await kill(proc);
       const db = new DatabaseSync(path.join(dir, 'geo-audit.sqlite'));

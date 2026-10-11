@@ -702,32 +702,70 @@ boundaries. **Still true, and not fixed:**
 - A tracked competitor whose name contains the client's ("BP Pulse" beside "BP")
   is dropped by `dedupeMatchers`, the same as "Stripe Atlas" beside "Stripe".
 
-### 2.14 End-to-end tests draw random ports from overlapping ranges (low-medium)
+### 2.14 End-to-end suites drew ports that Node's fetch refuses (mechanism FIXED 2026-10-10; reopen if a red run's log does not show `bad port`; low)
 
-Found 2026-10-10. `test/quotaBreakerE2E.test.ts` (3400-4000) and
-`test/quotaEfficiencyE2E.test.ts` (3500-3900) overlap, as do other pairs, and none
-handles a collision. One CI run failed in `quotaEfficiencyE2E` ("Could not reach
-Gemini", zero requests seen by the fake) and passed on re-run of the same commit; it
-did not reproduce locally in three runs. A port collision is the suspected cause
-(INFERRED, not proven). Fix: have each test listen on port 0 and read the assigned
-port back, and fail loudly on a bind error. Until then a single unexplained red in
-those files is a re-run, not a regression, but it must be recorded here.
+**Cause.** Node's built-in `fetch` (undici) refuses to connect to a fixed list of "bad ports" (the WHATWG Fetch list of
+ports reserved for other protocols) and fails at once with `TypeError: fetch failed`, cause `bad port`, without
+connecting. On the Node used here that is 82 ports between 1 and 12000, among them 3659, 4045, 4190, 5060, 6000 and 6566.
+Seven suites each had exactly one such port inside a random range they drew from: `quotaEfficiencyE2E` and `quotaBreakerE2E`
+(3659), `retrySpendE2E` (4045), `mvpHardeningE2E` (4190), `uiSmoke` (6000), `narrativeAttributionE2E` and
+`discardedClaimsUi` (6566). The chance that one full run draws at least one of them is about 4.6 percent (the per-suite
+chances 0.5, 0.5, 1, 1, 0.33, 0.33 and 1 percent, computed from the ranges, not observed). The four suites that failed
+in the observed red runs account for about 3 percent of that.
 
-Update 2026-10-10 (PR #50): a server that misses its 20-second start window under load
-used to print FAIL and still exit 0 (`if (!up) return;` skipped the exit status). It now
-fails the run, so this flake turns a slow machine's `npm test` red instead of passing
-silently. That is the intended trade, but it makes the port fix above more worth doing:
-`retrySpendE2E` (3900-4100) failed once this way in a full local run and passed alone
-three times in a row; later, in another full run, `mvpHardeningE2E` failed once with "Could not reach
-Gemini" while other commands ran in parallel and passed alone three times and on a clean rerun. The cause of that start failure was not captured because the
-suites spawn the server with `stdio: 'ignore'`; capturing its output on a failed start
-belongs with the same fix. `test/testHarness.test.ts` guards the early-return shape.
-The guard is a tripwire for the shapes this repo's tests produce, not a proof. Known contrived
-misses (found in review, none present in the sources): a negated `if` and its return on
-one line after an `else`; a return inside a `try`/loop nested in the negated `if`; `return`
-without a semicolon; a template literal with text at column 0 inside the block; an object
-literal in the condition ahead of `=== false`; a status written only inside a string. A
-fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <why>`.
+**Two shapes, both seen.** (1) The port was the FAKE Gemini's: the server's fetch to it failed instantly three times (the
+retry schedule try, wait 5 s, try, wait 10 s, try is the audit's 15 s), the fake saw no request, and the audit ended
+"Could not reach Gemini". (2) The port was the APP's: the server started and printed that it was listening, but the test's
+own health check was refused, so "the app server starts" failed after 20 s against a healthy server.
+
+**How it was found.** Not by thought: the diagnostics added the same day (the server logging the underlying cause, and
+the suites printing the server's output) made my own forced-failure demonstration print `(bad port)`, and the independent
+review of that change then reproduced both shapes deterministically by pinning the fake's port to 3659 and the app's to 4045.
+**Not proven:** that every red run of 2026-10-10 (three in CI, two local) drew a bad port; the CI logs did not print the
+ports. The signatures match (15 s, zero requests at the fake; "app server starts" failing), no other cause was found, and
+the earlier explanation recorded here (overlapping ranges between suites colliding) was wrong: suites run one after
+another, a collision would have crashed the fake with EADDRINUSE or answered the health check from a foreign process, and
+no suite's own ranges overlap.
+
+**Fix.** Every suite draws ports through `test/ports.ts` (`randomPort`, `PortRange`), which never returns a refused port.
+`test/ports.test.ts` fails if the list stops covering every port the running Node's fetch refuses (it asks fetch about
+ports 1 to 12000), if the helpers can hand one out, or if any test goes back to the raw random port arithmetic this repo used (a tripwire for that shape, not a proof: a
+reversed expression, a port built another way, or `scripts/prod-install-check.sh`'s `RANDOM` port would not be seen); it is in
+the `npm test` chain first after the harness guard. Mutation-checked: removing 3659 from the list, or putting one suite
+back on `4100 + Math.floor(Math.random() * 100)`, fails it.
+
+**Diagnostics kept.** The server logs the underlying cause of a retried or abandoned provider error (`underlyingCause`,
+`src/errors.ts`; the error code and at most 120 characters of the message, with the common key shapes removed; log only). The
+four suites that failed this way keep the server's output (minus its per-request log) and print it when a check failed or
+an exception is in flight (`test/serverOutput.ts`), and their health checks say what the last error was. `test/diagnostics.test.ts`
+tests all of it, including against the real server with Gemini on a closed port.
+
+**Still true and not fixed.** The list is checked against Node's `fetch`, not against Chromium's list (used by `uiSmoke`, `discardedClaimsUi`, `lookupAndBlankDomainE2E`, `citedOnlyUi`; believed to match, not checked). Suites still pick random ports, so a port another process already holds is possible (rare;
+`listen(0)` and reading the port back would remove it); the other suites still start the server with `stdio: 'ignore'`.
+
+**Earlier the same day (PR #50).** A server that missed its 20-second start window used to print FAIL and still exit 0
+(`if (!up) return;` skipped the exit status); it now fails the run, and `test/testHarness.test.ts` guards that shape. That
+guard is a tripwire for the shapes this repo's tests produce, not a proof. Known contrived misses (found in review, none
+present in the sources): a negated `if` and its return on one line after an `else`; a return inside a `try`/loop nested in
+the negated `if`; `return` without a semicolon; a template literal with text at column 0 inside the block; an object
+literal in the condition ahead of `=== false`; a status written only inside a string. A fake-server handler that returns
+after a `!`/`!==` check needs `// harness-ok: <why>`.
+
+### 2.16 Vercel's free deployment cap was reached on 2026-10-10 (low; owner may want to look)
+
+At 23:08 UTC on 2026-10-10 Vercel reported on PR #51: "Resource is limited - try again in 24 hours (more than 100, code:
+`api-deployments-free-per-day`)". Every push to a branch makes a preview deployment, and a great many commits were pushed
+that day across about twenty-five PRs (the GitHub API lists 25 created before the cap message), many of them review rounds
+(the number of commits was not counted). OBSERVED: the preview for
+that push was refused. ALSO OBSERVED: Vercel's commit status for `main` at 64bc0ae (the merge of #51, 23:20 UTC) reads
+"success: Deployment has completed" at 23:21 UTC, so the Production deployment still built after the cap message. NOT
+KNOWN from here: whether later pushes today will build, and what the dashboard shows (owner action O-3 step 3, confirming
+the latest Production deployment says Ready, remains the check that settles it). The red "Live site check" that follows
+each Production deployment is unrelated to the cap: it is the known unconfigured production site (no engine key, no
+sign-in configuration; tracking issue #36, owner actions O-2 and O-3). Mitigations that cost nothing: push once per
+review round, not once per fix; batch docs-only follow-ups into the PR they belong to. A build-skipping rule for commits
+that touch only `docs/`, `test/` or `*.md` (a Vercel `ignoreCommand` in `vercel.json`) would remove most of the load, but
+its exit-code semantics could not be checked offline, so it is not added blind.
 
 ### 2.15 Loose ends from the reliability work, 2026-10-10 (low-medium)
 

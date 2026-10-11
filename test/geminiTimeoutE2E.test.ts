@@ -21,6 +21,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { randomPort } from './ports';
 
 installAuthFetch();
 
@@ -30,8 +31,8 @@ function assert(name: string, ok: boolean, detail = '') {
   console.log(`${ok ? 'pass' : 'FAIL'}  ${name}${ok ? '' : detail ? `\n        ${detail}` : ''}`);
 }
 
-const GEMINI_PORT = 7500 + Math.floor(Math.random() * 100);
-const APP_PORT = 7600 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(7500, 100);
+const APP_PORT = randomPort(7600, 300);
 const BASE = `http://127.0.0.1:${APP_PORT}`;
 let mode: FakeMode = 'hang_first';
 

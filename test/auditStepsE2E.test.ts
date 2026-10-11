@@ -6,6 +6,7 @@
  * Needs a current dist/. Run: npx tsx test/auditStepsE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -25,8 +26,8 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-const GEMINI_PORT = 8700 + Math.floor(Math.random() * 100);
-const APP_PORT = 8800 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(8700, 100);
+const APP_PORT = randomPort(8800, 300);
 let mode: FakeMode = 'ok';
 
 const QUERIES = [

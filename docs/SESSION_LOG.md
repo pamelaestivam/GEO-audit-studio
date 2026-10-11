@@ -203,6 +203,18 @@ call with no HTTP timeout can block the queue; the breaker, counter and pacer re
 (reasons and residual exposure in `docs/PLAN_STEP_E.md` under S6, entries in TECH_DEBT); S7 is next.
 Nothing on the live site, and no real audit, can change until the owner does O-2 and O-3.
 
+**The intermittent end-to-end failure: cause found (2026-10-10, correction to earlier entries):** this log and TECH_DEBT
+2.14 had put the intermittent "Could not reach Gemini" / "the app server starts" failures down to load and to overlapping
+random port ranges. Both were wrong. The cause is that Node's built-in `fetch` refuses a fixed list of "bad ports"
+(3659, 4045, 4190, 6000, 6566 and others) instantly, and seven suites each had one inside their random range (a computed
+about 4.6 percent chance per full run of drawing one; four of the seven are the suites that failed). It was found because the diagnostics added first (server logs the underlying cause; suites print
+the server's output) printed `(bad port)` in my own forced-failure demonstration, and an independent review reproduced
+both shapes deterministically. Fixed by drawing every suite's ports through `test/ports.ts`, guarded by
+`test/ports.test.ts` (checks the list against the running Node, the helpers, and that no suite draws ports by hand;
+mutation-checked). Not proven: that all five red runs of the day were this (the logs did not print the ports). The review
+also fixed three bugs in the output capture (multibyte characters split across chunks, stdout and stderr fragments glued
+together, an unbounded line) and the wording of the Vercel-cap note (production did build after the cap message).
+
 **Gemini per-request time limit (2026-10-10):** the S6 scoping review argued from the code that one Gemini request that is
 accepted and never answered blocks every later Gemini call in the process (the client had no HTTP timeout and calls run
 one behind the other). This was then REPRODUCED against the built server with a fake Gemini that never answers

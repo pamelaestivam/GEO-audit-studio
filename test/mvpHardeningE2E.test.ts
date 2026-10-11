@@ -17,8 +17,10 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { PortRange, randomPort } from './ports';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 installAuthFetch();
 
 let failures = 0;
@@ -40,8 +42,8 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 4100 + Math.floor(Math.random() * 100);
-let nextAppPort = 4300 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(4100, 100);
+const nextAppPort = new PortRange(4300, 300);
 
 type Mode = 'ok' | 'narrative_fails' | 'unauthorized' | 'slow';
 let mode: Mode = 'ok';
@@ -99,10 +101,11 @@ function startFakeGemini(): Promise<http.Server> {
 interface App {
   base: string;
   proc: ChildProcess;
+  out: CapturedOutput;
 }
 
 async function startApp(extraEnv: Record<string, string> = {}): Promise<App | null> {
-  const port = nextAppPort++;
+  const port = nextAppPort.take();
   const proc = spawn('node', ['dist/server.cjs'], {
     env: {
       ...process.env,
@@ -122,18 +125,23 @@ async function startApp(extraEnv: Record<string, string> = {}): Promise<App | nu
       GEMINI_MODEL: '',
       ...extraEnv,
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const out = captureOutput(proc);
   const base = `http://127.0.0.1:${port}`;
   const started = Date.now();
+  let lastError = '';
   while (Date.now() - started < 20000) {
     try {
-      if ((await fetch(`${base}/api/health`)).ok) return { base, proc };
-    } catch {
-      /* not up yet */
+      if ((await fetch(`${base}/api/health`)).ok) return { base, proc, out };
+    } catch (err: any) {
+      lastError = String(err?.cause?.message ?? err?.message ?? err); // kept: a refused port and a dead server look the same otherwise
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  // A server that never answered /api/health: show what it said (a crash, a port already in use) and what the health check saw.
+  console.log(`  (the health check never succeeded; last error: ${lastError || 'none, it answered but not ok'})`);
+  printCaptured('server that did not start', out);
   proc.kill();
   return null;
 }
@@ -169,6 +177,8 @@ const POKE = {
 async function main() {
   const fake = await startFakeGemini();
   const procs: ChildProcess[] = [];
+  const outs: [string, CapturedOutput][] = [];
+  let finishedNormally = false;
 
   try {
     // ------------------------------------------------------------------
@@ -181,6 +191,7 @@ async function main() {
       return;
     }
     procs.push(A.proc);
+    outs.push(['server A', A.out]);
 
     // --- Vendor discovery and the share-of-voice denominator -------------
     mode = 'ok';
@@ -203,6 +214,7 @@ async function main() {
       const custom = await startApp({ GEMINI_MODEL: 'gemini-custom-override' });
       if (custom) {
         procs.push(custom.proc);
+        outs.push(['custom server', custom.out]);
         const r = (await runAudit(custom, POKE)).final?.report;
         check('GEMINI_MODEL overrides the model, and the report names the one actually used', r?.engineModels, { Gemini: 'gemini-custom-override' });
       }
@@ -299,6 +311,7 @@ async function main() {
     assert('server B starts', !!B);
     if (B) {
       procs.push(B.proc);
+      outs.push(['server B', B.out]);
       mode = 'ok';
       const statuses: number[] = [];
       for (let i = 0; i < 4; i++) {
@@ -320,6 +333,7 @@ async function main() {
     assert('server C starts', !!C);
     if (C) {
       procs.push(C.proc);
+      outs.push(['server C', C.out]);
       mode = 'slow';
       const first = await post(C, '/api/audit/run', POKE, { 'Idempotency-Key': 'click-1' });
       const firstBody = await first.json();
@@ -346,7 +360,9 @@ async function main() {
       const third = await post(C, '/api/audit/run', POKE, { 'Idempotency-Key': 'click-3' });
       check('once the running audit finishes, a new one is accepted', third.status, 202);
     }
+    finishedNormally = true;
   } finally {
+    if (failures > 0 || !finishedNormally) outs.forEach(([label, out]) => printCaptured(label, out));
     procs.forEach((p) => p.kill());
     fake.close();
   }

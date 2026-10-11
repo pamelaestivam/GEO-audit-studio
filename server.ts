@@ -16,6 +16,7 @@ import {
   formatDuration,
   summariseFailures,
   type ReadableError,
+  underlyingCause,
 } from './src/errors.js';
 import { QuotaBreaker } from './src/quotaBreaker.js';
 import crypto from 'crypto';
@@ -535,10 +536,13 @@ async function buildApp() {
         }
 
         const retryable = readable.kind === 'timeout' || readable.kind === 'network';
+        if (retryable && attempt > maxRetries) {
+          console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}${underlyingCause(err)}; giving up`);
+        }
         if (!retryable || attempt > maxRetries) throw err;
 
         const waitMs = Math.min(20000, 5000 * attempt);
-        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}; retrying in ${Math.round(waitMs / 1000)}s`);
+        console.log(`[Gemini] ${readable.kind} on attempt ${attempt}/${maxRetries}${underlyingCause(err)}; retrying in ${Math.round(waitMs / 1000)}s`);
         await delay(waitMs);
       }
     }
