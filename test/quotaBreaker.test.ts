@@ -257,6 +257,14 @@ check('formatDuration floors negative/zero to 0s rather than throwing', formatDu
     check(`a provider deadline is a timeout, not an unknown error: ${raw.slice(0, 40)}...`, describeProviderError(raw, 'Gemini').kind, 'timeout');
   }
   check('an unrelated number containing 504 is not mistaken for a timeout', describeProviderError('HTTP 15041 something odd', 'Gemini').kind, 'unknown');
+  for (const raw of [
+    'request id 7f504a9c failed with INTERNAL',
+    '{"error":{"code":500,"message":"Internal error. Request id abc504def","status":"INTERNAL"}}',
+    '{"error":{"code":400,"message":"input token count 504 exceeds the limit","status":"INVALID_ARGUMENT"}}',
+  ]) {
+    assert(`a 504 inside an id or a count is not a timeout (it would be retried and paid for again): ${raw.slice(0, 44)}...`, describeProviderError(raw, 'Gemini').kind !== 'timeout', describeProviderError(raw, 'Gemini').kind);
+  }
+  check('"http 504" is a timeout', describeProviderError('HTTP 504 from upstream', 'Gemini').kind, 'timeout');
   assert('a 503 UNAVAILABLE is still not claimed to be a timeout', describeProviderError('503 UNAVAILABLE: the model is overloaded', 'Gemini').kind !== 'timeout');
 }
 

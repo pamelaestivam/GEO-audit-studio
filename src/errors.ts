@@ -312,7 +312,9 @@ export function describeProviderError(err: unknown, provider = 'The answer engin
     lower.includes('etimedout') ||
     lower.includes('deadline_exceeded') ||
     lower.includes('deadline expired') ||
-    /(^|[^\d])504([^\d]|$)/.test(lower)
+    // A 504 only where it is a status: `"code":504`, `status: 504`, `http 504`, `504 gateway`. A bare 504 inside a request id
+    // or a token count (`req7f504a9c`, `count 504`) is not a timeout, and retrying it would spend more calls for nothing.
+    /"code"\s*:\s*504\b|\bstatus:?\s*504\b|\bhttp\s*504\b|\b504\s+gateway/.test(lower)
   ) {
     return {
       kind: 'timeout',
