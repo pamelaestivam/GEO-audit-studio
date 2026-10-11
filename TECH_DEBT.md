@@ -788,16 +788,20 @@ fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <
   (counts, kind labels and one incident sentence; no ids, names or provider payloads); an incident sentence is built
   from step keys and describeProviderError text only. The page that shows the owner the list is not built. It reads the newest 200 incidents; above that a burst of
   minor ones could push a serious one out of the window (the failure counts, read separately, still show it).
-- **A Gemini call that never settles wedges the process's Gemini queue (found 2026-10-10 in the S6 scoping review; code
-  reading and a simulation of the chain logic, NOT reproduced against the built server):** `scheduleGeminiCall` chains every
-  call behind the previous one and the Gemini client sets no HTTP timeout (see the S4 limits entry), so one call that
-  never settles blocks every later Gemini call in that process (brand lookup, query generation, the readiness probe, every
-  audit) until restart. `failStuck` only edits the job row, so each new audit is admitted once the 15-minute age frees its
-  slot, marks a call started (billable) before the queued call ever runs, and is reaped in turn. Node's own fetch timeouts
-  (about 300 s of silence) make a true wedge unlikely, but three attempts of that size (two retries) also exceed the 15-minute reaper, so
-  an audit the person was told "took too long" can keep spending: `decideClaim` still lets the inline driver finish a job
-  whose `failCode` is stuck. Fix: a per-call timeout (AbortSignal) shorter than the step lease, with a test whose fake
-  Gemini never answers and which expects the step to fail visibly and the next call to run. Not a sweeper.
+- **A Gemini call that never settles wedged the process's Gemini queue (found 2026-10-10 in the S6 scoping review; FIXED
+  the same day, see below):** `scheduleGeminiCall` chains every call behind the previous one and the Gemini client had no
+  HTTP timeout, so one request that was accepted and never answered blocked every later Gemini call in that process (brand
+  lookup, query generation, the readiness probe, every audit) until restart; `failStuck` only edits the job row, so each new
+  audit was admitted once the 15-minute age freed its slot, marked a call started (billable) before the queued call ever
+  ran, and was reaped in turn. REPRODUCED against the built server by `test/geminiTimeoutE2E.test.ts` with the limit
+  removed: the audit never finished and the next lookup, with the provider answering again, also hung. Fixed by
+  `GEMINI_HTTP_TIMEOUT_MS` (default 90 s per request, applied by the SDK per attempt and while the body is read; the SDK is
+  given no retry options so it never retries itself): a request that never answers becomes the ordinary `timeout` error the
+  retry loop already handles. Still open: the 90 s default is a judgement (grounded answers normally take well under 30 s),
+  not a measurement against the real provider; three attempts plus pauses are about 5 minutes, inside the 10-minute step
+  lease and the 15-minute reaper, but a rate-limit wait on top of slow tries could still exceed the reaper, and
+  `decideClaim` still lets the inline driver finish a job whose `failCode` is stuck, so an audit the person was told "took
+  too long" can in principle go on and spend.
 - **Breaker, call counter and pacer reset on restart (found 2026-10-10):** all three are in memory of one process, and S5
   now re-drives interrupted inline audits after a restart, so a tripped daily breaker or a used `GEMINI_DAILY_CALL_CAP`
   is forgotten and the first resumed call fires with no pacing gap. Bounded per step by `MAX_STEP_ATTEMPTS`; the real $0
@@ -829,9 +833,10 @@ fake-server handler that returns after a `!`/`!==` check needs `// harness-ok: <
   of ending with a sentence and an `invariant` incident (step g's health checks are the place for that). A failure
   inside the start-up resume itself is logged and recorded as an `invariant` incident; the interrupted audits are then
   left as they were and end at the run-time limit.
-- **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` and the Gemini client has no
-  HTTP timeout: neither has a principled value until the owner reports the real function limit (O-3; the ledger
-  says 300 s with fluid compute is AGENT-level, a 10 s older default is possible). What a person actually sees if
+- **Step e client driver (slice S4) limits:** `vercel.json` sets no `maxDuration` (the Gemini client now has a
+  90 s per-request limit, `GEMINI_HTTP_TIMEOUT_MS`, a judgement rather than a measurement; `maxDuration` has no principled value
+  until the owner reports the real function limit (O-3; the ledger
+  says 300 s with fluid compute is AGENT-level, a 10 s older default is possible)). What a person actually sees if
   a step hangs or is killed: the page keeps asking and is told `busy` (the lease is 10 minutes, `AUDIT_LEASE_MS`),
   gives up at its own 8 minutes with a sentence that says the audit has stopped, and the reaper stops the job at
   15 minutes (`JOB_MAX_RUN_MS`). The "three tries then `step_attempts_exceeded`" ending is NOT reachable from a

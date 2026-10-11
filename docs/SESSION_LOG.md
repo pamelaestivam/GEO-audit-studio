@@ -203,3 +203,13 @@ call with no HTTP timeout can block the queue; the breaker, counter and pacer re
 (reasons and residual exposure in `docs/PLAN_STEP_E.md` under S6, entries in TECH_DEBT); S7 is next.
 Nothing on the live site, and no real audit, can change until the owner does O-2 and O-3.
 
+**Gemini per-request time limit (2026-10-10):** the S6 scoping review argued from the code that one Gemini request that is
+accepted and never answered blocks every later Gemini call in the process (the client had no HTTP timeout and calls run
+one behind the other). This was then REPRODUCED against the built server with a fake Gemini that never answers
+(`test/geminiTimeoutE2E.test.ts`, with the limit removed: the audit never finishes and the next lookup, with the provider
+answering again, also hangs for the whole 25 s the test allows). `GEMINI_HTTP_TIMEOUT_MS` (default 90 s per request,
+applied by the SDK per attempt and while the body is read; the SDK is given no retry options, so it adds no hidden calls)
+turns it into the ordinary timeout the retry loop handles: with the limit set to 1.5 s the audit completes with 3 hits (1
+hung, 1 retry, the narrative) and the next lookup is served at once with exactly one more hit. The 90 s default is a
+judgement, not a measurement against the real provider.
+
