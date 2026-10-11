@@ -11,6 +11,7 @@
  * Needs a current dist/. Run: npx tsx test/narrativeAttributionE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
 
@@ -27,8 +28,8 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-const GEMINI_PORT = 6100 + Math.floor(Math.random() * 100);
-const APP_PORT = 6300 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(6100, 100);
+const APP_PORT = randomPort(6300, 300);
 let mode: FakeMode = 'narrative_findings';
 
 async function main() {

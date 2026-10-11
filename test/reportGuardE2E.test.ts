@@ -8,6 +8,7 @@
  * Needs a current dist/. Run: npx tsx test/reportGuardE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import { startFakeGemini, type FakeMode } from './fakeGemini';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
 
@@ -24,8 +25,8 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-const GEMINI_PORT = 7700 + Math.floor(Math.random() * 100);
-const APP_PORT = 7800 + Math.floor(Math.random() * 300);
+const GEMINI_PORT = randomPort(7700, 100);
+const APP_PORT = randomPort(7800, 300);
 let mode: FakeMode = 'narrative_invented_numbers';
 
 async function main() {

@@ -17,8 +17,10 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 import { DEFAULT_QUERY_COUNT } from '../src/queries';
 installAuthFetch();
 
@@ -41,8 +43,8 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 3500 + Math.floor(Math.random() * 200);
-const APP_PORT = 3700 + Math.floor(Math.random() * 200);
+const GEMINI_PORT = randomPort(3500, 200);
+const APP_PORT = randomPort(3700, 200);
 const APP_BASE = `http://127.0.0.1:${APP_PORT}`;
 
 function geminiSuccessBody(text: string) {
@@ -119,21 +121,25 @@ async function runAudit(body: unknown, timeoutMs = 60000) {
 
 async function waitForServer(timeoutMs = 20000): Promise<boolean> {
   const started = Date.now();
+  let lastError = '';
   while (Date.now() - started < timeoutMs) {
     try {
       const res = await fetch(`${APP_BASE}/api/health`);
       if (res.ok) return true;
-    } catch {
-      /* not up yet */
+    } catch (err: any) {
+      lastError = String(err?.cause?.message ?? err?.message ?? err); // kept: a refused port and a dead server look the same otherwise
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  console.log(`  (the health check never succeeded; last error: ${lastError || 'none, it answered but not ok'})`);
   return false;
 }
 
 async function main() {
   const fakeGemini = await startFakeGemini();
   let appServer: ChildProcess | null = null;
+  let appOut: CapturedOutput | null = null;
+  let finishedNormally = false;
 
   try {
     appServer = spawn('node', ['dist/server.cjs'], {
@@ -148,8 +154,9 @@ async function main() {
         HTTP_PROXY: '',
         HTTPS_PROXY: '',
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    appOut = captureOutput(appServer);
 
     const up = await waitForServer();
     assert('the app server starts against the fake success endpoint', up);
@@ -224,7 +231,9 @@ async function main() {
     await lookupRes.json();
     const hitsAfterLookup = fakeGemini.hitCount();
     check('the explicit brand-lookup endpoint costs exactly one Gemini call', hitsAfterLookup - hitsBeforeLookup, 1);
+    finishedNormally = true;
   } finally {
+    if (failures > 0 || !finishedNormally) printCaptured('app server', appOut);
     appServer?.kill();
     fakeGemini.server.close();
   }

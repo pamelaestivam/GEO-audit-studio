@@ -27,8 +27,10 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { randomPort } from './ports';
 import http from 'http';
 import { TEST_AUTH_ENV, installAuthFetch } from './authHelper';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 installAuthFetch();
 
 let failures = 0;
@@ -50,8 +52,8 @@ function assert(name: string, condition: boolean, detail = '') {
   }
 }
 
-const GEMINI_PORT = 3900 + Math.floor(Math.random() * 100);
-const APP_PORT = 4000 + Math.floor(Math.random() * 100);
+const GEMINI_PORT = randomPort(3900, 100);
+const APP_PORT = randomPort(4000, 100);
 const APP_BASE = `http://127.0.0.1:${APP_PORT}`;
 
 /** How many 429s the fake endpoint should serve before it starts succeeding. */
@@ -163,14 +165,16 @@ async function pollJob(jobId: string, timeoutMs = 120000) {
 
 async function waitForServer(timeoutMs = 20000): Promise<boolean> {
   const started = Date.now();
+  let lastError = '';
   while (Date.now() - started < timeoutMs) {
     try {
       if ((await fetch(`${APP_BASE}/api/health`)).ok) return true;
-    } catch {
-      /* not up yet */
+    } catch (err: any) {
+      lastError = String(err?.cause?.message ?? err?.message ?? err); // kept: a refused port and a dead server look the same otherwise
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  console.log(`  (the health check never succeeded; last error: ${lastError || 'none, it answered but not ok'})`);
   return false;
 }
 
@@ -184,6 +188,8 @@ const AUDIT_BODY = {
 async function main() {
   const fakeGemini = await startFakeGemini();
   let appServer: ChildProcess | null = null;
+  let appOut: CapturedOutput | null = null;
+  let finishedNormally = false;
 
   try {
     appServer = spawn('node', ['dist/server.cjs'], {
@@ -198,8 +204,9 @@ async function main() {
         HTTP_PROXY: '',
         HTTPS_PROXY: '',
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    appOut = captureOutput(appServer);
 
     const up = await waitForServer();
     assert('the app server starts against the fake Gemini endpoint', up);
@@ -375,7 +382,9 @@ async function main() {
       rateLimitedCallsRemaining = 0;
     }
 
+    finishedNormally = true;
   } finally {
+    if (failures > 0 || !finishedNormally) printCaptured('app server', appOut);
     appServer?.kill();
     fakeGemini.server.close();
   }
