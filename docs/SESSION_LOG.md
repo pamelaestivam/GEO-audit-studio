@@ -215,3 +215,14 @@ mutation-checked). Not proven: that all five red runs of the day were this (the 
 also fixed three bugs in the output capture (multibyte characters split across chunks, stdout and stderr fragments glued
 together, an unbounded line) and the wording of the Vercel-cap note (production did build after the cap message).
 
+## 2026-10-13: the program is put on hold, and the hold is recorded
+
+The owner asked (2026-10-11) for a well rounded place to pause, with nothing broken or lost, and said they will ask to
+resume. What was done and why: the hourly routine (`trig_015EVqEooFHDy9HVc3KkL31j`) was disabled, because its stored
+prompt says to finish any open PR and merge it and would have restarted the work; the session unsubscribed from PR #53
+events; PR #53 was left open on purpose with a handoff comment. On 2026-10-13 the owner asked for the plan to be
+recorded in the repo for tracking, so `docs/HOLD.md` was written (status, live site link, state at the hold, numbered
+resume checklist, owner-only actions, what is not proven), with pointers from `docs/PROGRAM.md` and `CLAUDE.md`, and two
+insights (I-23, I-24). State read from GitHub that day: `main` 97a3adc; PR #53 head `4de2888`, CI `test` success
+(run 38108163393) and `docker` success; EVAL PM SHIP 93 was on the earlier head `f234e9d`. No code changed.
+

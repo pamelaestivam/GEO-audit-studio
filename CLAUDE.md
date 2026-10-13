@@ -2,6 +2,9 @@
 
 ## Start here (added 2026-10-10)
 
+**If `docs/HOLD.md` says `Status: ON HOLD`, read it first and start no new work until the owner says
+resume** (the owner paused the program on 2026-10-11; it names the one open PR, the live site link and the resume steps).
+
 Before anything else read, in this order: `docs/OWNER_DIRECTIVES.md` (the owner's
 standing instructions: **$0 spend, must not fail silently, automatic deployment,
 keep records**), `docs/PROGRAM.md` (what is done, next, blocked, and the steps only

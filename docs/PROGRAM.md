@@ -6,7 +6,11 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 `docs/OWNER_DIRECTIVES.md`; the design is `docs/RELIABILITY.md`; the reasons are
 `docs/DECISIONS.md`; the history is `docs/SESSION_LOG.md`.
 
-Last updated: 2026-10-10.
+Last updated: 2026-10-13.
+
+**ON HOLD at the owner's request (2026-10-11): read `docs/HOLD.md` before doing anything.** It has the live site
+link, the exact state of the one open PR (#53, held on purpose), what is switched off, and the numbered steps to resume.
+No new work until the owner says resume.
 
 **Check this first (a failure that happened once and is fixed):** run
 `git remote get-url origin` in `/home/user/GEO-audit-studio`. It must print
