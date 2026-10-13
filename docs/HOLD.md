@@ -49,7 +49,7 @@ in the same change that resumes the work.
 3. Run a fresh-context adversarial review of the whole PR diff (agent works only in `git init` inside `mktemp -d`;
    afterwards check `git remote get-url origin` and `git log origin/main..main`), and an EVAL PM score **on the head
    being merged**. If main has moved, merge main into the branch first (expect trivial conflicts at the end of
-   `docs/INSIGHTS.md`, `docs/SESSION_LOG.md` and in `docs/PROGRAM.md`, because this record also edits them: keep both
+   `docs/INSIGHTS.md` and `docs/SESSION_LOG.md` (a trial merge showed only those two; `docs/PROGRAM.md` and `CLAUDE.md` merged cleanly), because this record also edits them: keep both
    sides; #53 adds insight I-22, which must sit before I-23 here) and re-run CI.
 4. Two optional flags from the last EVAL PM, for the owner or session to take or decline: (a) the clause
    `deadline_exceeded` in `src/errors.ts` has no test of its own, because every test string also contains 504; add a
@@ -59,7 +59,7 @@ in the same change that resumes the work.
 6. Next roadmap rows, in order: the cheap readiness check for a hung audit nobody reads (TECH_DEBT entry "hung audit
    nobody reads"), then S7 (stalled / Resume / Discard in the UI and the extra job fields on `GET /api/audit/job/:id`;
    `docs/PLAN_STEP_E.md`), then row 9's remaining page for the owner.
-7. In the same change that resumes: set the first line of this file to `RESUMED <date>`, remove the "ON HOLD" banner at the top
+7. In the same change that resumes: delete this file (git history keeps it; the pointer in `CLAUDE.md` is conditional on this file saying `Status: ON HOLD`, and the title says "paused"), remove the "ON HOLD" banner at the top
    of `docs/PROGRAM.md`, the pointer at the top of `CLAUDE.md` and the parenthesis in its Session hygiene item 6, so no file
    keeps saying "no new work". Re-enable the hourly routine only if the owner asks (`update_trigger` with
    `trigger_id` `trig_015EVqEooFHDy9HVc3KkL31j`, `enabled` true); its stored prompt is the old one and will pick up

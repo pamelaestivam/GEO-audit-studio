@@ -20,7 +20,7 @@ authorised the repair and it was done (set the URL back, fetch, reset `main` to
 `origin/main`). If it ever recurs, ask the owner to authorise those same commands rather
 than looking for another way round. History: `docs/SESSION_LOG.md`; lesson: I-13.
 
-**First action for a cold session:** run `npm ci && npm run verify` (it should report
+**First action for a cold session (not while the program is ON HOLD; see the banner above):** run `npm ci && npm run verify` (it should report
 0 failures), then take the first row marked **next** in section 2 (currently item 3).
 The owner actions in section 3 run in parallel and block only the rows that name them;
 never wait on them to do the others.
