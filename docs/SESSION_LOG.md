@@ -225,4 +225,6 @@ recorded in the repo for tracking, so `docs/HOLD.md` was written (status, live s
 resume checklist, owner-only actions, what is not proven), with pointers from `docs/PROGRAM.md` and `CLAUDE.md`, and two
 insights (I-23, I-24). State read from GitHub that day: `main` 97a3adc; PR #53 head `4de2888`, CI `test` success
 (run 38108163393) and `docker` success; EVAL PM SHIP 93 was on the earlier head `f234e9d`. No code changed.
+Read again on 2026-10-13 with `get_trigger`: the routine shows `enabled: false`, `updated_at` 2026-10-11T03:27:08Z, last fired
+2026-10-11T02:37:32Z. The unsubscribe from #53 is known from the handoff comment on #53, not re-read.
 

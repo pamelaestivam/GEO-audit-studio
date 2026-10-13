@@ -30,7 +30,7 @@ in the same change that resumes the work.
 
 | Thing | State |
 |---|---|
-| `main` | 97a3adc (PRs #49, #50, #51, #52 merged). Nothing else in flight on `main`. |
+| `main` | 97a3adc (PRs #49, #50, #51, #52 merged) before this record. The only other open PR is #54, which is this record (open until it merges). Nothing else in flight on `main`. |
 | PR #53 `claude/gemini-call-timeout` | open, head `4de2888d5ed194e3ab45c83371e5f4dfd08418b8`, 6 commits, **held on purpose**. Gives each Gemini request a time limit (`GEMINI_HTTP_TIMEOUT_MS`, default 90 s) so one request that never answers cannot hold every later call behind it for about five minutes. |
 | CI on `4de2888` | `test` **success** (run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38108163393) and `docker` success. The Vercel preview is refused by the free plan's 100-deployments-a-day cap (TECH_DEBT 2.16); CI `test` is the gate. |
 | Adversarial review | earlier rounds found real issues, all fixed; the last round said OK TO MERGE (one nit, fixed). That review read an earlier head, not `4de2888`. |
@@ -58,7 +58,12 @@ in the same change that resumes the work.
 5. Merge #53 as a merge commit pinned to the real head sha (`git rev-parse`, never typed from memory).
 6. Next roadmap rows, in order: the cheap readiness check for a hung audit nobody reads (TECH_DEBT entry "hung audit
    nobody reads"), then S7 (stalled / Resume / Discard in the UI and the extra job fields on `GET /api/audit/job/:id`;
-   `docs/PLAN_STEP_E.md`), then row 9's remaining page for the owner. Then re-enable the routine only if the owner asks.
+   `docs/PLAN_STEP_E.md`), then row 9's remaining page for the owner.
+7. In the same change that resumes: set the first line of this file to `RESUMED <date>`, remove the "ON HOLD" banner at the top
+   of `docs/PROGRAM.md`, the pointer at the top of `CLAUDE.md` and the parenthesis in its Session hygiene item 6, so no file
+   keeps saying "no new work". Re-enable the hourly routine only if the owner asks (`update_trigger` with
+   `trigger_id` `trig_015EVqEooFHDy9HVc3KkL31j`, `enabled` true); its stored prompt is the old one and will pick up
+   `docs/PROGRAM.md`.
 
 ## Owner-only actions still open (unchanged by the hold; `docs/PROGRAM.md` section 3 has the steps)
 
