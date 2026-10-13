@@ -6,7 +6,11 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 `docs/OWNER_DIRECTIVES.md`; the design is `docs/RELIABILITY.md`; the reasons are
 `docs/DECISIONS.md`; the history is `docs/SESSION_LOG.md`.
 
-Last updated: 2026-10-10.
+Last updated: 2026-10-13.
+
+**ON HOLD at the owner's request (2026-10-11): read `docs/HOLD.md` before doing anything.** It has the live site
+link, the exact state of the one open PR (#53, held on purpose), what is switched off, and the numbered steps to resume.
+No new work until the owner says resume.
 
 **Check this first (a failure that happened once and is fixed):** run
 `git remote get-url origin` in `/home/user/GEO-audit-studio`. It must print
@@ -16,7 +20,7 @@ authorised the repair and it was done (set the URL back, fetch, reset `main` to
 `origin/main`). If it ever recurs, ask the owner to authorise those same commands rather
 than looking for another way round. History: `docs/SESSION_LOG.md`; lesson: I-13.
 
-**First action for a cold session:** run `npm ci && npm run verify` (it should report
+**First action for a cold session (not while the program is ON HOLD; see the banner above):** run `npm ci && npm run verify` (it should report
 0 failures), then take the first row marked **next** in section 2 (currently item 3).
 The owner actions in section 3 run in parallel and block only the rows that name them;
 never wait on them to do the others.

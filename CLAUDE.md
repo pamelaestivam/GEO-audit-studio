@@ -2,6 +2,9 @@
 
 ## Start here (added 2026-10-10)
 
+**If `docs/HOLD.md` says `Status: ON HOLD`, read it first and start no new work until the owner says
+resume** (the owner paused the program on 2026-10-11; it names the one open PR, the live site link and the resume steps).
+
 Before anything else read, in this order: `docs/OWNER_DIRECTIVES.md` (the owner's
 standing instructions: **$0 spend, must not fail silently, automatic deployment,
 keep records**), `docs/PROGRAM.md` (what is done, next, blocked, and the steps only
@@ -44,7 +47,7 @@ unreported. They apply here with the same force.
    A review that stopped halfway looks identical to one that found little. If a limit,
    cap or interruption ended it, the next session reruns it from the start and keeps
    whatever partial output exists only as an input.
-6. **Continuity.** A scheduled routine was created on 2026-10-10 (id in
+6. **Continuity.** (**The routine is disabled while the program is on hold; see `docs/HOLD.md`.**) A scheduled routine was created on 2026-10-10 (id in
    `docs/SESSION_LOG.md`; check it still exists with `list_triggers` before relying on it) to
    wake the session hourly with instructions to pick up `docs/PROGRAM.md`. It must do real work only
    when there is some, and must never take outward actions that need the owner. Stop
