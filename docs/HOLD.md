@@ -12,7 +12,7 @@ in the same change that resumes the work.
 - Do **not** re-enable the hourly routine `trig_015EVqEooFHDy9HVc3KkL31j` (disabled 2026-10-11). Its stored prompt says
   "finish any open PR and merge it" and knows nothing about this hold, so turning it on would restart the work.
   Check with `list_triggers` or `get_trigger` that `enabled` is `false`.
-- The session is not subscribed to PR #53 events. Nothing is watching it.
+- The session unsubscribed from PR #53 events on 2026-10-11 (said in the handoff comment on #53). Nothing is watching it, so a review or CI result arriving there will not wake anyone.
 
 ## The live site (link and what is true about it)
 
@@ -21,7 +21,7 @@ in the same change that resumes the work.
 - It loaded and its API answered on 2026-10-10 (live-check run
   https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/38033024298, read from the Actions page).
 - It cannot run a real audit yet: production has no engine key and no sign-in configuration (issue #36; owner
-  actions O-2 and O-3 in `docs/PROGRAM.md` section 3). The daily live check is red for that reason, which is correct.
+  actions O-2 and O-3 in `docs/PROGRAM.md` section 3). The daily live check was red for that reason on 2026-10-10, which was correct; the days since were not read.
 - Not verified from here: this workspace cannot reach `vercel.app`, so the page itself has not been opened by the
   assistant. Whether the newest `main` (97a3adc) is the Production deployment was not read; `64bc0ae` showed a
   success status at 2026-10-10 23:21 UTC.
@@ -38,6 +38,8 @@ in the same change that resumes the work.
 
 ## Resume checklist (do these in order; each is executable with no memory of the conversation)
 
+**Only after the owner has said "resume" in a message. Until then none of this is to be run, and #53 is not to be merged.**
+
 1. In `/home/user/GEO-audit-studio` run `git remote get-url origin`; it must print
    `https://github.com/pamelaestivam/GEO-audit-studio`. If not, stop and ask the owner to authorise the repair
    (`docs/PROGRAM.md` top, I-13, I-14).
@@ -48,7 +50,7 @@ in the same change that resumes the work.
    afterwards check `git remote get-url origin` and `git log origin/main..main`), and an EVAL PM score **on the head
    being merged**. If main has moved, merge main into the branch first (expect trivial conflicts at the end of
    `docs/INSIGHTS.md`, `docs/SESSION_LOG.md` and in `docs/PROGRAM.md`, because this record also edits them: keep both
-   sides) and re-run CI.
+   sides; #53 adds insight I-22, which must sit before I-23 here) and re-run CI.
 4. Two optional flags from the last EVAL PM, for the owner or session to take or decline: (a) the clause
    `deadline_exceeded` in `src/errors.ts` has no test of its own, because every test string also contains 504; add a
    case with a bare `DEADLINE_EXCEEDED` or drop the clause; (b) read the PR body once to confirm it repeats the

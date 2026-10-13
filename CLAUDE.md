@@ -47,7 +47,7 @@ unreported. They apply here with the same force.
    A review that stopped halfway looks identical to one that found little. If a limit,
    cap or interruption ended it, the next session reruns it from the start and keeps
    whatever partial output exists only as an input.
-6. **Continuity.** A scheduled routine was created on 2026-10-10 (id in
+6. **Continuity.** (**The routine is disabled while the program is on hold; see `docs/HOLD.md`.**) A scheduled routine was created on 2026-10-10 (id in
    `docs/SESSION_LOG.md`; check it still exists with `list_triggers` before relying on it) to
    wake the session hourly with instructions to pick up `docs/PROGRAM.md`. It must do real work only
    when there is some, and must never take outward actions that need the owner. Stop
