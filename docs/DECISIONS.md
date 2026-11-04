@@ -5,6 +5,45 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-11-04 - PostgreSQL store behind the Store contract, and the rules for several processes sharing one database
+
+**Decision (assistant, under the standing delegation recorded below; the owner asked for the Supabase database on
+2026-10-10 and on 2026-11-04 said to move on once the project existed):** build `PostgresStore` as a third
+implementation of the existing `Store` interface, chosen by `DATABASE_URL` and winning over `DATA_DIR`/serverless.
+Rules that follow from several processes sharing one database server (every Vercel instance is one):
+1. The `pg` driver with plain queries and transactions only (no named prepared statements, no session state), so a
+   transaction-mode pooler works. JSON stays TEXT and timestamps BIGINT milliseconds, so a row means the same thing in
+   both stores and the two schemas can be compared column by column (a test does).
+2. Schema upgrades run under an advisory lock inside one transaction, and a database newer than the server is refused.
+3. A step claim locks the job's row (`FOR UPDATE`) while it decides, so two processes take turns.
+4. A booting process never releases other holders' claims on a shared database (`mayReleaseOtherHoldersAtBoot` gains
+   `shared`): they expire by themselves (`AUDIT_LEASE_MS`). Releasing them was right only for one process per file.
+5. A retried click that reaches two processes at once makes one job: the unique index refuses the second, and the
+   second answers as a replay of the first (found by the end-to-end test: without it the second got a 500).
+6. A connection that dies while a transaction holds it is an error for that call, and the broken connection is discarded:
+   the driver's pool removes its own error listener while a client is checked out, so without one the whole process
+   ended (found by the independent review; tested by killing the backend mid-claim).
+7. Who drives a job is read from its plan text by a small SQL function that answers "unknown" for text JSONB refuses, not
+   by a cast: a person's query text (a NUL, a lone surrogate) reached the plan and broke the running count for everyone
+   (found by the review). A pool that does not return BIGINT as numbers is refused at start; fractions are rounded.
+8. The tests run against a real PostgreSQL, not an emulation: the contract suite on every store, and the built server
+   as two instances on one database. Locally they need `TEST_DATABASE_URL` (`scripts/pg-test-cluster.sh`); CI starts the
+   runner's PostgreSQL and sets `REQUIRE_POSTGRES=1`, so a missing database there fails the gate.
+
+**Alternatives considered and rejected:** the Supabase client library or Data API (the app needs a connection, not a
+web API; the Data API is switched off on the project so no table is reachable without a key); an ORM (a second
+description of the schema to keep in step with SQLite); PGlite or another emulation for the tests (it cannot run two
+connections, which is exactly the property being added); a container service in CI (a registry that rate-limits shared
+runners, the reason Docker left the required checks); Vercel's own storage products (the owner already chose Supabase).
+
+**Who weighed in:** no seat debate was held; this is the already-decided step f of `docs/RELIABILITY.md` and the design
+follows from the existing contract. Fresh-context adversarial review and EVAL PM score the PR as usual.
+
+**Not verified, said plainly:** nothing has run against Supabase's pooler or on Vercel; the certificate is not verified by
+default; free Supabase has no backups (`TECH_DEBT.md` 2.17).
+
+---
+
 ## 2026-10-10 - Owner answers to the independent review; team decisions A to G; hosting reversal
 
 **Decision (owner, 2026-10-10, quoted in `docs/OWNER_DIRECTIVES.md`):** spend is $0;

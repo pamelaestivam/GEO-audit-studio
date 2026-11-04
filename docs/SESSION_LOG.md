@@ -215,3 +215,72 @@ mutation-checked). Not proven: that all five red runs of the day were this (the 
 also fixed three bugs in the output capture (multibyte characters split across chunks, stdout and stderr fragments glued
 together, an unbounded line) and the wording of the Vercel-cap note (production did build after the cap message).
 
+
+## 2026-10-28 to 2026-11-04: the owner's set-up walk-through, three advisories cleared, the PostgreSQL store built
+
+**What the owner did (all from their own screens, relayed as screenshots; the assistant could reach none of these sites):**
+created a Gemini key in a project with no billing (AI Studio showed "Free tier"; one read-only request with it
+returned 200); added `SESSION_SECRET` and `ACCESS_CODES` in Vercel and redeployed (the first redeploy attempt on
+2026-10-28 was refused by Vercel's Hobby cap, "more than 100 in 24 hours", account-wide; a later one went through and
+the owner signed in on 2026-10-29); found the signed-in app saying no answer engine is configured, and replaced
+`GEMINI_API_KEY` in Vercel (the redeploy to pick it up was still to be done when this was written); turned on
+"Automatically delete head branches" (the ruleset step is not available on the free plan for a private repository, so
+`PROGRAM.md` O-5 step 2 stays on its documented fallback: CI and the gates in `CLAUDE.md`); created the Supabase project
+(Data API off, automatic RLS on, GitHub link empty) and said to move on without storing the connection string anywhere.
+
+**What was found:** three advisories published after 2026-10-10 (body-parser high, qs moderate, vite high) made the CI audit
+step fail on every branch, `main` included. Fixed alone first, as a lockfile-only change: PR #55 (merge commit df04c7c):
+independent review APPROVE with no findings (it hashed the tarballs itself), EVAL PM 93/100 SHIP, CI green. Local run:
+1,845 checks, 0 failures (the sandbox's Chromium build differed from the one Playwright 1.56.1 asks for; the browser
+suites ran with an alias of the installed build, outside the repository).
+
+**What was built:** `src/postgresStore.ts` (see `docs/DECISIONS.md` 2026-11-04 and `TECH_DEBT.md` 2.17), wired through
+`openStore({ databaseUrl })` from `DATABASE_URL`; `mayReleaseOtherHoldersAtBoot` learned `shared`; a duplicate retried click
+reaching two processes is a replay (found by the end-to-end test: a 500 without it, 2 of 3 runs). Tests: the contract
+suite on a real PostgreSQL 16.15 (a throwaway local server, `scripts/pg-test-cluster.sh`), `test/postgresConfig.test.ts`
+(pure), `test/postgresE2E.test.ts` (the built server, two processes, one database). CI starts the runner's PostgreSQL and
+sets `REQUIRE_POSTGRES=1`. Deliberate breakages (no row lock, no owner guard, no duplicate-click handling) each failed a
+check. NOT done: nothing has touched Supabase or Vercel with this code.
+
+**First independent review of the PostgreSQL store: CHANGES REQUESTED, all fixed (2026-11-04).** The reviewer (fresh context, a
+`git init` in a temporary directory, its own databases) confirmed the main design held (it removed the advisory lock and the
+row lock and saw checks fail; a 120-worker stress run gave no duplicate claim) and found: (1) a connection that dies while the
+store holds it in a transaction ended the whole server process (an unhandled 'error' event: the pool removes its own listener
+while a client is checked out); (2) one person's query text (a NUL, a lone surrogate) reached the plan and made the running-count
+query fail for everyone, because of a JSONB cast; my own TECH_DEBT claim that this needed a hand-edited row was wrong;
+(3) the daily budgets and the concurrent cap are not enforced across instances (documented now, not fixed); (4) a retried click
+that reached two servers at the cap got a 429 instead of a replay (fixed); (5) the start-up claim rule had no test (added; breaking
+it now fails); (6) two "never leaks the password" checks could not fail because the test hosts gave messages with no secret (a
+pretend PostgreSQL server now returns the address and password in its error text); (7) the duplicate-click end-to-end check was a
+coin flip (now twelve and fifteen rounds); plus startup parameters a pooler may refuse, fractional times, a pool that returns
+BIGINT as text, and the SQL_ASCII encoding of the local test server (now UTF8). Full suite after the fixes: 2,058 checks, 0
+failures, 0 skipped; audit 0. A second fresh-context review of the fixes follows before merge.
+
+**Second independent review: the eight fixes held, one hazard and three small things found, all fixed (2026-11-04).** The reviewer
+confirmed each fix by reproducing it and by breaking it (14 mutations, each failed a check; 28 of 28 end-to-end checks in seven runs,
+three of them under CPU load) and found: (1) 17 test suites that start the built server pass the shell's environment on, so a
+`DATABASE_URL` exported in a shell (the variable DEPLOYMENT 4b tells the owner to set) would make a test run write into that real
+database and make the SQLite durability suites silently test PostgreSQL. `TEST_AUTH_ENV` now blanks it, `scripts/prod-install-check.sh`
+does too, and `test/testIsolation.test.ts` fails when a suite that starts the server does not (run with a bogus address exported, a
+suite ignored it and passed); (2) the plan-driver function had been added by editing the first migration, against the file's own rule:
+it is migration 2 now (`CREATE OR REPLACE`); (3) a plan the JSON cast cannot read held a concurrency slot until the run-time limit:
+the function now reads the driver key from the text, so it leaves the count when quiet, as on SQLite; (4) a claim waiting on a lock
+took two query time limits to be refused: a timed-out connection is now closed instead of rolled back (the server's backend can still
+wait for the lock until its holder lets go; PostgreSQL does not notice a closed connection while blocked, which my first version of the
+test wrongly asserted and which the run showed to be impossible). Full suite: 2,067 checks, 0 failures, 0 skipped; audit 0.
+
+**Re-check of the second round's fixes (2026-11-04):** findings 2 to 4 held (a version-1 database upgrades cleanly with six
+simultaneous starts; the text fallback could not be made to match typed text; a timed-out claim is refused after one limit and the
+pool recovers). Finding 1 was only partly closed: `test/vercelServerless.test.ts` builds the app inside the test process, so an
+exported `DATABASE_URL` made it open and migrate that database (reproduced: 5 tables), and the guard could not see that shape. The
+test now removes the variable itself (0 tables with it exported; 5 with the line deleted), and the guard also flags a test that
+imports `../server` or `../api` without doing so, ignores comments, and no longer accepts the bare word DATABASE_URL as isolation
+(16 checks, each shape has a fixture). Not tested, said plainly: upgrading a database made by the first commit of this branch
+(checked once by the reviewer's own script; no database has ever been made by it).
+
+**Final confirmation (2026-11-04):** the reviewer APPROVED commit 444da8a (the `vercelServerless` leak closed: 0 tables with the variable
+exported, on that suite and two others) and noted the guard counted per file, not per server start: removing the spread from the second
+spawn of `quotaBreakerE2E` still passed. It now requires one `...TEST_AUTH_ENV` per call that starts the bundle (18 checks; the same
+mutation is named by it, and restored). Still true and not covered: a spelling of the in-process import with an extension
+(`'../server.ts'`) is not matched, and an env built far from the spawn could satisfy the count without being used; the repository's
+convention (no extension, the spread beside the spawn) makes both contrived.

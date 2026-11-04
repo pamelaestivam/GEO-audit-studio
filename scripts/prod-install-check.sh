@@ -23,7 +23,7 @@ cp -r "$ROOT/dist" "$WORK/dist"
 cd "$WORK"
 npm ci --omit=dev --no-audit --no-fund >/dev/null
 
-NODE_ENV=production PORT="$PORT" DATA_DIR="$DATA" GEMINI_API_KEY=not-a-real-key \
+NODE_ENV=production PORT="$PORT" DATA_DIR="$DATA" DATABASE_URL= GEMINI_API_KEY=not-a-real-key \
   SESSION_SECRET="prod-install-check-secret-0123456789abcdef" ACCESS_CODES="install-check-code" \
   node dist/server.cjs >"$WORK/server.log" 2>&1 &
 PID=$!
@@ -46,7 +46,7 @@ TOKEN=$(curl -fsS -X POST "http://127.0.0.1:$PORT/api/auth/login" -H 'Content-Ty
 curl -sS --max-time 90 "http://127.0.0.1:$PORT/api/audit/readiness" -H "Authorization: Bearer $TOKEN" >/dev/null || true
 
 start_server() {
-  NODE_ENV=production PORT="$PORT" DATA_DIR="$DATA" GEMINI_API_KEY=not-a-real-key \
+  NODE_ENV=production PORT="$PORT" DATA_DIR="$DATA" DATABASE_URL= GEMINI_API_KEY=not-a-real-key \
     SESSION_SECRET="prod-install-check-secret-0123456789abcdef" ACCESS_CODES="install-check-code" \
     node dist/server.cjs >>"$WORK/server.log" 2>&1 &
   PID=$!

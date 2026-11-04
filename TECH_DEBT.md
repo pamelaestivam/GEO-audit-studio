@@ -751,6 +751,63 @@ the negated `if`; `return` without a semicolon; a template literal with text at 
 literal in the condition ahead of `=== false`; a status written only inside a string. A fake-server handler that returns
 after a `!`/`!==` check needs `// harness-ok: <why>`.
 
+### 2.17 The PostgreSQL store: what is proven and what is not (medium until it has run on the real services)
+
+Built 2026-11-04 (`src/postgresStore.ts`). PROVEN against a real PostgreSQL 16.15 server (local, and in CI): the whole
+store contract suite (the same one memory and SQLite pass); six stores opening an empty database at once; a database
+newer than the server refused; state surviving a restart; eight claims from two stores on one step give exactly one
+`claimed` (removing the row lock makes that check fail); the same idempotency key from two stores refused by the
+database; the same column names as the SQLite schema; the built server on one shared database as two instances (the
+same click sent to both makes one job; an audit advanced alternately by both finishes with exactly the planned
+calls; a server killed mid-call is taken over after its claim expires with the repeat recorded). NOT proven:
+
+- **Nothing has run against Supabase's pooler or on Vercel.** Whether the pooler accepts this driver's queries and
+  transactions, whether Vercel can reach it over the network it uses (the Supabase panel says the transaction pooler
+  uses IPv6 by default and offers a paid IPv4 add-on; this app does not buy it, and the shared pooler is expected to
+  accept IPv4), and the timing of a cold start with a database round trip are all unmeasured. The first deploy with
+  `DATABASE_URL` is that measurement (`docs/DEPLOYMENT.md` 4b says what to try if it fails).
+- **The server's certificate is not verified by default.** The connection is encrypted, but the pooler's certificate
+  chain is not in Node's trust store, so a remote host gets `rejectUnauthorized: false` unless the address says
+  `sslmode=verify-full` or `verify-ca`. Someone able to intercept the network path could impersonate the database.
+  Closing it needs the provider's CA certificate supplied to the driver.
+- **No backups.** Supabase's free plan keeps none (the dashboard of the owner's other project says "No backups"), and
+  `scripts/backup.mjs` copies a SQLite file only. A lost project is lost audits.
+- **Per-process state is still per-process** (the pacer, quota breaker, call counter and limiters; PLAN_STEP_E S6).
+  On Vercel each instance still counts alone, and the Gemini free quota is shared by all of them.
+- **The `inline` driver with several processes on one database is not a supported shape.** Leases keep two processes
+  from making the same call, but a booting second process also takes up the first one's inline audits. Vercel uses
+  the `client` driver, which does not have this.
+- **Daily budgets and the concurrent-audit cap are checked, then the job is inserted, with no lock shared between
+  processes.** Found by the independent review (two servers, `MAX_CONCURRENT_AUDITS=1`, two different people submitting at
+  the same moment: both accepted, two jobs running). With several instances a burst can overshoot `USER_AUDITS_PER_DAY`,
+  `GLOBAL_AUDITS_PER_DAY` and the cap by about the number of simultaneous submits. The same retried click is handled (it
+  is one job; tested 12 + 15 rounds). Closing the rest means making admission and the insert one transaction under an
+  advisory lock (PLAN_STEP_E S6). The real $0 control is still the Google project without billing.
+- **Nothing retries a dead connection.** A connection that dies while the store holds it in a transaction is an error for
+  that call only (found by the review, where it ended the whole process; fixed and tested). But after a Vercel freeze the
+  first query on a pooled connection the pooler has already closed can fail once; single statements are not retried
+  because some are not idempotent. Not measured on Vercel.
+- **A cold start that cannot reach the database runs on memory for that instance's life** (the app is built once per
+  instance). The public note and `/api/audit/readiness` say so, but nothing tries again, and jobs made on that instance
+  are invisible to the others. Took 8 s to give up in the review's test.
+- **`AUDIT_LEASE_MS` defaults to 10 minutes.** A Vercel function killed by its time limit in the middle of a call leaves its
+  claim on the step until it expires, so that audit waits that long (`docs/DEPLOYMENT.md` 4b suggests a value; not measured).
+- **A query that waits on a lock past the 15-second limit is refused once, and its connection is closed, but the server's
+  backend can keep waiting for that lock until its holder lets go** (PostgreSQL does not notice a closed connection while it
+  waits on a lock, unless `client_connection_check_interval` is set). Locks here are held for milliseconds by ordinary
+  claims, so this needs a stuck holder.
+- **A raw NUL character in a plain text column is refused by PostgreSQL** (an email, an incident detail), so that person's
+  calls fail with a 500; SQLite stores it. JSON text (plans, results) is not affected: the plan-driver lookup is a function
+  that reads the driver key from the text when JSONB refuses it, after the review showed one person's query text could
+  otherwise break the running count for everyone (fixed and tested; migration 2, so a database made by an earlier
+  commit of this branch gets it on start).
+- **The readiness check puts the driver's own message in its detail** when the store cannot be written (signed-in
+  endpoint only; it does not contain the password, it may name the host).
+- **A 15-second client-side query limit and a 3-connection pool are guesses** for a transaction pooler, not measured
+  (server-side `statement_timeout` and `application_name` were dropped: a pooler may refuse start-up parameters).
+- **The local test server was first created with the SQL_ASCII encoding** (the sandbox locale); Supabase uses UTF8. The
+  review ran the whole contract suite on both and it passes; `scripts/pg-test-cluster.sh` now creates UTF8.
+
 ### 2.16 Vercel's free deployment cap was reached on 2026-10-10 (low; owner may want to look)
 
 At 23:08 UTC on 2026-10-10 Vercel reported on PR #51: "Resource is limited - try again in 24 hours (more than 100, code:

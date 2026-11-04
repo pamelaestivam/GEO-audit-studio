@@ -330,6 +330,17 @@ have to be rediscovered from scratch, not so it can be skipped.
   once and says so (a repeated call and an incident); one killed three times on the same step stops with a sentence
   and the calls are capped; a page-driven audit carries on when the page asks again; a job with no plan is failed at
   boot with a code and a sentence (needs a current `dist/`)
+- `npx tsx test/postgresConfig.test.ts` — reading `DATABASE_URL` and scrubbing it from text: TLS choice by `sslmode`/host, refusals that
+  never repeat the address (pure checks, no database)
+- `export TEST_DATABASE_URL=$(bash scripts/pg-test-cluster.sh start)` — a throwaway local PostgreSQL for the next two commands (needs the
+  `postgresql` server programs installed; without `TEST_DATABASE_URL` they print `SKIP ... NOT RUN`, and CI sets `REQUIRE_POSTGRES=1`)
+- `npx tsx test/store.test.ts` also runs the whole contract suite on the PostgreSQL store when `TEST_DATABASE_URL` is set: six stores
+  opening at once, a newer database refused, restart survival, eight simultaneous claims from two stores give one, the same key from
+  two stores refused, the same columns as SQLite, `openStore` fallbacks that never leak the address
+- `npx tsx test/postgresE2E.test.ts` — the real built server, two processes on one PostgreSQL (`AUDIT_DRIVER=client`): the same click
+  sent to both makes one job; an audit advanced alternately by both finishes with the planned calls; a server killed mid-call is taken
+  over after its claim expires with the repeat recorded; nothing lost when every server is killed; readiness says postgres (needs a
+  current `dist/` and `TEST_DATABASE_URL`)
 - `npx tsx test/recentTrouble.test.ts` — the "recent trouble" sentence the deep readiness check reports: quiet is healthy, a step that threw or ran out of tries is a fault, restarts and slow audits are noted but are not (pure checks; the end-to-end proof is in `auditStepsE2E`)
 - `npx tsx test/testHarness.test.ts` — a guard on the tests themselves: no test may `return` early after a failed check without setting an exit status (that printed FAIL and exited 0, so the suite stayed green without having run the test; source scan, checked against fixtures of each shape)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the

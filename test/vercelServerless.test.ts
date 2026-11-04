@@ -69,6 +69,11 @@ async function main() {
   // branch instead of the two branches actually in production.
   process.env.NODE_ENV = 'production';
 
+  // This test builds the app inside its own process, so it reads this process's environment directly: a DATABASE_URL
+  // exported in the developer's shell would make it open (and migrate) that real database, and stop testing the
+  // "serverless host without a database means memory" path it exists to check. test/testIsolation.test.ts requires this.
+  delete process.env.DATABASE_URL;
+
   // Must be set before server.ts is imported: its top-level `if
   // (!process.env.VERCEL) startServer()` guard reads this at import time,
   // and if it were unset here the import would bind a real app.listen()

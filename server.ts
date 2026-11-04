@@ -203,7 +203,7 @@ async function buildApp() {
   const dataDir =
     process.env.DATA_DIR ||
     (process.env.NODE_ENV !== 'production' && !process.env.VERCEL ? path.join(process.cwd(), 'data') : undefined);
-  const store = await openStore({ dataDir, serverless: !!process.env.VERCEL });
+  const store = await openStore({ databaseUrl: process.env.DATABASE_URL, dataDir, serverless: !!process.env.VERCEL });
   if (store.info().note) console.warn(`[store] ${store.info().note}`);
   if (store.info().durable) {
     // No audit started by a previous process can still be running. A job made before audits were run as steps
@@ -1968,12 +1968,20 @@ Return valid JSON matching the schema.`;
           if (AUDIT_DRIVER === 'inline') void driveInline(job.id);
           return { id: job.id, replayed: false };
         });
-      } catch (err) {
-        if (err instanceof AdmissionError) {
+      } catch (err: any) {
+        // Two processes that share a database can both pass the lookup above for the same retried click. One of them
+        // wins: the other is then refused either by the unique index on (owner, key) when it inserts, or by the caps
+        // because the winner's job is already counted. Either way its click is a replay of the winner's job, not an error.
+        const lostRace = err instanceof AdmissionError || err?.code === '23505' || /duplicate idempotency key/.test(String(err?.message));
+        const raced = idemKey && lostRace ? await store.findJobByKey(owner, idemKey) : null;
+        if (raced) {
+          outcome = { id: raced.id, replayed: true };
+        } else if (err instanceof AdmissionError) {
           if (err.retryAfterSeconds) res.setHeader('Retry-After', String(err.retryAfterSeconds));
           return res.status(err.status).json({ error: err.message });
+        } else {
+          throw err;
         }
-        throw err;
       }
 
       if (outcome.replayed) {
@@ -2137,7 +2145,7 @@ Return valid JSON matching the schema.`;
    */
   async function afterListening() {
     if (!store.info().durable) return;
-    if (mayReleaseOtherHoldersAtBoot({ durable: true, serverless: !!process.env.VERCEL })) {
+    if (mayReleaseOtherHoldersAtBoot({ durable: true, serverless: !!process.env.VERCEL, shared: store.info().kind === 'postgres' })) {
       const released = await store.releaseLeasesNotHeldBy(store.instanceId);
       if (released > 0) console.warn(`[store] released ${released} step lease(s) held by a previous process.`);
     }

@@ -74,6 +74,7 @@ check('...skipped and failed steps count as finished but not as calls made', sum
 
 // ---- a booting server releases other holders' claims only where it alone owns the database
 check('a durable store on a host that runs one process: other holders\' claims are released at boot', mayReleaseOtherHoldersAtBoot({ durable: true, serverless: false }), true);
+check('...never where several processes share one database server (PostgreSQL): their claims are live and expire on their own', [mayReleaseOtherHoldersAtBoot({ durable: true, serverless: false, shared: true }), mayReleaseOtherHoldersAtBoot({ durable: true, serverless: true, shared: true })], [false, false]);
 check('...never on a serverless host (many instances may share the store), nor with no durable store', [mayReleaseOtherHoldersAtBoot({ durable: true, serverless: true }), mayReleaseOtherHoldersAtBoot({ durable: false, serverless: false }), mayReleaseOtherHoldersAtBoot({ durable: false, serverless: true })], [false, false, false]);
 
 console.log(failures === 0 ? '\nAll audit step checks passed.' : `\n${failures} check(s) failed.`);

@@ -6,14 +6,16 @@
  * and a refresh destroyed a finished (paid-for) audit (TECH_DEBT.md 2.1, 2.3,
  * 1.4c). This module is the one place that state lives.
  *
- * Two implementations behind one interface:
+ * Three implementations behind one interface:
  *  - SQLite (`node:sqlite`, built into Node 22 - no dependency): survives
  *    restarts. Right for one always-on process with a persistent disk.
- *  - Memory: honest about being non-durable (`durable: false`), used on
- *    serverless hosts that have no disk and in tests.
- * The interface is async so a Postgres implementation can replace SQLite
- * later without touching callers (a second *instance* needs that; SQLite is
- * single-host by nature).
+ *  - PostgreSQL (`src/postgresStore.ts`, chosen by DATABASE_URL): survives
+ *    restarts and is shared by several processes, so serverless hosts get a
+ *    durable store too.
+ *  - Memory: honest about being non-durable (`durable: false`), used when
+ *    nothing durable is configured and in tests.
+ * The interface is async so the implementations are interchangeable for
+ * callers; one contract suite (test/store.test.ts) runs against all three.
  */
 
 import fs from 'fs';
@@ -205,7 +207,7 @@ export interface AuditSummary {
 }
 
 export interface StoreInfo {
-  kind: 'sqlite' | 'memory';
+  kind: 'sqlite' | 'postgres' | 'memory';
   /** True only when state survives a process restart. */
   durable: boolean;
   /** Why this is not the store the operator probably wanted, when it is not. */
@@ -339,7 +341,7 @@ function jsonCopy<T>(v: T): T {
 }
 
 /** Refuses a plan the database would refuse, so both stores reject the same inputs. */
-function assertPlannedSteps(steps: PlannedStep[]) {
+export function assertPlannedSteps(steps: PlannedStep[]) {
   const kinds = ['collect', 'narrative', 'finalize'];
   steps.forEach((st, i) => {
     if (!st || typeof st.key !== 'string' || st.key === '' || !kinds.includes(st.kind)) {
@@ -348,11 +350,11 @@ function assertPlannedSteps(steps: PlannedStep[]) {
   });
 }
 
-function clampLimit(limit: number | undefined): number {
+export function clampLimit(limit: number | undefined): number {
   return Number.isInteger(limit) && (limit as number) >= 0 ? (limit as number) : 50;
 }
 
-function cutIncident(detail: string): string {
+export function cutIncident(detail: string): string {
   // Cut by whole characters (code points) so an emoji is never split into a lone half.
   const chars = Array.from(String(detail ?? ''));
   return chars.length > MAX_INCIDENT_DETAIL ? `${chars.slice(0, MAX_INCIDENT_DETAIL - 3).join('')}...` : chars.join('');
@@ -371,7 +373,7 @@ function retryWhileLocked(fn: () => void) {
   }
 }
 
-function newInstanceId(): string {
+export function newInstanceId(): string {
   return `inst-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -697,7 +699,7 @@ export const MIGRATIONS: string[] = [
 
 type Row = Record<string, any>;
 
-function rowToJob(r: Row): StoredJob {
+export function rowToJob(r: Row): StoredJob {
   return {
     id: r.id,
     owner: r.owner,
@@ -717,7 +719,7 @@ function rowToJob(r: Row): StoredJob {
   };
 }
 
-function rowToStep(r: Row): JobStep {
+export function rowToStep(r: Row): JobStep {
   return {
     jobId: r.job_id,
     seq: r.seq,
@@ -1055,6 +1057,11 @@ export class SqliteStore implements Store {
 // ---------------------------------------------------------------------------
 
 export interface OpenStoreOptions {
+  /**
+   * A PostgreSQL connection address (DATABASE_URL). When set it wins over `dataDir` and over `serverless`: a hosted
+   * database is the one durable store a host with no disk can have. It carries a password, so it is never logged.
+   */
+  databaseUrl?: string;
   /** Directory for the database file. Unset means "no durable storage configured". */
   dataDir?: string;
   /** Hosts with no usable disk (Vercel) cannot be durable; say so instead of failing. */
@@ -1070,14 +1077,31 @@ export interface OpenStoreOptions {
 export async function openStore(opts: OpenStoreOptions = {}): Promise<Store> {
   const log = opts.log ?? ((m: string) => console.warn(m));
 
+  if (opts.databaseUrl && opts.databaseUrl.trim() !== '') {
+    const { createPgPool, PostgresStore, scrubDbText } = await import('./postgresStore.js');
+    let pool: Awaited<ReturnType<typeof createPgPool>> | undefined;
+    try {
+      pool = await createPgPool(opts.databaseUrl, {}, log);
+      return await PostgresStore.open(pool);
+    } catch (err: any) {
+      // The detail goes to the server log only, with the address (it holds the password) removed: the note is shown
+      // on the public status endpoint.
+      log(`[store] could not open the PostgreSQL database: ${scrubDbText(String(err?.message || err), opts.databaseUrl)}`);
+      void pool?.end().catch(() => undefined);
+      return new MemoryStore(
+        'DATABASE_URL is set but the database could not be reached or prepared, so storage fell back to memory and nothing is saved. The server log has the detail; check the address and that the database is running.'
+      );
+    }
+  }
+
   if (opts.serverless) {
     return new MemoryStore(
-      'Serverless hosts have no persistent disk, so audits and jobs are not saved here. Use an always-on host with a disk (see docs/DEPLOYMENT.md).'
+      'Serverless hosts have no persistent disk, so audits and jobs are not saved here. Set DATABASE_URL to a PostgreSQL database, or use an always-on host with a disk (see docs/DEPLOYMENT.md).'
     );
   }
   if (!opts.dataDir) {
     return new MemoryStore(
-      'DATA_DIR is not set, so audits and jobs are kept in memory only and are lost on restart. Set DATA_DIR to a persistent directory.'
+      'DATA_DIR is not set, so audits and jobs are kept in memory only and are lost on restart. Set DATA_DIR to a persistent directory, or DATABASE_URL to a PostgreSQL database.'
     );
   }
 

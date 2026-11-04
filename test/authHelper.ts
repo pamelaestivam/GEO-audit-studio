@@ -25,6 +25,11 @@ export const TEST_AUTH_ENV = {
   // far more audits against one server than a real person would.
   USER_AUDITS_PER_DAY: '0',
   GLOBAL_AUDITS_PER_DAY: '0',
+  // A DATABASE_URL in the developer's shell (the real database) must never reach a server a test starts: openStore
+  // puts it ahead of DATA_DIR, so the suite would write test audits into it and the SQLite suites would silently test
+  // PostgreSQL. A suite that wants PostgreSQL sets its own after this (test/postgresE2E.test.ts); test/testIsolation.test.ts
+  // fails if a suite that starts the server does not spread this.
+  DATABASE_URL: '',
 };
 
 export const rawFetch: typeof fetch = globalThis.fetch.bind(globalThis);

@@ -101,6 +101,45 @@ restart on the same volume. That is a build-and-smoke check against a fake
 Gemini endpoint, not a test of your host - run `scripts/smoke.mjs` against your
 own deployment (section 6).
 
+## 4b. Vercel with a Supabase database (built 2026-11-04, not yet run against the real services)
+
+`src/postgresStore.ts` is a durable store for a host with no disk, behind the same `Store` contract as the SQLite
+one. Several instances may share one database: schema upgrades run under an advisory lock, a step claim locks its
+job's row, a retried click that reaches two instances makes one job (the unique index decides), and a booting
+instance never releases another instance's claims (they expire on their own, `AUDIT_LEASE_MS`).
+
+1. Create a Supabase project (free plan). On the create form: leave the GitHub link empty, untick **Enable Data API**
+   (this app talks to the database directly and does not use `supabase-js`), tick **Enable automatic RLS**.
+2. **Connect**, then **Connection String**, Type **URI**, Method **Transaction pooler** (the direct connection is IPv6
+   only unless a paid add-on is bought; do not buy it). Replace `[YOUR-PASSWORD]` (brackets included) with the
+   database password; percent-encode `@ : / ? # %` and spaces in it (a generated letters-and-digits password needs
+   nothing). If the password is lost: **Reset database password**.
+3. In Vercel, **Settings**, **Environment Variables**: add `DATABASE_URL` with that string for Production and Preview,
+   **Sensitive** on, then redeploy once (variables only reach a new deployment).
+4. Check: `GET /api/audit/status` shows `storage.kind: "postgres"` and no note; signed in, `GET /api/audit/readiness`
+   has a passing `storage` check saying "postgres store works and survives restarts"; the "Temporary storage" bar on
+   the page is gone.
+
+If the first connection fails with a network error, try the **Session pooler** string (same host, port 5432), which the
+Supabase panel describes as the route for IPv4 networks. If it fails on a certificate, say so: the default encrypts
+without verifying the certificate and a stricter `sslmode` is the operator's choice.
+
+**Limits to know before relying on it with several instances** (`TECH_DEBT.md` 2.17): the daily budgets and the
+concurrent-audit cap are not enforced across instances at the same instant (a burst can overshoot them by about the
+number of simultaneous submits; the same retried click is safe); a connection lost after a freeze is not retried; an
+instance that cannot reach the database at start runs on memory until it is replaced. A function killed by its time limit
+mid-call leaves its claim for `AUDIT_LEASE_MS` (default 10 minutes); setting it a little above the project's function
+maximum duration (the design assumes 300 s, so `330000`) shortens the wait. That value is a reading of the design, not a
+measurement.
+
+Not covered: Supabase's free plan keeps **no backups** and pauses an idle project after about a week; the daily live
+check keeps it awake only if its sign-in secrets are set (`docs/PROGRAM.md` O-3 step 4).
+
+**Testing the store.** `test/store.test.ts` runs the same contract suite on memory, SQLite and PostgreSQL, and
+`test/postgresE2E.test.ts` runs the built server, two processes on one database. They need `TEST_DATABASE_URL` (a
+throwaway database; they create and drop their own schemas): `export TEST_DATABASE_URL=$(bash scripts/pg-test-cluster.sh start)`.
+Without it they print `SKIP ... NOT RUN`; CI sets `REQUIRE_POSTGRES=1` so a missing database there is a failure.
+
 ## 5. Environment variables
 
 | Variable | Required | What it does |
@@ -115,7 +154,8 @@ own deployment (section 6).
 | `USER_LOOKUPS_PER_HOUR` | no (30) | Brand detection, query suggestions and added queries per person per hour (per process; resets on restart) |
 | `ALLOW_DEV_AUTH` | no | Local development only: `npm run dev` passes `--dev`, which has the same effect. Never honoured in production, and only from the same machine. Do not set it on a server behind a local reverse proxy without `TRUST_PROXY` (every request would look local) |
 | `JOB_MAX_RUN_MS` | no (900000) | An audit still running after this long is reported as stopped (it is recorded if it later finishes) |
-| `DATA_DIR` | yes for durability | Directory for the SQLite file. Unset = nothing is saved |
+| `DATA_DIR` | yes for durability (unless `DATABASE_URL` is set) | Directory for the SQLite file. Unset = nothing is saved |
+| `DATABASE_URL` | no | A PostgreSQL address (Supabase: the **Transaction pooler** string, port 6543, with the password filled in and any symbol in it percent-encoded). When set it is the store, on any host including Vercel, and wins over `DATA_DIR`. It carries the password: set it as a Sensitive variable, never in the repo, a log or chat. If it is set but unusable the server starts on memory and says so on `/api/audit/status` (the server log has the cause, with the address removed). An `sslmode` in the address is honoured (`verify-full`/`verify-ca` verify the certificate; `disable` turns TLS off; otherwise a remote host is encrypted without verifying the certificate, see `TECH_DEBT.md` 2.17) |
 | `PERPLEXITY_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | no | Adds a PAID engine, but only together with `ALLOW_PAID_ENGINES=1`; a key alone is ignored and `/api/audit/status` lists it under `spend.paidEnginesBlocked`. Each engine multiplies per-audit spend |
 | `ALLOW_PAID_ENGINES` | no (off) | `1` accepts that ChatGPT, Perplexity and Claude cost money per call. Leave unset to stay at $0 |
 | `GEMINI_DAILY_CALL_CAP` | no (none) | A positive whole number: the most Gemini calls this server process makes per UTC day. **A value that is set but unreadable, including `0`, blocks every Gemini call** (it is reported in `/api/audit/status` as `spend.capProblem` and in the start-up log); it does not mean "off". Leave it unset for no cap. Counted per process (on serverless each instance counts alone, so the cap is a brake against loops, not a guarantee). The money control is a Google project with no billing account |

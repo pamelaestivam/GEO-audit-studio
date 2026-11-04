@@ -47,9 +47,18 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
+      # The PostgreSQL store is tested against a real server. The runner image ships PostgreSQL; starting it pulls no
+      # container image, so there is no registry to rate-limit this gate. REQUIRE_POSTGRES makes a missing database a
+      # failure instead of a skip.
+      - name: Start PostgreSQL for the store tests
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"
       - run: npm test
         env:
           CI: 'true'
+          REQUIRE_POSTGRES: '1'
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       # The built server must run from a clean directory with ONLY production
       # dependencies - what a Docker/Render/VPS build actually has. It also boots the
       # server, runs the smoke test, restarts it on the same data directory, proves the
