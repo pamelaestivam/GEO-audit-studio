@@ -58,7 +58,6 @@ async function run(url: string) {
         PORT: String(port),
         NODE_ENV: 'production',
         DATA_DIR: '',
-        DATABASE_URL: dbUrl,
         AUDIT_DRIVER: 'client',
         // Short enough that a claim left by a killed server expires inside the test.
         AUDIT_LEASE_MS: '3000',
@@ -74,6 +73,7 @@ async function run(url: string) {
         PERPLEXITY_API_KEY: '',
         ANTHROPIC_API_KEY: '',
         ...TEST_AUTH_ENV,
+        DATABASE_URL: dbUrl, // after TEST_AUTH_ENV, which blanks it for every other suite
         ...env,
       },
       stdio: 'ignore',

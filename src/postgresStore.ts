@@ -98,14 +98,17 @@ export const PG_MIGRATIONS: string[] = [
   );
   CREATE INDEX incidents_at ON incidents(at);
   CREATE INDEX incidents_job ON incidents(job_id);
-  -- Who drives a job, read from its plan text. A plan holds what a person typed, and JSONB refuses some text that is
-  -- valid JSON (a NUL, a lone surrogate): one such plan must not make every later count fail, so an unreadable plan
-  -- answers NULL (which counts as a job that holds its slot, the safe side).
-  CREATE FUNCTION geo_plan_driver(t TEXT) RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $fn$
+  `,
+  // 2: who drives a job, read from its plan text. A plan holds what a person typed, and JSONB refuses some text that is
+  // valid JSON (a NUL, a lone surrogate): one such plan must not make every later count fail. Text it cannot parse is
+  // searched for the driver key instead (a key's quotes are never escaped, and the quotes of typed text always are, so
+  // the pattern cannot match typed text), which makes such a job leave the count when it goes quiet, as on SQLite.
+  `
+  CREATE OR REPLACE FUNCTION geo_plan_driver(t TEXT) RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $fn$
   BEGIN
     RETURN (t::jsonb) ->> 'driver';
   EXCEPTION WHEN OTHERS THEN
-    RETURN NULL;
+    RETURN substring(t from '"driver":"([a-z]+)"');
   END;
   $fn$;
   `,
@@ -220,11 +223,19 @@ export class PostgresStore implements Store {
       const out = await fn(q);
       await q.query('COMMIT');
       return out;
-    } catch (err) {
-      try {
-        await q.query('ROLLBACK');
-      } catch {
-        destroy = true; // the connection cannot even roll back; the original error is the one to report
+    } catch (err: any) {
+      if (/timeout/i.test(String(err?.message ?? err))) {
+        // A query that ran out of time is still running on the server, so a ROLLBACK would queue behind it and wait as
+        // long again before the caller heard anything. The connection is closed instead: the caller hears at once, and
+        // the server abandons the transaction when it notices (a backend blocked on a lock only notices when the lock
+        // is released).
+        destroy = true;
+      } else {
+        try {
+          await q.query('ROLLBACK');
+        } catch {
+          destroy = true; // the connection cannot even roll back; the original error is the one to report
+        }
       }
       throw err;
     } finally {

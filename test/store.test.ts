@@ -647,6 +647,33 @@ async function postgresChecksAgainst(url: string) {
       st.close();
     }
 
+    // A query that runs out of time while it waits for a lock: the call is refused after ONE time limit. The connection is
+    // thrown away instead of being rolled back, because the ROLLBACK would queue behind the stuck query and wait as long
+    // again. (The server's backend may keep waiting for the lock until its holder lets go: PostgreSQL does not notice a
+    // closed connection while it waits on a lock, so that is not asserted.)
+    {
+      const S = await freshSchema();
+      const slowPool = await createPgPool(url, { options: `-c search_path=${S}`, query_timeout: 800 });
+      const st = await PostgresStore.open(slowPool);
+      await st.createPlannedJob(job({ id: 'late1' }), PLAN);
+      const blocker = await admin.connect();
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query(`SELECT 1 FROM ${S}.jobs WHERE id = 'late1' FOR UPDATE`);
+        const t0 = Date.now();
+        const outcome = await st.claimStep('late1', 'A', LEASE, NOW, 3).then(
+          () => 'resolved',
+          (e: any) => `rejected: ${String(e?.message ?? e)}`
+        );
+        const took = Date.now() - t0;
+        check('postgres: a claim that waits on a lock past the query time limit is refused, once (not after the limit twice over)', [outcome.startsWith('rejected'), took < 1500], [true, true]);
+      } finally {
+        await blocker.query('ROLLBACK').catch(() => undefined);
+        blocker.release();
+      }
+      st.close();
+    }
+
     // What a person types reaches the stored plan. Text that JSONB refuses (a NUL, a lone surrogate) must not make the
     // count of running jobs fail for everyone else.
     {
@@ -661,7 +688,7 @@ async function postgresChecksAgainst(url: string) {
         counted = `threw: ${String(e?.message ?? e)}`;
       }
       check('postgres: a plan with a NUL and a lone surrogate does not break the running count', counted, 2);
-      check('postgres: ...and a stale one is still dropped from it by the plan that CAN be read', await st.countRunning(DAY, NOW + 10 * 60_000, 60_000).catch(() => -1), 1);
+      check('postgres: ...and both go out of the count once quiet, the unreadable plan too (as on SQLite)', await st.countRunning(DAY, NOW + 10 * 60_000, 60_000).catch(() => -1), 0);
       st.close();
     }
 

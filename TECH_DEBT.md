@@ -792,10 +792,15 @@ calls; a server killed mid-call is taken over after its claim expires with the r
   are invisible to the others. Took 8 s to give up in the review's test.
 - **`AUDIT_LEASE_MS` defaults to 10 minutes.** A Vercel function killed by its time limit in the middle of a call leaves its
   claim on the step until it expires, so that audit waits that long (`docs/DEPLOYMENT.md` 4b suggests a value; not measured).
+- **A query that waits on a lock past the 15-second limit is refused once, and its connection is closed, but the server's
+  backend can keep waiting for that lock until its holder lets go** (PostgreSQL does not notice a closed connection while it
+  waits on a lock, unless `client_connection_check_interval` is set). Locks here are held for milliseconds by ordinary
+  claims, so this needs a stuck holder.
 - **A raw NUL character in a plain text column is refused by PostgreSQL** (an email, an incident detail), so that person's
   calls fail with a 500; SQLite stores it. JSON text (plans, results) is not affected: the plan-driver lookup is a function
-  that answers "unknown" for text JSONB refuses, after the review showed one person's query text could otherwise break
-  the running count for everyone (fixed and tested).
+  that reads the driver key from the text when JSONB refuses it, after the review showed one person's query text could
+  otherwise break the running count for everyone (fixed and tested; migration 2, so a database made by an earlier
+  commit of this branch gets it on start).
 - **The readiness check puts the driver's own message in its detail** when the store cannot be written (signed-in
   endpoint only; it does not contain the password, it may name the host).
 - **A 15-second client-side query limit and a 3-connection pool are guesses** for a transaction pooler, not measured

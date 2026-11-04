@@ -255,3 +255,16 @@ pretend PostgreSQL server now returns the address and password in its error text
 coin flip (now twelve and fifteen rounds); plus startup parameters a pooler may refuse, fractional times, a pool that returns
 BIGINT as text, and the SQL_ASCII encoding of the local test server (now UTF8). Full suite after the fixes: 2,058 checks, 0
 failures, 0 skipped; audit 0. A second fresh-context review of the fixes follows before merge.
+
+**Second independent review: the eight fixes held, one hazard and three small things found, all fixed (2026-11-04).** The reviewer
+confirmed each fix by reproducing it and by breaking it (14 mutations, each failed a check; 28 of 28 end-to-end checks in seven runs,
+three of them under CPU load) and found: (1) 17 test suites that start the built server pass the shell's environment on, so a
+`DATABASE_URL` exported in a shell (the variable DEPLOYMENT 4b tells the owner to set) would make a test run write into that real
+database and make the SQLite durability suites silently test PostgreSQL. `TEST_AUTH_ENV` now blanks it, `scripts/prod-install-check.sh`
+does too, and `test/testIsolation.test.ts` fails when a suite that starts the server does not (run with a bogus address exported, a
+suite ignored it and passed); (2) the plan-driver function had been added by editing the first migration, against the file's own rule:
+it is migration 2 now (`CREATE OR REPLACE`); (3) a plan the JSON cast cannot read held a concurrency slot until the run-time limit:
+the function now reads the driver key from the text, so it leaves the count when quiet, as on SQLite; (4) a claim waiting on a lock
+took two query time limits to be refused: a timed-out connection is now closed instead of rolled back (the server's backend can still
+wait for the lock until its holder lets go; PostgreSQL does not notice a closed connection while blocked, which my first version of the
+test wrongly asserted and which the run showed to be impossible). Full suite: 2,067 checks, 0 failures, 0 skipped; audit 0.
