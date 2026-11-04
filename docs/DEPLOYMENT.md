@@ -116,8 +116,10 @@ instance never releases another instance's claims (they expire on their own, `AU
    nothing). If the password is lost: **Reset database password**.
 3. In Vercel, **Settings**, **Environment Variables**: add `DATABASE_URL` with that string for **Production only**,
    **Sensitive** on, then redeploy once (variables only reach a new deployment). Not Preview: every pushed branch makes a
-   Preview deployment, and one that carries a schema change would upgrade the production database when it starts (the
-   version guard only refuses servers OLDER than the schema, not newer), while its audits would land in real history.
+   Preview deployment, and one that carries a schema change would upgrade the production database when it starts; the
+   production server, now older than the schema, would then refuse the database and run on memory until it is
+   redeployed (the guard refuses a server OLDER than the schema, it does not stop a newer one). Its test audits would
+   also land in real history.
    (An earlier version of this step, and of `docs/PROGRAM.md` O-4, said "Production and Preview"; that was wrong.)
 4. Check: `GET /api/audit/status` shows `storage.kind: "postgres"` and no note; signed in, `GET /api/audit/readiness`
    has a passing `storage` check saying "postgres store works and survives restarts"; the "Temporary storage" bar on
