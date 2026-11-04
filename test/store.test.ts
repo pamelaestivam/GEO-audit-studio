@@ -9,6 +9,7 @@ import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import { MIGRATIONS, MemoryStore, SqliteStore, StoreBusyError, openStore, type PlannedStep, type Store, type StoredJob } from '../src/store';
+import { PG_MIGRATIONS, PostgresStore, createPgPool } from '../src/postgresStore';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -469,6 +470,154 @@ function dir0() {
   return tmpRoot;
 }
 
+/**
+ * The PostgreSQL store, against a real server. Needs TEST_DATABASE_URL (a throwaway database: the checks create and
+ * drop their own schemas in it). Without it the checks are reported as NOT RUN, loudly, and CI sets REQUIRE_POSTGRES=1
+ * so a missing database there is a failure rather than a skip. To get one locally: scripts/pg-test-cluster.sh.
+ */
+async function postgresChecks() {
+  const url = process.env.TEST_DATABASE_URL;
+  if (url) await postgresChecksAgainst(url);
+  else if (process.env.REQUIRE_POSTGRES === '1') check('TEST_DATABASE_URL is set (REQUIRE_POSTGRES=1 says the PostgreSQL checks must run)', false, true);
+  else console.log('SKIP  the PostgreSQL store checks were NOT RUN: set TEST_DATABASE_URL to a throwaway database (scripts/pg-test-cluster.sh starts one). CI runs them.');
+}
+
+async function postgresChecksAgainst(url: string) {
+  const admin = await createPgPool(url, { max: 2 });
+  const schemas: string[] = [];
+  const freshSchema = async () => {
+    const name = `t_${Math.random().toString(36).slice(2, 10)}`;
+    await admin.query(`CREATE SCHEMA ${name}`);
+    schemas.push(name);
+    return name;
+  };
+  const poolIn = (schema: string) => createPgPool(url, { options: `-c search_path=${schema}` });
+  const openIn = async (schema: string) => PostgresStore.open(await poolIn(schema));
+  const urlIn = (schema: string) => `${url}${url.includes('?') ? '&' : '?'}options=${encodeURIComponent(`-c search_path=${schema}`)}`;
+  try {
+    // The same suite that the memory and SQLite stores pass.
+    await suite('postgres', async () => openIn(await freshSchema()));
+
+    const s0 = await openIn(await freshSchema());
+    check('postgres: info says postgres and durable', [s0.info().kind, s0.info().durable], ['postgres', true]);
+    check('postgres: timestamps come back as numbers, not text', typeof (await (async () => { await s0.createJob(job({ id: 'ty', startedAt: NOW })); return (await s0.getJob('ty'))?.startedAt; })()), 'number');
+    s0.close();
+
+    // Several processes starting at once on an empty database (every cold start of a serverless instance is one).
+    {
+      const S = await freshSchema();
+      const opened = await Promise.all(Array.from({ length: 6 }, () => openIn(S)));
+      check('postgres: six stores opened at once on an empty database all start', opened.length, 6);
+      const v = await admin.query(`SELECT version FROM ${S}.schema_version`);
+      check('...and the schema is recorded once, at the current version', v.rows.map((r: any) => r.version), [PG_MIGRATIONS.length]);
+      opened.forEach((o) => o.close());
+    }
+
+    // A database newer than this server is refused, not downgraded.
+    {
+      const S = await freshSchema();
+      (await openIn(S)).close();
+      await admin.query(`UPDATE ${S}.schema_version SET version = 999`);
+      const pool = await poolIn(S);
+      let refused = '';
+      try {
+        await PostgresStore.open(pool);
+      } catch (err: any) {
+        refused = String(err?.message ?? err);
+      } finally {
+        await pool.end();
+      }
+      check('postgres: a database from a newer server is refused with a sentence', /newer than this server/.test(refused), true);
+    }
+
+    // State survives closing the store and opening a new one (the restart).
+    {
+      const S = await freshSchema();
+      const a = await openIn(S);
+      await a.saveAudit('u1', report('keep-me', 'u1'));
+      await a.createJob(job({ id: 'inflight', owner: 'u1' }));
+      a.close();
+      const b = await openIn(S);
+      check('postgres: a saved audit survives close and reopen', (await b.getAudit('u1', 'keep-me'))?.id, 'keep-me');
+      check('postgres: a running job survives too', (await b.getJob('inflight'))?.status, 'running');
+      check('postgres: boot cleanup marks it failed', await b.failAllRunning('The server restarted.'), 1);
+      b.close();
+    }
+
+    // Two stores (two processes) on one database: one claim wins, a stale writer is refused.
+    {
+      const S = await freshSchema();
+      const a = await openIn(S);
+      const b = await openIn(S);
+      check('postgres: two stores have different instance ids', a.instanceId !== b.instanceId, true);
+      await a.createPlannedJob(job({ id: 'x1' }), PLAN);
+      check('postgres: a second store sees the planned steps', (await b.getJobSteps('x1')).length, 3);
+      const first = await a.claimStep('x1', 'A', LEASE, NOW, 3);
+      const second = await b.claimStep('x1', 'B', LEASE, NOW + 1, 3);
+      check('postgres: a claim in one store makes the other busy', [first.outcome, second.outcome, (second as any).step?.leaseHolder], ['claimed', 'busy', 'A']);
+      await a.createPlannedJob(job({ id: 'x2' }), PLAN);
+      const race = await Promise.all(Array.from({ length: 8 }, (_v, i) => (i % 2 ? a : b).claimStep('x2', `H${i}`, LEASE, NOW, 3)));
+      check('postgres: eight simultaneous claims on one step from two stores give exactly one claimed', race.map((r) => r.outcome).filter((o) => o === 'claimed').length, 1);
+      check('postgres: ...and the other seven are busy', race.map((r) => r.outcome).filter((o) => o === 'busy').length, 7);
+      check(
+        'postgres: a completion in one store is the first writer; the other is refused',
+        [await a.completeStep('x1', 0, 1, { state: 'done', result: 1 }, NOW + 2), await b.completeStep('x1', 0, 1, { state: 'done', result: 2 }, NOW + 3), (await b.getJobSteps('x1'))[0].result],
+        [true, false, 1]
+      );
+      // The same job and the same idempotency key from two stores: the database refuses the second.
+      await a.createPlannedJob(job({ id: 'k1', idemKey: 'same-key' }), PLAN);
+      let dup = '';
+      try {
+        await b.createPlannedJob(job({ id: 'k2', idemKey: 'same-key' }), PLAN);
+      } catch (err: any) {
+        dup = String(err?.code ?? err?.message ?? err);
+      }
+      check('postgres: the same idempotency key from a second store is refused by the database', dup, '23505');
+      check('postgres: ...and the refused job left no steps behind', (await b.getJobSteps('k2')).length, 0);
+      a.close();
+      b.close();
+    }
+
+    // The two SQL dialects describe the same columns, so a row means the same thing in both stores.
+    {
+      const { DatabaseSync } = (await import('node:sqlite')) as any;
+      const lite = new SqliteStore(DatabaseSync, ':memory:');
+      const S = await freshSchema();
+      (await openIn(S)).close();
+      for (const table of ['jobs', 'audits', 'job_steps', 'incidents']) {
+        const liteCols = (lite as any).db.prepare(`PRAGMA table_info(${table})`).all().map((r: any) => r.name).sort();
+        const pgCols = (await admin.query('SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2', [S, table])).rows.map((r: any) => r.column_name).sort();
+        check(`postgres: the ${table} table has the same columns as the SQLite one`, pgCols, liteCols);
+      }
+      lite.close();
+    }
+
+    // openStore: the address picks this store, and failures stay sentences that do not leak the address.
+    {
+      const S = await freshSchema();
+      const ok = await openStore({ databaseUrl: urlIn(S), dataDir: '/tmp/ignored', serverless: true });
+      check('postgres: openStore with databaseUrl yields a durable postgres store, even on a serverless host', [ok.info().kind, ok.info().durable, ok.info().note], ['postgres', true, undefined]);
+      await ok.saveAudit('u1', report('via-open', 'u1'));
+      check('postgres: ...and it stores', (await ok.getAudit('u1', 'via-open'))?.id, 'via-open');
+      ok.close();
+
+      const logged: string[] = [];
+      const down = await openStore({ databaseUrl: 'postgresql://geo:topsecretpw@127.0.0.1:1/nope', log: (m) => logged.push(m) });
+      check('postgres: an unreachable database falls back to memory instead of crashing', [down.info().kind, down.info().durable], ['memory', false]);
+      check('postgres: ...and the public note names DATABASE_URL and says nothing is saved', /DATABASE_URL/.test(down.info().note || '') && /nothing is saved/.test(down.info().note || ''), true);
+      check('postgres: ...without the password or the host in the public note', /topsecretpw|127\.0\.0\.1/.test(down.info().note || ''), false);
+      check('postgres: ...and the log line has the cause but never the password', [logged.some((m) => /could not open the PostgreSQL database/.test(m)), logged.some((m) => /topsecretpw/.test(m))], [true, false]);
+
+      const bad = await openStore({ databaseUrl: 'this is not an address topsecretpw', log: (m) => logged.push(m) });
+      check('postgres: text that is not an address also falls back, with a sentence', [bad.info().kind, /DATABASE_URL/.test(bad.info().note || '')], ['memory', true]);
+      check('postgres: ...and nothing logged repeats it', logged.some((m) => /topsecretpw/.test(m)), false);
+    }
+  } finally {
+    for (const S of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${S} CASCADE`).catch(() => undefined);
+    await admin.end();
+  }
+}
+
 async function main() {
   check('two memory stores have different instance ids', new MemoryStore().instanceId !== new MemoryStore().instanceId, true);
   await suite('memory', async () => new MemoryStore());
@@ -689,6 +838,8 @@ async function main() {
     check('...and can take a planned job straight away', (await up.getJobSteps('v3new')).length, 3);
     up.close();
   }
+
+  await postgresChecks();
 
   // --- schema is versioned, so a later migration has something to build on
   const versioned = new SqliteStore(DatabaseSync, ':memory:');

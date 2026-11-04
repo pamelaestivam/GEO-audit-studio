@@ -215,3 +215,29 @@ mutation-checked). Not proven: that all five red runs of the day were this (the 
 also fixed three bugs in the output capture (multibyte characters split across chunks, stdout and stderr fragments glued
 together, an unbounded line) and the wording of the Vercel-cap note (production did build after the cap message).
 
+
+## 2026-10-28 to 2026-11-04: the owner's set-up walk-through, three advisories cleared, the PostgreSQL store built
+
+**What the owner did (all from their own screens, relayed as screenshots; the assistant could reach none of these sites):**
+created a Gemini key in a project with no billing (AI Studio showed "Free tier"; one read-only request with it
+returned 200); added `SESSION_SECRET` and `ACCESS_CODES` in Vercel and redeployed (the first redeploy attempt on
+2026-10-28 was refused by Vercel's Hobby cap, "more than 100 in 24 hours", account-wide; a later one went through and
+the owner signed in on 2026-10-29); found the signed-in app saying no answer engine is configured, and replaced
+`GEMINI_API_KEY` in Vercel (the redeploy to pick it up was still to be done when this was written); turned on
+"Automatically delete head branches" (the ruleset step is not available on the free plan for a private repository, so
+`PROGRAM.md` O-5 step 2 stays on its documented fallback: CI and the gates in `CLAUDE.md`); created the Supabase project
+(Data API off, automatic RLS on, GitHub link empty) and said to move on without storing the connection string anywhere.
+
+**What was found:** three advisories published after 2026-10-10 (body-parser high, qs moderate, vite high) made the CI audit
+step fail on every branch, `main` included. Fixed alone first, as a lockfile-only change: PR #55 (merge commit df04c7c):
+independent review APPROVE with no findings (it hashed the tarballs itself), EVAL PM 93/100 SHIP, CI green. Local run:
+1,845 checks, 0 failures (the sandbox's Chromium build differed from the one Playwright 1.56.1 asks for; the browser
+suites ran with an alias of the installed build, outside the repository).
+
+**What was built:** `src/postgresStore.ts` (see `docs/DECISIONS.md` 2026-11-04 and `TECH_DEBT.md` 2.17), wired through
+`openStore({ databaseUrl })` from `DATABASE_URL`; `mayReleaseOtherHoldersAtBoot` learned `shared`; a duplicate retried click
+reaching two processes is a replay (found by the end-to-end test: a 500 without it, 2 of 3 runs). Tests: the contract
+suite on a real PostgreSQL 16.15 (a throwaway local server, `scripts/pg-test-cluster.sh`), `test/postgresConfig.test.ts`
+(pure), `test/postgresE2E.test.ts` (the built server, two processes, one database). CI starts the runner's PostgreSQL and
+sets `REQUIRE_POSTGRES=1`. Deliberate breakages (no row lock, no owner guard, no duplicate-click handling) each failed a
+check. NOT done: nothing has touched Supabase or Vercel with this code.
