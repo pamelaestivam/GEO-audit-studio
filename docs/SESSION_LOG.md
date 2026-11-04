@@ -268,3 +268,12 @@ the function now reads the driver key from the text, so it leaves the count when
 took two query time limits to be refused: a timed-out connection is now closed instead of rolled back (the server's backend can still
 wait for the lock until its holder lets go; PostgreSQL does not notice a closed connection while blocked, which my first version of the
 test wrongly asserted and which the run showed to be impossible). Full suite: 2,067 checks, 0 failures, 0 skipped; audit 0.
+
+**Re-check of the second round's fixes (2026-11-04):** findings 2 to 4 held (a version-1 database upgrades cleanly with six
+simultaneous starts; the text fallback could not be made to match typed text; a timed-out claim is refused after one limit and the
+pool recovers). Finding 1 was only partly closed: `test/vercelServerless.test.ts` builds the app inside the test process, so an
+exported `DATABASE_URL` made it open and migrate that database (reproduced: 5 tables), and the guard could not see that shape. The
+test now removes the variable itself (0 tables with it exported; 5 with the line deleted), and the guard also flags a test that
+imports `../server` or `../api` without doing so, ignores comments, and no longer accepts the bare word DATABASE_URL as isolation
+(16 checks, each shape has a fixture). Not tested, said plainly: upgrading a database made by the first commit of this branch
+(checked once by the reviewer's own script; no database has ever been made by it).

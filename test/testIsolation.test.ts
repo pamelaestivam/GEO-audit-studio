@@ -22,18 +22,37 @@ function check(name: string, actual: any, expected: any) {
   }
 }
 
-/** Does this source start the server without isolating it from DATABASE_URL? */
-function startsServerUnisolated(src: string): boolean {
-  const starts = /spawn\(\s*['"]node['"]\s*,\s*\[\s*['"]dist\/server\.cjs['"]/.test(src) || /['"]dist\/server\.cjs['"]/.test(src) && /\bspawn\b|execFile|fork/.test(src);
-  if (!starts) return false;
-  return !(/\.\.\.\s*TEST_AUTH_ENV/.test(src) || /\bDATABASE_URL\b/.test(src));
+/**
+ * Does this source start the server, in a child process or in its own, without isolating it from DATABASE_URL?
+ *  - a child process (spawn/exec/fork of the built bundle, in any spelling that names server.cjs) must spread TEST_AUTH_ENV
+ *    into the child's environment (mentioning the word DATABASE_URL, even in a comment, is not enough);
+ *  - an import of ../server or ../api builds the app in THIS process, which reads this process's environment, so the file
+ *    must delete DATABASE_URL from it.
+ */
+function startsServerUnisolated(raw: string): boolean {
+  // Comments are not code: a file that only mentions the bundle, or the variable, in a comment does not start anything.
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+  // (a method call such as RegExp.exec( is not a process start, hence the look-behind)
+  const spawnsBundle = /server\.cjs/.test(src) && /(?<![.\w])(spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\(/.test(src);
+  if (spawnsBundle && !/\.\.\.\s*TEST_AUTH_ENV/.test(src)) return true;
+  const buildsInProcess = /(?:from|import\s*\(|require\s*\()\s*['"]\.\.\/(?:server|api)(?:\/[^'"]*)?['"]/.test(src);
+  if (buildsInProcess && !/delete\s+process\.env\.DATABASE_URL|process\.env\.DATABASE_URL\s*=\s*['"]{2}/.test(src)) return true;
+  return false;
 }
 
 // fixtures: the guard must be able to fail
 check('a suite that spawns the server with process.env and nothing else is flagged', startsServerUnisolated(`spawn('node', ['dist/server.cjs'], { env: { ...process.env, PORT: '1' } })`), true);
 check('...one that spreads TEST_AUTH_ENV is not', startsServerUnisolated(`spawn('node', ['dist/server.cjs'], { env: { ...process.env, ...TEST_AUTH_ENV } })`), false);
-check('...one that sets DATABASE_URL itself is not', startsServerUnisolated(`spawn('node', ['dist/server.cjs'], { env: { ...process.env, DATABASE_URL: '' } })`), false);
+check('...the word DATABASE_URL in a comment does not isolate it', startsServerUnisolated(`// DATABASE_URL\nspawn('node', ['dist/server.cjs'], { env: { ...process.env } })`), true);
+check('...a file that only mentions the bundle in a comment and calls RegExp.exec is not a start', startsServerUnisolated(`// esbuild does for dist/server.cjs\nwhile ((m = RE.exec(src))) {}`), false);
+check('...a spread inside a comment does not isolate it', startsServerUnisolated(`// ...TEST_AUTH_ENV\nspawn('node', ['dist/server.cjs'], { env: { ...process.env } })`), true);
+check('...a path built with path.join is still a start of the server', startsServerUnisolated(`spawn('node', [path.join(cwd, 'dist', 'server.cjs')], { env: { ...process.env } })`), true);
+check('...so is exec of the bundle', startsServerUnisolated(`exec('node dist/server.cjs')`), true);
 check('...a file that does not start the server is not', startsServerUnisolated(`console.log('dist/server.cjs is the bundle')`), false);
+check('building the app in this process without removing DATABASE_URL is flagged', startsServerUnisolated(`const { default: buildApp } = await import('../server');`), true);
+check('...as is importing the api entry', startsServerUnisolated(`import handler from '../api/index';`), true);
+check('...removing it first is not', startsServerUnisolated(`delete process.env.DATABASE_URL;\nconst { default: buildApp } = await import('../server');`), false);
+check('...a relative import of something else is not', startsServerUnisolated(`import { x } from '../src/store';`), false);
 
 const dir = path.resolve('test');
 const files = fs.readdirSync(dir).filter((f) => f.endsWith('.ts') && f !== 'testIsolation.test.ts');
