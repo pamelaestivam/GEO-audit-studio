@@ -115,8 +115,9 @@ Vercel logins and creates an account-level resource.
    `DATABASE_URL`.
 3. **(Updated 2026-11-04, after the store was built.)** In Supabase, **Connect**, **Connection String**, Type **URI**, Method
    **Transaction pooler**; replace `[YOUR-PASSWORD]` with the database password (**Reset database password** if it is
-   not saved). In Vercel, **Settings**, **Environment Variables**, add `DATABASE_URL` with that string, Production and
-   Preview, **Sensitive** on; then **Redeploy** the Production deployment once. Never paste the string into chat. Then
+   not saved). In Vercel, **Settings**, **Environment Variables**, add `DATABASE_URL` with that string, **Production
+   only** (not Preview: a preview of a branch with a schema change would upgrade the production database), **Sensitive**
+   on; then **Redeploy** the Production deployment once. Never paste the string into chat. Then
    open `https://geo-audit-studio-five.vercel.app/api/audit/status` and look for `"kind":"postgres"`. If a connection error
    shows in the Vercel logs, `docs/DEPLOYMENT.md` 4b says what to try (the Session pooler string).
    The next line in this list is the original step, kept for the record: tell the assistant "the database is ready". Optional: connect

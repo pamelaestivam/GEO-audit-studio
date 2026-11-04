@@ -783,6 +783,10 @@ calls; a server killed mid-call is taken over after its claim expires with the r
   `GLOBAL_AUDITS_PER_DAY` and the cap by about the number of simultaneous submits. The same retried click is handled (it
   is one job; tested 12 + 15 rounds). Closing the rest means making admission and the insert one transaction under an
   advisory lock (PLAN_STEP_E S6). The real $0 control is still the Google project without billing.
+- **A Preview deployment must not be given `DATABASE_URL`.** Every pushed branch builds one; a branch with a schema change
+  would upgrade the production database when it started (the version guard refuses only servers older than the schema), and
+  its test audits would land in real history. The first version of the owner steps said "Production and Preview"; corrected
+  2026-11-04 (`docs/DEPLOYMENT.md` 4b, `docs/PROGRAM.md` O-4). Separate databases per environment would lift this.
 - **Nothing retries a dead connection.** A connection that dies while the store holds it in a transaction is an error for
   that call only (found by the review, where it ended the whole process; fixed and tested). But after a Vercel freeze the
   first query on a pooled connection the pooler has already closed can fail once; single statements are not retried
