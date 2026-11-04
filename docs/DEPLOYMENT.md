@@ -114,8 +114,15 @@ instance never releases another instance's claims (they expire on their own, `AU
    only unless a paid add-on is bought; do not buy it). Replace `[YOUR-PASSWORD]` (brackets included) with the
    database password; percent-encode `@ : / ? # %` and spaces in it (a generated letters-and-digits password needs
    nothing). If the password is lost: **Reset database password**.
-3. In Vercel, **Settings**, **Environment Variables**: add `DATABASE_URL` with that string for Production and Preview,
-   **Sensitive** on, then redeploy once (variables only reach a new deployment).
+3. In Vercel, **Settings**, **Environment Variables**: add `DATABASE_URL` with that string for **Production only**,
+   **Sensitive** on, then redeploy once (variables only reach a new deployment). Not Preview: every pushed branch makes a
+   Preview deployment, and one that carries a schema change would upgrade the production database when it starts. After
+   that, each new production instance that starts while the schema is newer than its code would refuse the database and
+   run on memory (jobs made on it are invisible to the other instances) until production is redeployed; instances
+   already running keep using the database (the guard refuses a server OLDER than the schema at its start, it does not
+   stop a newer one). The same happens if production is rolled back (Vercel's Instant Rollback) to a deployment older
+   than the current schema. A Preview's own test audits would also land in the real history.
+   (An earlier version of this step, and of `docs/PROGRAM.md` O-4, said "Production and Preview"; that was wrong.)
 4. Check: `GET /api/audit/status` shows `storage.kind: "postgres"` and no note; signed in, `GET /api/audit/readiness`
    has a passing `storage` check saying "postgres store works and survives restarts"; the "Temporary storage" bar on
    the page is gone.

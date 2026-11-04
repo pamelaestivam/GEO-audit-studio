@@ -284,3 +284,8 @@ spawn of `quotaBreakerE2E` still passed. It now requires one `...TEST_AUTH_ENV` 
 mutation is named by it, and restored). Still true and not covered: a spelling of the in-process import with an extension
 (`'../server.ts'`) is not matched, and an env built far from the spawn could satisfy the count without being used; the repository's
 convention (no extension, the spread beside the spawn) makes both contrived.
+
+**Correction, same day (2026-11-04):** the owner steps for `DATABASE_URL` (in `docs/DEPLOYMENT.md` 4b, `docs/PROGRAM.md` O-4, and
+what the assistant said in chat) told the owner to tick Production AND Preview. Found on reading them again after the merge: a Preview
+deployment of any branch with a schema change would upgrade the production database, and its test audits would be real history.
+Corrected to Production only (PR #57); the owner is told in chat before setting the variable.
