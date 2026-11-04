@@ -241,3 +241,17 @@ suite on a real PostgreSQL 16.15 (a throwaway local server, `scripts/pg-test-clu
 (pure), `test/postgresE2E.test.ts` (the built server, two processes, one database). CI starts the runner's PostgreSQL and
 sets `REQUIRE_POSTGRES=1`. Deliberate breakages (no row lock, no owner guard, no duplicate-click handling) each failed a
 check. NOT done: nothing has touched Supabase or Vercel with this code.
+
+**First independent review of the PostgreSQL store: CHANGES REQUESTED, all fixed (2026-11-04).** The reviewer (fresh context, a
+`git init` in a temporary directory, its own databases) confirmed the main design held (it removed the advisory lock and the
+row lock and saw checks fail; a 120-worker stress run gave no duplicate claim) and found: (1) a connection that dies while the
+store holds it in a transaction ended the whole server process (an unhandled 'error' event: the pool removes its own listener
+while a client is checked out); (2) one person's query text (a NUL, a lone surrogate) reached the plan and made the running-count
+query fail for everyone, because of a JSONB cast; my own TECH_DEBT claim that this needed a hand-edited row was wrong;
+(3) the daily budgets and the concurrent cap are not enforced across instances (documented now, not fixed); (4) a retried click
+that reached two servers at the cap got a 429 instead of a replay (fixed); (5) the start-up claim rule had no test (added; breaking
+it now fails); (6) two "never leaks the password" checks could not fail because the test hosts gave messages with no secret (a
+pretend PostgreSQL server now returns the address and password in its error text); (7) the duplicate-click end-to-end check was a
+coin flip (now twelve and fifteen rounds); plus startup parameters a pooler may refuse, fractional times, a pool that returns
+BIGINT as text, and the SQL_ASCII encoding of the local test server (now UTF8). Full suite after the fixes: 2,058 checks, 0
+failures, 0 skipped; audit 0. A second fresh-context review of the fixes follows before merge.

@@ -20,7 +20,13 @@ Rules that follow from several processes sharing one database server (every Verc
    `shared`): they expire by themselves (`AUDIT_LEASE_MS`). Releasing them was right only for one process per file.
 5. A retried click that reaches two processes at once makes one job: the unique index refuses the second, and the
    second answers as a replay of the first (found by the end-to-end test: without it the second got a 500).
-6. The tests run against a real PostgreSQL, not an emulation: the contract suite on every store, and the built server
+6. A connection that dies while a transaction holds it is an error for that call, and the broken connection is discarded:
+   the driver's pool removes its own error listener while a client is checked out, so without one the whole process
+   ended (found by the independent review; tested by killing the backend mid-claim).
+7. Who drives a job is read from its plan text by a small SQL function that answers "unknown" for text JSONB refuses, not
+   by a cast: a person's query text (a NUL, a lone surrogate) reached the plan and broke the running count for everyone
+   (found by the review). A pool that does not return BIGINT as numbers is refused at start; fractions are rounded.
+8. The tests run against a real PostgreSQL, not an emulation: the contract suite on every store, and the built server
    as two instances on one database. Locally they need `TEST_DATABASE_URL` (`scripts/pg-test-cluster.sh`); CI starts the
    runner's PostgreSQL and sets `REQUIRE_POSTGRES=1`, so a missing database there fails the gate.
 

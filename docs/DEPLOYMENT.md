@@ -124,6 +124,14 @@ If the first connection fails with a network error, try the **Session pooler** s
 Supabase panel describes as the route for IPv4 networks. If it fails on a certificate, say so: the default encrypts
 without verifying the certificate and a stricter `sslmode` is the operator's choice.
 
+**Limits to know before relying on it with several instances** (`TECH_DEBT.md` 2.17): the daily budgets and the
+concurrent-audit cap are not enforced across instances at the same instant (a burst can overshoot them by about the
+number of simultaneous submits; the same retried click is safe); a connection lost after a freeze is not retried; an
+instance that cannot reach the database at start runs on memory until it is replaced. A function killed by its time limit
+mid-call leaves its claim for `AUDIT_LEASE_MS` (default 10 minutes); setting it a little above the project's function
+maximum duration (the design assumes 300 s, so `330000`) shortens the wait. That value is a reading of the design, not a
+measurement.
+
 Not covered: Supabase's free plan keeps **no backups** and pauses an idle project after about a week; the daily live
 check keeps it awake only if its sign-in secrets are set (`docs/PROGRAM.md` O-3 step 4).
 

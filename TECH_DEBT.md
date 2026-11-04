@@ -777,11 +777,31 @@ calls; a server killed mid-call is taken over after its claim expires with the r
 - **The `inline` driver with several processes on one database is not a supported shape.** Leases keep two processes
   from making the same call, but a booting second process also takes up the first one's inline audits. Vercel uses
   the `client` driver, which does not have this.
-- **A malformed `plan` text breaks the running-count query** (`plan::jsonb`). Plans are only ever written as JSON by this
-  server, so it needs a hand-edited row; a JSONB column would remove the cast.
+- **Daily budgets and the concurrent-audit cap are checked, then the job is inserted, with no lock shared between
+  processes.** Found by the independent review (two servers, `MAX_CONCURRENT_AUDITS=1`, two different people submitting at
+  the same moment: both accepted, two jobs running). With several instances a burst can overshoot `USER_AUDITS_PER_DAY`,
+  `GLOBAL_AUDITS_PER_DAY` and the cap by about the number of simultaneous submits. The same retried click is handled (it
+  is one job; tested 12 + 15 rounds). Closing the rest means making admission and the insert one transaction under an
+  advisory lock (PLAN_STEP_E S6). The real $0 control is still the Google project without billing.
+- **Nothing retries a dead connection.** A connection that dies while the store holds it in a transaction is an error for
+  that call only (found by the review, where it ended the whole process; fixed and tested). But after a Vercel freeze the
+  first query on a pooled connection the pooler has already closed can fail once; single statements are not retried
+  because some are not idempotent. Not measured on Vercel.
+- **A cold start that cannot reach the database runs on memory for that instance's life** (the app is built once per
+  instance). The public note and `/api/audit/readiness` say so, but nothing tries again, and jobs made on that instance
+  are invisible to the others. Took 8 s to give up in the review's test.
+- **`AUDIT_LEASE_MS` defaults to 10 minutes.** A Vercel function killed by its time limit in the middle of a call leaves its
+  claim on the step until it expires, so that audit waits that long (`docs/DEPLOYMENT.md` 4b suggests a value; not measured).
+- **A raw NUL character in a plain text column is refused by PostgreSQL** (an email, an incident detail), so that person's
+  calls fail with a 500; SQLite stores it. JSON text (plans, results) is not affected: the plan-driver lookup is a function
+  that answers "unknown" for text JSONB refuses, after the review showed one person's query text could otherwise break
+  the running count for everyone (fixed and tested).
 - **The readiness check puts the driver's own message in its detail** when the store cannot be written (signed-in
   endpoint only; it does not contain the password, it may name the host).
-- **A 15-second statement time limit and a 3-connection pool are guesses** for a transaction pooler, not measured.
+- **A 15-second client-side query limit and a 3-connection pool are guesses** for a transaction pooler, not measured
+  (server-side `statement_timeout` and `application_name` were dropped: a pooler may refuse start-up parameters).
+- **The local test server was first created with the SQL_ASCII encoding** (the sandbox locale); Supabase uses UTF8. The
+  review ran the whole contract suite on both and it passes; `scripts/pg-test-cluster.sh` now creates UTF8.
 
 ### 2.16 Vercel's free deployment cap was reached on 2026-10-10 (low; owner may want to look)
 

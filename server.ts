@@ -1969,15 +1969,19 @@ Return valid JSON matching the schema.`;
           return { id: job.id, replayed: false };
         });
       } catch (err: any) {
-        if (err instanceof AdmissionError) {
+        // Two processes that share a database can both pass the lookup above for the same retried click. One of them
+        // wins: the other is then refused either by the unique index on (owner, key) when it inserts, or by the caps
+        // because the winner's job is already counted. Either way its click is a replay of the winner's job, not an error.
+        const lostRace = err instanceof AdmissionError || err?.code === '23505' || /duplicate idempotency key/.test(String(err?.message));
+        const raced = idemKey && lostRace ? await store.findJobByKey(owner, idemKey) : null;
+        if (raced) {
+          outcome = { id: raced.id, replayed: true };
+        } else if (err instanceof AdmissionError) {
           if (err.retryAfterSeconds) res.setHeader('Retry-After', String(err.retryAfterSeconds));
           return res.status(err.status).json({ error: err.message });
+        } else {
+          throw err;
         }
-        // Two processes that share a database can both pass the lookup above for the same retried click. The unique
-        // index on (owner, key) lets exactly one create the job; the other one's click is a replay of it, not an error.
-        const raced = idemKey && (err?.code === '23505' || /duplicate idempotency key/.test(String(err?.message))) ? await store.findJobByKey(owner, idemKey) : null;
-        if (!raced) throw err;
-        outcome = { id: raced.id, replayed: true };
       }
 
       if (outcome.replayed) {

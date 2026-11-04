@@ -42,7 +42,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const QUERY = [{ id: 'q1', intent: 'direct_recommendation', queryText: 'best poke in Austin', targetPersona: 'Buyer' }];
 
 async function run(url: string) {
-  const fake = await startFakeGemini(GEMINI_PORT, () => mode, 1500);
+  // A slow call lasts 4 s: long enough to start another server while a call is in flight.
+  const fake = await startFakeGemini(GEMINI_PORT, () => mode, 4000);
   const admin = await createPgPool(url, { max: 2 });
   const schema = `e2e_${Math.random().toString(36).slice(2, 10)}`;
   await admin.query(`CREATE SCHEMA ${schema}`);
@@ -61,6 +62,8 @@ async function run(url: string) {
         AUDIT_DRIVER: 'client',
         // Short enough that a claim left by a killed server expires inside the test.
         AUDIT_LEASE_MS: '3000',
+        // The concurrency cap has its own checks below; here it must not get in the way of the others.
+        MAX_CONCURRENT_AUDITS: '200',
         GEMINI_API_KEY: 'fake-key',
         GEMINI_BASE_URL: `http://127.0.0.1:${GEMINI_PORT}`,
         GEMINI_MIN_INTERVAL_MS: '0',
@@ -94,11 +97,11 @@ async function run(url: string) {
       s.proc.once('close', () => resolve());
       s.proc.kill('SIGKILL');
     });
-  const submit = async (base: string, key: string) => {
+  const submit = async (base: string, key: string, queries: any[] = QUERY) => {
     const res = await fetch(`${base}/api/audit/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
-      body: JSON.stringify({ businessName: 'Poke House', domain: 'poke.house', queries: QUERY }),
+      body: JSON.stringify({ businessName: 'Poke House', domain: 'poke.house', queries }),
     });
     return { status: res.status, body: (await res.json()) as any };
   };
@@ -129,6 +132,43 @@ async function run(url: string) {
     check('...and they name the same job', s1.body.jobId === s2.body.jobId, true);
     check('...which exists once in the database', (await q("SELECT COUNT(*)::int AS n FROM $SCHEMA.jobs WHERE idem_key = 'click-1'"))[0].n, 1);
     check('...with nothing spent until a step is asked for', fake.hits() - before, 0);
+
+    // ---- the same click again and again, sent to both servers at the same moment each time: always one job. (Whether the
+    // second server loses at its lookup or at the insert is a matter of a few milliseconds, so this is run many times.)
+    {
+      const results: any[] = [];
+      for (let i = 0; i < 12; i++) {
+        const [x, y] = await Promise.all([submit(A.base, `dup-${i}`), submit(B.base, `dup-${i}`)]);
+        results.push([x.status, y.status, x.body.jobId === y.body.jobId]);
+      }
+      check('twelve clicks, each sent to both servers at once: every one accepted by both and naming one job', results.every((r) => r[0] === 202 && r[1] === 202 && r[2] === true), true);
+      check('...and exactly twelve such jobs exist', (await q("SELECT COUNT(*)::int AS n FROM $SCHEMA.jobs WHERE idem_key LIKE 'dup-%'"))[0].n, 12);
+    }
+
+    // ---- the same click reaches two servers while the concurrency cap is the limit: the loser's lookup comes before the
+    // winner's job exists, then its admission check counts that job. It is still the same click, so it is a replay.
+    {
+      const D1 = start({ MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '150' });
+      const D2 = start({ MAX_CONCURRENT_AUDITS: '1', AUDIT_STALL_MS: '150' });
+      await Promise.all([up(D1), up(D2)]);
+      await sleep(500); // earlier jobs have gone quiet, so none holds the single slot
+      const rounds: any[] = [];
+      for (let i = 0; i < 15; i++) {
+        const [x, y] = await Promise.all([submit(D1.base, `cap-${i}`), submit(D2.base, `cap-${i}`)]);
+        rounds.push([x.status, y.status, x.body.jobId === y.body.jobId]);
+        await sleep(450); // the job just made goes quiet and frees the slot for the next round
+      }
+      check('with a cap of one, fifteen clicks each sent to both servers at once: every one accepted by both and naming one job', rounds.every((r) => r[0] === 202 && r[1] === 202 && r[2] === true), true);
+      await kill(D1);
+      await kill(D2);
+    }
+
+    // ---- text that a database column refuses (a NUL, a lone surrogate) typed into one query does not stop other people
+    {
+      const bad = await submit(A.base, 'nasty-1', [{ id: 'q1', intent: 'direct_recommendation', queryText: 'best poke\u0000 in Austin\ud800', targetPersona: 'Buyer' }]);
+      const next = await submit(B.base, 'nasty-2');
+      check('one person\'s query with a NUL and a lone surrogate is accepted or refused with a sentence, and the next audit from the other server is still accepted', [[202, 400].includes(bad.status), next.status], [true, 202]);
+    }
 
     // ---- an audit submitted on one server is advanced by the other
     const jobId = s1.body.jobId as string;
@@ -186,12 +226,33 @@ async function run(url: string) {
     const inc = await q('SELECT kind, detail FROM $SCHEMA.incidents WHERE job_id = $1', [cut.body.jobId]);
     check('...and an incident says a call may have been made twice', inc.map((i) => [i.kind, /may have been made twice/.test(i.detail)]), [['lease_expired_midcall', true]]);
 
+    // ---- a server that BOOTS while another one is in the middle of a call must not release that claim (on a shared
+    // database the other server is alive: releasing it would let this one repeat a call that is still being made)
+    {
+      const L1 = start({ AUDIT_LEASE_MS: '60000' });
+      await up(L1);
+      mode = 'slow';
+      const held = await submit(L1.base, 'boot-1');
+      before = fake.hits();
+      const running = advance(L1.base, held.body.jobId); // holds the claim for the 4 s the fake takes to answer
+      await waitHits(before + 1);
+      const L2 = start({ AUDIT_LEASE_MS: '60000' });
+      await up(L2);
+      const meanwhile = await advance(L2.base, held.body.jobId);
+      check('a server that boots while another holds a live claim finds the step busy: it did not release it, and made no second call', [meanwhile.body.outcome, fake.hits() - before], ['busy', 1]);
+      mode = 'ok';
+      const finished = await running;
+      check('...and the first server\'s own step then completes', finished.body.outcome, 'advanced');
+      await kill(L1);
+      await kill(L2);
+    }
+
     // ---- every server killed, a new one started: nothing is lost
     await kill(B);
     const C = start();
     await up(C);
     const histC = (await (await fetch(`${C.base}/api/audits`)).json()) as any;
-    check('after every server was killed, a new one still lists all three saved audits', histC.audits?.length >= 2, true);
+    check('after every server was killed, a new one still lists both saved audits', histC.audits?.length, 2);
     const old = await (await fetch(`${C.base}/api/audit/job/${jobId}`)).json();
     check('...and still has the first audit\'s result', [(old as any).status, (old as any).report?.id !== undefined], ['done', true]);
 

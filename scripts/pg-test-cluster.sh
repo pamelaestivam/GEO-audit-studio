@@ -34,7 +34,7 @@ case "${1:-start}" in
         mkdir -p "$DIR"
         if [ "$(id -u)" = 0 ]; then chown postgres:postgres "$DIR"; fi
         chmod 700 "$DIR"
-        as_pg "$BIN/initdb" -D "$DIR" -A trust -U postgres >/dev/null
+        as_pg "$BIN/initdb" -D "$DIR" -A trust -U postgres -E UTF8 --locale=C.UTF-8 >/dev/null
       fi
       as_pg "$BIN/pg_ctl" -D "$DIR" -o "-p $PORT -c listen_addresses=127.0.0.1 -c unix_socket_directories=$DIR" -l "$DIR/server.log" -w start >/dev/null
     fi

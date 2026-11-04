@@ -612,6 +612,91 @@ async function postgresChecksAgainst(url: string) {
       check('postgres: text that is not an address also falls back, with a sentence', [bad.info().kind, /DATABASE_URL/.test(bad.info().note || '')], ['memory', true]);
       check('postgres: ...and nothing logged repeats it', logged.some((m) => /topsecretpw/.test(m)), false);
     }
+    // A connection that dies while the store holds it in a transaction is an error for that call, not the end of the
+    // process (pg-pool removes its own error listener while a client is checked out: an unhandled 'error' event would
+    // kill this whole test run, which is how the fault was found).
+    {
+      const S = await freshSchema();
+      const st = await openIn(S);
+      await st.createPlannedJob(job({ id: 'dead1' }), PLAN);
+      const blocker = await admin.connect();
+      try {
+        await blocker.query('BEGIN');
+        await blocker.query(`SELECT 1 FROM ${S}.jobs WHERE id = 'dead1' FOR UPDATE`);
+        const myPid = (await blocker.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+        const pending = st.claimStep('dead1', 'A', LEASE, NOW, 3).then(
+          () => 'resolved',
+          (e: any) => `rejected: ${String(e?.message ?? e)}`
+        );
+        let killed = 0;
+        for (let i = 0; i < 100 && killed === 0; i++) {
+          const waiting = await admin.query(
+            `SELECT pg_terminate_backend(pid) AS ok FROM pg_stat_activity WHERE datname = current_database() AND pid <> $1 AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
+            [myPid]
+          );
+          killed = waiting.rows.length;
+          if (killed === 0) await new Promise((r) => setTimeout(r, 50));
+        }
+        const outcome = await pending;
+        check('postgres: a connection killed while a claim waits inside its transaction is an error for that call', [killed > 0, outcome.startsWith('rejected')], [true, true]);
+      } finally {
+        await blocker.query('ROLLBACK').catch(() => undefined);
+        blocker.release();
+      }
+      check('postgres: ...the process is still alive and the store still works on a fresh connection', [(await st.getJob('dead1'))?.id, (await st.claimStep('dead1', 'B', LEASE, NOW + 1, 3)).outcome], ['dead1', 'claimed']);
+      st.close();
+    }
+
+    // What a person types reaches the stored plan. Text that JSONB refuses (a NUL, a lone surrogate) must not make the
+    // count of running jobs fail for everyone else.
+    {
+      const st = await openIn(await freshSchema());
+      const nasty = { driver: 'client', request: { queries: [{ queryText: 'a\u0000b' }, { queryText: '\ud800' }] } };
+      await st.createPlannedJob(job({ id: 'nasty1', plan: nasty as any, startedAt: NOW, heartbeatAt: NOW }), PLAN);
+      await st.createPlannedJob(job({ id: 'fine1', plan: { driver: 'client' } as any, startedAt: NOW, heartbeatAt: NOW }), PLAN);
+      let counted: number | string;
+      try {
+        counted = await st.countRunning(DAY, NOW + 1000, 60_000);
+      } catch (e: any) {
+        counted = `threw: ${String(e?.message ?? e)}`;
+      }
+      check('postgres: a plan with a NUL and a lone surrogate does not break the running count', counted, 2);
+      check('postgres: ...and a stale one is still dropped from it by the plan that CAN be read', await st.countRunning(DAY, NOW + 10 * 60_000, 60_000).catch(() => -1), 1);
+      st.close();
+    }
+
+    // Fractions (an operator's AUDIT_LEASE_MS=1500.5) must not turn into "invalid input syntax for type bigint".
+    {
+      const st = await openIn(await freshSchema());
+      await st.createPlannedJob(job({ id: 'frac1' }), PLAN);
+      let frac = '';
+      try {
+        const claim = await st.claimStep('frac1', 'A', 1500.5, NOW + 0.5, 3);
+        await st.touchJob('frac1', NOW + 2.5);
+        await st.countRunning(900000.5, NOW + 3.5, 100.5);
+        await st.failStuck(900000.5, 'too long', NOW + 4.5);
+        frac = claim.outcome;
+      } catch (e: any) {
+        frac = `threw: ${String(e?.message ?? e)}`;
+      }
+      check('postgres: fractional times and limits are rounded, not refused', frac, 'claimed');
+      st.close();
+    }
+
+    // The store needs BIGINT as numbers; a pool that was not made by createPgPool is refused at the start.
+    {
+      const mod: any = await import('pg');
+      const plain = new (mod.default ?? mod).Pool({ connectionString: url, max: 1 });
+      let refused = '';
+      try {
+        await PostgresStore.open(plain);
+      } catch (e: any) {
+        refused = String(e?.message ?? e);
+      } finally {
+        await plain.end();
+      }
+      check('postgres: a pool that returns BIGINT as text is refused with a sentence that says what to use', /createPgPool/.test(refused), true);
+    }
   } finally {
     for (const S of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${S} CASCADE`).catch(() => undefined);
     await admin.end();

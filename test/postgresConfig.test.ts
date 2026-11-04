@@ -2,7 +2,9 @@
  * Pure checks for reading DATABASE_URL: no database is contacted. The address carries the password, so what these
  * prove is mostly what must NOT happen (an error or a log line repeating it). Run: npx tsx test/postgresConfig.test.ts
  */
+import net from 'net';
 import { PG_MIGRATIONS, pgConfigFromUrl, scrubDbText } from '../src/postgresStore';
+import { openStore } from '../src/store';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -57,5 +59,52 @@ check('text with no address is left alone', scrubDbText('ECONNREFUSED 127.0.0.1:
 check('there is at least one migration', PG_MIGRATIONS.length >= 1, true);
 check('every migration is non-empty text', PG_MIGRATIONS.every((m) => typeof m === 'string' && m.trim().length > 0), true);
 
-console.log(failures === 0 ? '\nAll PostgreSQL configuration checks passed.' : `\n${failures} check(s) failed.`);
-process.exit(failures === 0 ? 0 : 1);
+/**
+ * A pretend PostgreSQL server that answers every connection with an error whose TEXT CONTAINS THE ADDRESS, password
+ * included (a server, a pooler or a driver can do that). A real unreachable host gives a message with no secret in
+ * it, so it cannot prove that the log line is scrubbed; this can.
+ */
+function startFakePostgres(): Promise<{ port: number; close: () => void }> {
+  return new Promise((resolve) => {
+    let port = 0;
+    const server = net.createServer((sock) => {
+      sock.on('error', () => undefined);
+      sock.once('data', () => {
+        const text = `rejected postgresql://geo:topsecretpw@127.0.0.1:${port}/nope (password authentication failed)`;
+        const fields = Buffer.concat([Buffer.from('SFATAL\0'), Buffer.from('VFATAL\0'), Buffer.from('C28P01\0'), Buffer.from(`M${text}\0`), Buffer.from('\0')]);
+        const head = Buffer.alloc(5);
+        head.write('E', 0);
+        head.writeInt32BE(fields.length + 4, 1);
+        sock.end(Buffer.concat([head, fields]));
+      });
+    });
+    server.listen(0, '127.0.0.1', () => {
+      port = (server.address() as net.AddressInfo).port;
+      resolve({ port, close: () => server.close() });
+    });
+  });
+}
+
+async function wiringChecks() {
+  const fake = await startFakePostgres();
+  try {
+    const logged: string[] = [];
+    const store = await openStore({ databaseUrl: `postgresql://geo:topsecretpw@127.0.0.1:${fake.port}/nope`, log: (m) => logged.push(m) });
+    check('a server whose own error message contains the address and password: openStore falls back to memory', [store.info().kind, store.info().durable], ['memory', false]);
+    check('...the log line has the cause (the driver said it was rejected)', logged.some((m) => /could not open the PostgreSQL database/.test(m) && /password authentication failed/.test(m)), true);
+    check('...and the address, with the password, is replaced in the log line', [logged.some((m) => /topsecretpw/.test(m)), logged.some((m) => /\[database address\]/.test(m))], [false, true]);
+    check('...and the public note has neither the password nor the host', /topsecretpw|127\.0\.0\.1/.test(store.info().note || ''), false);
+  } finally {
+    fake.close();
+  }
+}
+
+wiringChecks()
+  .then(() => {
+    console.log(failures === 0 ? '\nAll PostgreSQL configuration checks passed.' : `\n${failures} check(s) failed.`);
+    process.exit(failures === 0 ? 0 : 1);
+  })
+  .catch((err) => {
+    console.error('PostgreSQL configuration test harness error:', err);
+    process.exit(1);
+  });

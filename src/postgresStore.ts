@@ -98,6 +98,16 @@ export const PG_MIGRATIONS: string[] = [
   );
   CREATE INDEX incidents_at ON incidents(at);
   CREATE INDEX incidents_job ON incidents(job_id);
+  -- Who drives a job, read from its plan text. A plan holds what a person typed, and JSONB refuses some text that is
+  -- valid JSON (a NUL, a lone surrogate): one such plan must not make every later count fail, so an unreadable plan
+  -- answers NULL (which counts as a job that holds its slot, the safe side).
+  CREATE FUNCTION geo_plan_driver(t TEXT) RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $fn$
+  BEGIN
+    RETURN (t::jsonb) ->> 'driver';
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+  $fn$;
   `,
 ];
 
@@ -123,7 +133,7 @@ export function pgConfigFromUrl(raw: string): PoolConfig {
   try {
     u = new URL(raw.trim());
   } catch {
-    throw new Error('DATABASE_URL is not a valid address (it should look like postgresql://user:password@host:6543/postgres)');
+    throw new Error('DATABASE_URL is not a valid address (user, password, host, port and database name in the usual postgresql:// form)');
   }
   if (u.protocol !== 'postgres:' && u.protocol !== 'postgresql:') {
     throw new Error('DATABASE_URL must start with postgresql://');
@@ -156,8 +166,8 @@ export async function createPgPool(connectionString: string, overrides: Partial<
     max: 3,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 8_000,
-    statement_timeout: 15_000,
-    application_name: 'geo-audit-studio',
+    // Client-side: a startup parameter such as statement_timeout can be refused by a transaction pooler.
+    query_timeout: 15_000,
     allowExitOnIdle: true,
     // BIGINT arrives as text by default; every timestamp here is a millisecond count well inside 2^53.
     types: { getTypeParser: (oid: number, format?: any) => (oid === 20 ? (v: string) => Number(v) : pg.types.getTypeParser(oid, format)) } as any,
@@ -169,34 +179,57 @@ export async function createPgPool(connectionString: string, overrides: Partial<
   return pool;
 }
 
+/** A fractional number (an operator's AUDIT_LEASE_MS=1500.5, say) is not a BIGINT: round it instead of failing the query. */
+function wholeNumber(v: any): any {
+  return typeof v === 'number' && !Number.isInteger(v) ? Math.round(v) : v;
+}
+
 export class PostgresStore implements Store {
   readonly instanceId = newInstanceId();
+  /** Every query goes through here, so parameters are normalised in one place. */
+  private readonly db: Queryable;
 
-  private constructor(private readonly pool: Pool) {}
+  private constructor(private readonly pool: Pool) {
+    this.db = { query: (text, values) => pool.query(text, values?.map(wholeNumber)) as Promise<{ rows: any[]; rowCount: number | null }> };
+  }
 
   /** Connect, bring the schema up to date (safe when several processes start at once), and return the store. */
   static async open(pool: Pool): Promise<PostgresStore> {
+    // Timestamps are BIGINT and are read as numbers; a pool that was not made by createPgPool would hand back text,
+    // which would corrupt every comparison later. Say so now rather than then.
+    const probe = await pool.query('SELECT 1::bigint AS n');
+    if (typeof probe.rows[0]?.n !== 'number') throw new Error('the connection pool does not return BIGINT values as numbers; create it with createPgPool');
     const store = new PostgresStore(pool);
     await store.migrate();
     return store;
   }
 
-  private async tx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
-    const c = await this.pool.connect();
+  private async tx<T>(fn: (q: Queryable) => Promise<T>): Promise<T> {
+    const c: PoolClient = await this.pool.connect();
+    // pg-pool takes its own 'error' listener off a client while it is checked out. Without one here, a connection that
+    // dies mid-transaction (a pooler restart, an idle cut, a network blip) raises an unhandled 'error' event and ends
+    // the whole process. It is an error for this call only; the broken connection is thrown away, not reused.
+    let destroy = false;
+    const onError = () => {
+      destroy = true;
+    };
+    c.on('error', onError);
+    const q: Queryable = { query: (text, values) => c.query(text, values?.map(wholeNumber)) as Promise<{ rows: any[]; rowCount: number | null }> };
     try {
-      await c.query('BEGIN');
-      const out = await fn(c);
-      await c.query('COMMIT');
+      await q.query('BEGIN');
+      const out = await fn(q);
+      await q.query('COMMIT');
       return out;
     } catch (err) {
       try {
-        await c.query('ROLLBACK');
+        await q.query('ROLLBACK');
       } catch {
-        /* the original error is the one to report */
+        destroy = true; // the connection cannot even roll back; the original error is the one to report
       }
       throw err;
     } finally {
-      c.release();
+      c.removeListener('error', onError);
+      c.release(destroy ? true : undefined);
     }
   }
 
@@ -248,14 +281,14 @@ export class PostgresStore implements Store {
     );
   }
   async createJob(job: StoredJob) {
-    await this.insertJob(this.pool, job);
+    await this.insertJob(this.db, job);
   }
   async getJob(id: string) {
-    const r = await this.pool.query('SELECT * FROM jobs WHERE id = $1', [id]);
+    const r = await this.db.query('SELECT * FROM jobs WHERE id = $1', [id]);
     return r.rows[0] ? rowToJob(r.rows[0]) : null;
   }
   async findJobByKey(owner: string, idemKey: string) {
-    const r = await this.pool.query('SELECT * FROM jobs WHERE owner = $1 AND idem_key = $2', [owner, idemKey]);
+    const r = await this.db.query('SELECT * FROM jobs WHERE owner = $1 AND idem_key = $2', [owner, idemKey]);
     return r.rows[0] ? rowToJob(r.rows[0]) : null;
   }
   async updateJob(id: string, patch: Parameters<Store['updateJob']>[1]) {
@@ -275,13 +308,13 @@ export class PostgresStore implements Store {
     if (patch.failCode !== undefined) add('fail_code', patch.failCode);
     if (sets.length === 0) return;
     vals.push(id);
-    await this.pool.query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
+    await this.db.query(`UPDATE jobs SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals);
   }
   async touchJob(id: string, now: number, patch: { phase?: string } = {}) {
     if (patch.phase !== undefined) {
-      await this.pool.query('UPDATE jobs SET heartbeat_at = $1, instance_id = $2, phase = $3 WHERE id = $4', [now, this.instanceId, patch.phase, id]);
+      await this.db.query('UPDATE jobs SET heartbeat_at = $1, instance_id = $2, phase = $3 WHERE id = $4', [now, this.instanceId, patch.phase, id]);
     } else {
-      await this.pool.query('UPDATE jobs SET heartbeat_at = $1, instance_id = $2 WHERE id = $3', [now, this.instanceId, id]);
+      await this.db.query('UPDATE jobs SET heartbeat_at = $1, instance_id = $2 WHERE id = $3', [now, this.instanceId, id]);
     }
   }
 
@@ -302,11 +335,11 @@ export class PostgresStore implements Store {
     });
   }
   async getJobSteps(jobId: string) {
-    const r = await this.pool.query('SELECT * FROM job_steps WHERE job_id = $1 ORDER BY seq', [jobId]);
+    const r = await this.db.query('SELECT * FROM job_steps WHERE job_id = $1 ORDER BY seq', [jobId]);
     return r.rows.map(rowToStep);
   }
   async compactJobSteps(jobId: string) {
-    await this.pool.query("UPDATE job_steps SET result = NULL WHERE job_id = $1 AND state IN ('done', 'skipped')", [jobId]);
+    await this.db.query("UPDATE job_steps SET result = NULL WHERE job_id = $1 AND state IN ('done', 'skipped')", [jobId]);
   }
   async claimStep(jobId: string, holder: string, leaseMs: number, now: number, maxAttempts: number): Promise<ClaimResult> {
     return this.tx(async (c) => {
@@ -330,14 +363,14 @@ export class PostgresStore implements Store {
     });
   }
   async markCallStarted(jobId: string, seq: number, holder: string, attempt: number, now: number) {
-    const r = await this.pool.query(
+    const r = await this.db.query(
       "UPDATE job_steps SET call_started_at = $1 WHERE job_id = $2 AND seq = $3 AND state = 'leased' AND lease_holder = $4 AND attempt = $5",
       [now, jobId, seq, holder, attempt]
     );
     return (r.rowCount ?? 0) > 0;
   }
   async completeStep(jobId: string, seq: number, attempt: number, c: StepCompletion, now: number) {
-    const r = await this.pool.query(
+    const r = await this.db.query(
       `UPDATE job_steps SET state = $1, result = $2, skip_reason = $3, error_code = $4, finished_at = $5, lease_until = NULL, lease_holder = NULL
        WHERE job_id = $6 AND seq = $7 AND state = 'leased' AND attempt = $8`,
       [c.state, c.result === undefined ? null : JSON.stringify(c.result), c.skipReason ?? null, c.errorCode ?? null, now, jobId, seq, attempt]
@@ -348,16 +381,16 @@ export class PostgresStore implements Store {
   // --- incidents and outcomes
 
   async recordIncident(incident: Omit<Incident, 'id'>) {
-    await this.pool.query('INSERT INTO incidents (job_id, at, kind, detail) VALUES ($1,$2,$3,$4)', [incident.jobId ?? null, incident.at, incident.kind, cutIncident(incident.detail)]);
+    await this.db.query('INSERT INTO incidents (job_id, at, kind, detail) VALUES ($1,$2,$3,$4)', [incident.jobId ?? null, incident.at, incident.kind, cutIncident(incident.detail)]);
   }
   async listIncidents(opts: { jobId?: string; limit?: number } = {}) {
     const r = opts.jobId
-      ? await this.pool.query('SELECT * FROM incidents WHERE job_id = $1 ORDER BY id DESC LIMIT $2', [opts.jobId, clampLimit(opts.limit)])
-      : await this.pool.query('SELECT * FROM incidents ORDER BY id DESC LIMIT $1', [clampLimit(opts.limit)]);
+      ? await this.db.query('SELECT * FROM incidents WHERE job_id = $1 ORDER BY id DESC LIMIT $2', [opts.jobId, clampLimit(opts.limit)])
+      : await this.db.query('SELECT * FROM incidents ORDER BY id DESC LIMIT $1', [clampLimit(opts.limit)]);
     return r.rows.map((x: any) => ({ id: Number(x.id), jobId: x.job_id ?? undefined, at: Number(x.at), kind: x.kind, detail: x.detail }) as Incident);
   }
   async countJobOutcomesSince(sinceMs: number) {
-    const r = await this.pool.query(
+    const r = await this.db.query(
       `SELECT status, COALESCE(fail_code, 'none') AS code, billable, COUNT(*) AS n FROM jobs
        WHERE owner <> $1 AND status IN ('error', 'done') AND COALESCE(finished_at, started_at) >= $2
        GROUP BY status, COALESCE(fail_code, 'none'), billable`,
@@ -379,27 +412,27 @@ export class PostgresStore implements Store {
   async countRunning(maxAgeMs: number, now = Date.now(), staleAfterMs?: number) {
     const r =
       staleAfterMs === undefined
-        ? await this.pool.query("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= $1", [now - maxAgeMs])
-        : await this.pool.query(
-            "SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= $1 AND (COALESCE((plan::jsonb) ->> 'driver', '') <> 'client' OR COALESCE(heartbeat_at, started_at) >= $2)",
+        ? await this.db.query("SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= $1", [now - maxAgeMs])
+        : await this.db.query(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status = 'running' AND started_at >= $1 AND (COALESCE(geo_plan_driver(plan), '') <> 'client' OR COALESCE(heartbeat_at, started_at) >= $2)",
             [now - maxAgeMs, now - staleAfterMs]
           );
     return Number(r.rows[0].n);
   }
   async countJobsSince(sinceMs: number, owner?: string) {
     const r = owner
-      ? await this.pool.query('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= $1 AND budget_key = $2 AND billable = 1', [sinceMs, owner])
-      : await this.pool.query('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= $1 AND billable = 1', [sinceMs]);
+      ? await this.db.query('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= $1 AND budget_key = $2 AND billable = 1', [sinceMs, owner])
+      : await this.db.query('SELECT COUNT(*) AS n FROM jobs WHERE started_at >= $1 AND billable = 1', [sinceMs]);
     return Number(r.rows[0].n);
   }
   async oldestJobSince(sinceMs: number, owner?: string) {
     const r = owner
-      ? await this.pool.query('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= $1 AND budget_key = $2 AND billable = 1', [sinceMs, owner])
-      : await this.pool.query('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= $1 AND billable = 1', [sinceMs]);
+      ? await this.db.query('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= $1 AND budget_key = $2 AND billable = 1', [sinceMs, owner])
+      : await this.db.query('SELECT MIN(started_at) AS t FROM jobs WHERE started_at >= $1 AND billable = 1', [sinceMs]);
     return r.rows[0].t === null || r.rows[0].t === undefined ? null : Number(r.rows[0].t);
   }
   async failStuck(maxAgeMs: number, reason: string, now = Date.now()) {
-    const r = await this.pool.query(
+    const r = await this.db.query(
       `UPDATE jobs SET status = 'error', error = $1, finished_at = $2, fail_code = $3,
          billable = CASE WHEN EXISTS (SELECT 1 FROM job_steps s WHERE s.job_id = jobs.id AND (s.call_started_at IS NOT NULL OR s.repeated_calls > 0)) THEN 1 ELSE 0 END
        WHERE status = 'running' AND started_at < $4`,
@@ -408,19 +441,19 @@ export class PostgresStore implements Store {
     return r.rowCount ?? 0;
   }
   async failAllRunning(reason: string, now = Date.now()) {
-    const r = await this.pool.query("UPDATE jobs SET status = 'error', error = $1, finished_at = $2, billable = 0, fail_code = $3 WHERE status = 'running'", [reason, now, RESTARTED_FAIL_CODE]);
+    const r = await this.db.query("UPDATE jobs SET status = 'error', error = $1, finished_at = $2, billable = 0, fail_code = $3 WHERE status = 'running'", [reason, now, RESTARTED_FAIL_CODE]);
     return r.rowCount ?? 0;
   }
   async failRunningWithoutPlan(reason: string, now = Date.now()) {
-    const r = await this.pool.query("UPDATE jobs SET status = 'error', error = $1, finished_at = $2, billable = 0, fail_code = $3 WHERE status = 'running' AND plan IS NULL", [reason, now, RESTARTED_FAIL_CODE]);
+    const r = await this.db.query("UPDATE jobs SET status = 'error', error = $1, finished_at = $2, billable = 0, fail_code = $3 WHERE status = 'running' AND plan IS NULL", [reason, now, RESTARTED_FAIL_CODE]);
     return r.rowCount ?? 0;
   }
   async releaseLeasesNotHeldBy(instanceId: string) {
-    const r = await this.pool.query("UPDATE job_steps SET lease_until = 0 WHERE state = 'leased' AND position($1::text in COALESCE(lease_holder, '')) = 0", [`:${instanceId}:`]);
+    const r = await this.db.query("UPDATE job_steps SET lease_until = 0 WHERE state = 'leased' AND position($1::text in COALESCE(lease_holder, '')) = 0", [`:${instanceId}:`]);
     return r.rowCount ?? 0;
   }
   async listRunningPlanned() {
-    const r = await this.pool.query("SELECT * FROM jobs WHERE status = 'running' AND plan IS NOT NULL ORDER BY started_at");
+    const r = await this.db.query("SELECT * FROM jobs WHERE status = 'running' AND plan IS NOT NULL ORDER BY started_at");
     return r.rows.map(rowToJob);
   }
   async pruneJobs(beforeMs: number) {
@@ -437,7 +470,7 @@ export class PostgresStore implements Store {
   async saveAudit(owner: string, report: any) {
     // Re-saving an id replaces it, but only for the same owner: the WHERE leaves another owner's row untouched,
     // and the read-back below turns that into an error rather than a silent drop.
-    await this.pool.query(
+    await this.db.query(
       `INSERT INTO audits (id, owner, created_at, summary, report) VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (id) DO UPDATE SET created_at = EXCLUDED.created_at, summary = EXCLUDED.summary, report = EXCLUDED.report
        WHERE audits.owner = EXCLUDED.owner`,
@@ -446,15 +479,15 @@ export class PostgresStore implements Store {
     if (!(await this.getAudit(owner, report.id))) throw new Error('audit id belongs to another owner');
   }
   async listAudits(owner: string, limit = 50) {
-    const r = await this.pool.query('SELECT summary FROM audits WHERE owner = $1 ORDER BY created_at DESC LIMIT $2', [owner, limit]);
+    const r = await this.db.query('SELECT summary FROM audits WHERE owner = $1 ORDER BY created_at DESC LIMIT $2', [owner, limit]);
     return r.rows.map((x: any) => JSON.parse(x.summary) as AuditSummary);
   }
   async getAudit(owner: string, id: string) {
-    const r = await this.pool.query('SELECT report FROM audits WHERE owner = $1 AND id = $2', [owner, id]);
+    const r = await this.db.query('SELECT report FROM audits WHERE owner = $1 AND id = $2', [owner, id]);
     return r.rows[0] ? JSON.parse(r.rows[0].report) : null;
   }
   async deleteAudit(owner: string, id: string) {
-    const r = await this.pool.query('DELETE FROM audits WHERE owner = $1 AND id = $2', [owner, id]);
+    const r = await this.db.query('DELETE FROM audits WHERE owner = $1 AND id = $2', [owner, id]);
     return (r.rowCount ?? 0) > 0;
   }
 
