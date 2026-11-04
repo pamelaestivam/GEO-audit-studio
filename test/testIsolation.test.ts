@@ -34,7 +34,13 @@ function startsServerUnisolated(raw: string): boolean {
   const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
   // (a method call such as RegExp.exec( is not a process start, hence the look-behind)
   const spawnsBundle = /server\.cjs/.test(src) && /(?<![.\w])(spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\(/.test(src);
-  if (spawnsBundle && !/\.\.\.\s*TEST_AUTH_ENV/.test(src)) return true;
+  if (spawnsBundle) {
+    // One spread per place that starts a process: a second start that forgets it must not hide behind the first.
+    // (only calls that name the bundle before the statement ends: a spawn of `node -e` or of a script is not a server start)
+    const starts = (src.match(/(?<![.\w])(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\([^;]{0,300}?server\.cjs/g) || []).length;
+    const spreads = (src.match(/\.\.\.\s*TEST_AUTH_ENV/g) || []).length;
+    if (spreads < starts) return true;
+  }
   const buildsInProcess = /(?:from|import\s*\(|require\s*\()\s*['"]\.\.\/(?:server|api)(?:\/[^'"]*)?['"]/.test(src);
   if (buildsInProcess && !/delete\s+process\.env\.DATABASE_URL|process\.env\.DATABASE_URL\s*=\s*['"]{2}/.test(src)) return true;
   return false;
@@ -45,6 +51,8 @@ check('a suite that spawns the server with process.env and nothing else is flagg
 check('...one that spreads TEST_AUTH_ENV is not', startsServerUnisolated(`spawn('node', ['dist/server.cjs'], { env: { ...process.env, ...TEST_AUTH_ENV } })`), false);
 check('...the word DATABASE_URL in a comment does not isolate it', startsServerUnisolated(`// DATABASE_URL\nspawn('node', ['dist/server.cjs'], { env: { ...process.env } })`), true);
 check('...a file that only mentions the bundle in a comment and calls RegExp.exec is not a start', startsServerUnisolated(`// esbuild does for dist/server.cjs\nwhile ((m = RE.exec(src))) {}`), false);
+check('...a second start that forgets the spread is flagged even though the first has it', startsServerUnisolated(`spawn('node', ['dist/server.cjs'], { env: { ...process.env, ...TEST_AUTH_ENV } });\nspawn('node', ['dist/server.cjs'], { env: { ...process.env } });`), true);
+check('...two starts that both spread it are not', startsServerUnisolated(`spawn('node', ['dist/server.cjs'], { env: { ...TEST_AUTH_ENV } });\nspawn('node', ['dist/server.cjs'], { env: { ...TEST_AUTH_ENV } });`), false);
 check('...a spread inside a comment does not isolate it', startsServerUnisolated(`// ...TEST_AUTH_ENV\nspawn('node', ['dist/server.cjs'], { env: { ...process.env } })`), true);
 check('...a path built with path.join is still a start of the server', startsServerUnisolated(`spawn('node', [path.join(cwd, 'dist', 'server.cjs')], { env: { ...process.env } })`), true);
 check('...so is exec of the bundle', startsServerUnisolated(`exec('node dist/server.cjs')`), true);

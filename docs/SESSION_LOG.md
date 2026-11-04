@@ -277,3 +277,10 @@ test now removes the variable itself (0 tables with it exported; 5 with the line
 imports `../server` or `../api` without doing so, ignores comments, and no longer accepts the bare word DATABASE_URL as isolation
 (16 checks, each shape has a fixture). Not tested, said plainly: upgrading a database made by the first commit of this branch
 (checked once by the reviewer's own script; no database has ever been made by it).
+
+**Final confirmation (2026-11-04):** the reviewer APPROVED commit 444da8a (the `vercelServerless` leak closed: 0 tables with the variable
+exported, on that suite and two others) and noted the guard counted per file, not per server start: removing the spread from the second
+spawn of `quotaBreakerE2E` still passed. It now requires one `...TEST_AUTH_ENV` per call that starts the bundle (18 checks; the same
+mutation is named by it, and restored). Still true and not covered: a spelling of the in-process import with an extension
+(`'../server.ts'`) is not matched, and an env built far from the spawn could satisfy the count without being used; the repository's
+convention (no extension, the spread beside the spawn) makes both contrived.
