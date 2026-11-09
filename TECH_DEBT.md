@@ -232,7 +232,13 @@ Logs check the function duration and any "Task timed out". If it reproduces,
 the fix is not another routing tweak - it is item 1 in the roadmap (an
 always-on service, or a real queue), decided by the owner (D1).
 
-### 1.5 Set up auth with Google (Google Cloud Console) (tracked, not started)
+### 1.5 Set up auth with Google (Google Cloud Console) (BUILT 2026-11-09; waits on the owner's client id, `docs/PROGRAM.md` O-6)
+
+**Update 2026-11-09:** built as `src/googleAuth.ts` and wired into the sign-in page (`docs/DECISIONS.md` 2026-11-09). It sits
+ALONGSIDE access codes, not instead of them (the daily live check and every end-to-end suite sign in with a code; delete
+`ACCESS_CODES` to make Google the only way in), and only addresses in `GOOGLE_ALLOWED_EMAILS` get a session. The "where are sessions
+stored" question below was answered by the existing signed token (no table). Residual limits are in 2.18. The original entry follows.
+
 
 Raised in the same session, alongside 2.2 (auth is currently not real
 auth - anyone who submits a login is auto-registered, no session
@@ -750,6 +756,45 @@ present in the sources): a negated `if` and its return on one line after an `els
 the negated `if`; `return` without a semicolon; a template literal with text at column 0 inside the block; an object
 literal in the condition ahead of `=== false`; a status written only inside a string. A fake-server handler that returns
 after a `!`/`!==` check needs `// harness-ok: <why>`.
+
+### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
+
+PROVEN with a fake Google (a local keys server and tokens signed with its key; unit, built-server and browser checks; the core
+protections were each broken in turn and a check failed, and the independent security review found five more with no check, which now
+have one): every way an ID token can be wrong is refused (algorithm none or HMAC, wrong key, key under 2048 bits, other
+audience or issuer, expired, issued in the future, lifetime over a day, unverified or missing email, oversized or malformed); only
+invited addresses get a session; removing an address ends its session; a Google-only server accepts no access code; Google's keys are
+fetched once and kept, a refresh is limited to one a minute, keys already held keep working when Google cannot be reached; attempts
+are rate limited like access-code attempts; the page fails in sentences (script blocked, not invited, expired) and fits a phone.
+NOT proven or left open:
+
+- **Never tried with a real Google account.** Google's real script, button, popup and account chooser were not run (the sandbox has no
+  Google account); the browser test uses a stand-in button. Whether the real token carries exactly the claims read here (it should:
+  `iss`, `aud`, `exp`, `iat`, `sub`, `email`, `email_verified`) is from Google's documentation, checked against nothing live. The
+  first real sign-in is that measurement. Browsers that block third-party cookies or ad blockers can stop Google's button: the page
+  says so and the access code still works.
+- **The invited list is matched on the email address, not pinned to Google's account id (`sub`).** If an invited address's domain
+  lapses or is re-registered, whoever controls the new mailbox on it can sign in; and a session lasts seven days whatever later
+  happens to the Google account (a closed or taken-over account stays signed in here until the session ends or the address is
+  removed from the list). Pinning `sub` at first sign-in needs somewhere to keep it (the database now exists).
+- **Only plain ASCII addresses can sign in** (in the list and in the token): a Google account with an internationalised address is
+  refused with the generic sentence. Chosen so that case folding of other alphabets (the Kelvin sign lower-cases to an ASCII k) can
+  never make an address Google did not issue equal to an invited one.
+- **No nonce or one-time use.** A valid ID token can be replayed until it expires (Google issues about an hour); the server turns it
+  into its own seven-day session and does not store tokens. Stealing one needs the person's browser, and only invited addresses
+  count. A signed one-time nonce would close it.
+- **The invited list is an environment variable.** Adding someone is a redeploy, and there is no "invited since" record. A whole
+  Google Workspace domain (`hd`) cannot be invited, on purpose: a plain domain match would invite every gmail.com address.
+- **Audits do not follow a person between sign-in methods.** Google users own `google|email`, code users own `label|email`.
+- **UX follow-ups left from the review (not login-page work):** after signing in, who is signed in and the Sign Out button are at the
+  very bottom of the sidebar (below the fold on a desktop, near the end of the page on a phone): a "Signed in as ..." chip in the
+  header would help, and matters more now that more than one Google account may be used on one machine. A malformed email in the
+  access-code form shows the browser's own validation bubble, so the page's own sentence never appears. The "Temporary storage"
+  notice arriving with the status moves the card a few pixels. Google's real dark button on the dark card could need a lighter theme
+  once seen.
+- **One keys fetch per cold instance** on Vercel (a few hundred bytes from Google); limits and the per-minute refresh are per instance.
+- **The reserved label `google`** may no longer be used in `ACCESS_CODES` (an owner would collide with Google users'); a deployment
+  that already used it is refused at start with a sentence.
 
 ### 2.17 The PostgreSQL store: what is proven and what is not (medium until it has run on the real services)
 

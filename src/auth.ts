@@ -23,6 +23,10 @@
  */
 
 import crypto from 'crypto';
+import { loadGoogleConfig, type GoogleConfig } from './googleAuth.js';
+import { normaliseEmail } from './email.js';
+
+export { normaliseEmail };
 
 export interface AccessCode {
   /**
@@ -40,6 +44,10 @@ export interface AuthConfig {
   secret: string;
   codes: AccessCode[];
   ttlMs: number;
+  /** Sign in with Google, when fully configured (GOOGLE_CLIENT_ID and GOOGLE_ALLOWED_EMAILS); see src/googleAuth.ts. */
+  google: GoogleConfig | null;
+  /** Google sign-in was configured but not enough to work: what the operator must fix, as a sentence. */
+  googleProblem?: string;
   /** In `unconfigured` mode: what the operator must fix, as a sentence. */
   problem?: string;
 }
@@ -63,6 +71,10 @@ export interface LoadAuthOptions {
 }
 
 const LABEL_PATTERN = /^[a-z0-9._-]{1,32}$/i;
+/** The owner prefix of everyone who signs in with Google: no access code may take it. */
+const GOOGLE_LABEL = 'google';
+/** What a Google session carries in the place of a code id (a code id is 16 hex characters, so they cannot collide). */
+export const GOOGLE_SESSION_ID = 'google';
 
 /**
  * `anna=7Kx9mQ2v` -> label "anna"; a bare code gets a label derived from itself.
@@ -88,6 +100,11 @@ function parseCodes(raw: string): { codes: AccessCode[]; problems: string[] } {
       code = entry.slice(eq + 1).trim();
       if (!LABEL_PATTERN.test(label)) {
         problems.push(`the label "${label}" is not valid (letters, digits, . _ - up to 32 characters)`);
+        continue;
+      }
+      if (label.toLowerCase() === GOOGLE_LABEL) {
+        // Saved audits belong to "label|email"; Google sign-in owns the "google|email" space.
+        problems.push(`the label "${label}" is reserved for Google sign-in; pick another`);
         continue;
       }
     }
@@ -119,8 +136,9 @@ export function loadAuthConfig(
   const secret = env.SESSION_SECRET || '';
   const ttlHours = Number(env.SESSION_TTL_HOURS);
   const ttlMs = (Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours : DEFAULT_TTL_HOURS) * 3600_000;
+  const { config: google, problem: googleProblem } = loadGoogleConfig(env);
 
-  if (!production && options.allowDev && !secret && rawCodes.length === 0) {
+  if (!production && options.allowDev && !secret && rawCodes.length === 0 && !google && !googleProblem) {
     return {
       mode: 'dev',
       // Fresh per process: dev sessions do not survive a restart, which is the
@@ -128,6 +146,7 @@ export function loadAuthConfig(
       secret: crypto.randomBytes(32).toString('hex'),
       codes: [{ label: 'dev', code: DEV_ACCESS_CODE }],
       ttlMs,
+      google: null,
     };
   }
 
@@ -139,8 +158,10 @@ export function loadAuthConfig(
         : 'SESSION_SECRET is not set'
     );
   }
-  if (rawCodes.length === 0 && codeProblems.length === 0) {
+  // Somebody has to be able to sign in: an access code, or a fully configured Google sign-in.
+  if (rawCodes.length === 0 && codeProblems.length === 0 && !google) {
     problems.push('ACCESS_CODES is not set (a comma-separated list of codes you hand to invited users)');
+    if (googleProblem) problems.push(googleProblem);
   }
   for (const p of Array.from(new Set(codeProblems))) problems.push(p);
 
@@ -150,21 +171,15 @@ export function loadAuthConfig(
       secret: '',
       codes: [],
       ttlMs,
+      google: null,
       problem: `Sign-in is not configured on this server: ${problems.join('; ')}. The operator needs to set these environment variables (see docs/DEPLOYMENT.md).`,
     };
   }
 
-  return { mode: 'configured', secret, codes: rawCodes, ttlMs };
+  return { mode: 'configured', secret, codes: rawCodes, ttlMs, google, ...(googleProblem ? { googleProblem } : {}) };
 }
 
 // ---------------------------------------------------------------------------
-
-export function normaliseEmail(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const email = value.trim().toLowerCase();
-  if (email.length > 254) return null;
-  return /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/.test(email) ? email : null;
-}
 
 export interface SessionUser {
   id: string;
@@ -200,6 +215,15 @@ export function userFromEmail(email: string, label = ''): SessionUser {
     owner: label ? `${label}|${email}` : email,
     budgetKey: label || email,
   };
+}
+
+/**
+ * Someone signed in with Google (their email was verified by Google and is on the invited list). Their saved audits
+ * belong to "google|email", which no access-code holder can reach, and their daily budget is their own: every person on
+ * the list is metered separately, unlike people who share one access code.
+ */
+export function userFromGoogle(email: string): SessionUser {
+  return { ...userFromEmail(email, GOOGLE_LABEL), budgetKey: `${GOOGLE_LABEL}|${email}` };
 }
 
 const b64u = (buf: Buffer | string) => Buffer.from(buf).toString('base64url');
@@ -302,6 +326,13 @@ export function verifyToken(token: unknown, config: AuthConfig, now = Date.now()
     return { ok: false, reason: 'malformed' };
   }
   if (now >= payload.exp) return { ok: false, reason: 'expired' };
+
+  // A Google session is only good while its address is still on the invited list (checked now, from the current
+  // configuration, like a code that has been withdrawn).
+  if (payload.cid === GOOGLE_SESSION_ID) {
+    if (!config.google || !config.google.allowedEmails.has(payload.sub)) return { ok: false, reason: 'code_revoked' };
+    return { ok: true, user: userFromGoogle(payload.sub), expiresAt: payload.exp };
+  }
 
   // The label comes from the CURRENT configuration, found through the code the
   // session was issued under - never from the token - so it cannot be forged

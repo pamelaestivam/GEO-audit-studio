@@ -30,6 +30,11 @@ export const TEST_AUTH_ENV = {
   // PostgreSQL. A suite that wants PostgreSQL sets its own after this (test/postgresE2E.test.ts); test/testIsolation.test.ts
   // fails if a suite that starts the server does not spread this.
   DATABASE_URL: '',
+  // Likewise a Google sign-in set up in the developer's shell must not change what a test server does; the suites that
+  // test it set their own after this spread.
+  GOOGLE_CLIENT_ID: '',
+  GOOGLE_ALLOWED_EMAILS: '',
+  GOOGLE_JWKS_URL: '',
 };
 
 export const rawFetch: typeof fetch = globalThis.fetch.bind(globalThis);

@@ -289,3 +289,28 @@ convention (no extension, the spread beside the spawn) makes both contrived.
 what the assistant said in chat) told the owner to tick Production AND Preview. Found on reading them again after the merge: a Preview
 deployment of any branch with a schema change would upgrade the production database, and its test audits would be real history.
 Corrected to Production only (PR #57); the owner is told in chat before setting the variable.
+
+## 2026-11-09: Sign in with Google (PR #58)
+
+**Asked by the owner:** make the login page sign in with Google, with the Connection Wall login as the reference. **Decisions** (recorded
+in `docs/DECISIONS.md` 2026-11-09): Google first and the access code second, only invited addresses (`GOOGLE_ALLOWED_EMAILS`), no secret
+and no redirect (Google's ID token checked against its published keys with `node:crypto`), sessions follow the list, access codes stay.
+**Built and proved with a fake Google** (a local keys server and tokens signed with its key): `src/googleAuth.ts`, `POST /api/auth/google`,
+the page (`GoogleSignInButton.tsx`, `AuthPage.tsx`). Two real defects were found by looking at the screens: the Google button asked for 320px
+in a 293px space (it measured its own hidden holder), and on a phone the sign-in was under the pitch. A test that awaits a promise that never
+settles made Node exit 0 in silence (AbortSignal timers do not keep a process alive): the test now keeps the loop alive and fails on an early end.
+**Independent reviews:** security (CHANGES REQUESTED: no way found for a stranger to get a session, but a burst of sign-ins on a cold server was
+answered "could not reach Google" while Google was fine, because callers did not wait for the fetch under way; an address folded by the Kelvin
+sign could equal an invited one; the keys fetch followed redirects and read a body before bounding it; list entries that match nobody were kept;
+five protections had no test) and UX (FIX FIRST: an access-code hint on a Google-only server, a layout jump while the status loaded, reading order,
+contrast, widths, focus, touch size). All fixed with a test that fails without each fix. Not proven: Google's real script, button and popup, and the
+real console steps (no Google account here): the first real sign-in is that measurement (`TECH_DEBT.md` 2.18). Owner action O-6 in `docs/PROGRAM.md`.
+
+**EVAL PM round (2026-11-09):** scored REVISE (73/100: Groundedness 3) for statements that outran the evidence, not for the code: the PR
+said the page is unchanged with no Google settings, but it hid the form behind a wait for the server's status (up to six seconds), moved the
+sign-in above the pitch on a phone, and its footer mentioned Google where Google is off. Fixed: the wait is 1.5 seconds, a form someone has
+started typing in is never taken away, the footer mentions Google only where Google is on (each shown to fail a check when broken), the PR
+body now lists what changes on the page even with Google unset (the short wait, the phone order, larger touch targets, small-text contrast),
+and `docs/DEPLOYMENT.md` 4c names the newer console path (Clients), both localhost origins, and that preview deployments cannot use Google's
+button. The security re-check of the fixes came back APPROVE (the cold-server burst, Kelvin sign, redirect, oversize and streamed bodies, list
+entries, and a 6000-request storm giving 24 fetches).

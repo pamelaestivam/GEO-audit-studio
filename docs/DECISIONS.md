@@ -5,6 +5,39 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-11-09 - Sign in with Google, next to access codes, for invited addresses only
+
+**Decision (assistant, on the owner's request of 2026-11-09 "let's get this login page fully login in with Google"; the owner
+supplied the Connection Wall sign-in page as the reference):** the sign-in page leads with **Continue with Google**; an access code
+is the second way in ("Use an access code instead", collapsed), as on the reference. Rules:
+1. **Invited only.** Google proves who someone is, not that they are invited, and anyone can have a Google account while this service
+   spends a free quota. Only addresses in `GOOGLE_ALLOWED_EMAILS` get a session; an empty list lets nobody in; a client id without a list
+   (or the reverse) is reported as switched off and why, never half-open.
+2. **No secret, no redirect.** Google's Identity Services button hands the page a signed ID token; the server verifies it against
+   Google's published keys (RS256 only, key 2048 bits or more, issuer, audience = this client id, expiry, lifetime, verified email) with
+   `node:crypto` and no dependency, then issues the same kind of signed session as an access code (`cid: "google"`).
+3. **Sessions follow the list.** A Google session is re-checked against the current list on every request, so removing an address ends
+   its session, as withdrawing a code does.
+4. **Own owner and budget per person.** Google users own `google|email` and are metered one by one; an access-code label may not be
+   `google`.
+5. **Access codes stay** (alongside, not instead): the daily live check and the end-to-end suites sign in with a code, and invitees
+   without a Google account need a way in. `GOOGLE_*` set and `ACCESS_CODES` deleted makes Google the only way in, and the page then
+   offers no code.
+6. **Honest page.** Script blocked or slow: a sentence and "Try again", the code way still works. Not invited: names the address.
+   Half-configured: says it is off and why. On a phone the way in comes first and the pitch under it.
+
+**Alternatives rejected:** the OAuth redirect (code) flow with a client secret (a secret to store and rotate, state to keep, a callback
+route, for no benefit here); `google-auth-library` or a social-login service (a large dependency or a vendor for one RS256 check);
+replacing access codes outright (breaks the live check and the 2,000-check suite, and strands invitees without Google); an open
+Google login (spends the free quota for strangers); inviting a whole domain (a plain domain match invites every gmail.com address).
+
+**Who weighed in:** no seat debate; the owner decided the direction. Independent adversarial review (security; it found a false
+"could not reach Google" for a burst of sign-ins on a cold server, which is fixed, and five protections with no test, which now have one),
+a UX review in a real browser (it found an access-code hint on a server with no codes, a layout jump while the server's status loaded,
+and the sign-in being under the pitch on a phone: all fixed) and EVAL PM score the PR as usual (`TECH_DEBT.md` 2.18 lists what stays open).
+
+---
+
 ## 2026-11-04 - PostgreSQL store behind the Store contract, and the rules for several processes sharing one database
 
 **Decision (assistant, under the standing delegation recorded below; the owner asked for the Supabase database on
