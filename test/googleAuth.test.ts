@@ -138,12 +138,18 @@ async function main_() {
   let clock = NOW;
   let calls = 0;
   let mode: 'ok' | 'fail' | 'empty' | 'big' | 'slow' = 'ok';
+  let maxAge: string | null = 'public, max-age=600';
+  let delayMs = 0;
+  let lastInit: any = null;
   const fetchFake = (async (_url: any, init?: any) => {
     calls++;
+    lastInit = init;
     if (mode === 'fail') throw new Error('network down');
     if (mode === 'slow') return new Promise((_r, rej) => init?.signal?.addEventListener('abort', () => rej(new Error('aborted'))));
-    const body = mode === 'empty' ? { keys: [] } : mode === 'big' ? { keys: [], pad: 'x'.repeat(70_000) } : { keys: [keys.main, { ...jwkOf(other, 'second') }] };
-    return new Response(JSON.stringify(body), { status: 200, headers: { 'cache-control': 'public, max-age=600' } });
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    // 'big' holds a USABLE key plus padding, so only the size limit can be what refuses it.
+    const body = mode === 'empty' ? { keys: [] } : mode === 'big' ? { keys: [keys.main], pad: 'x'.repeat(70_000) } : { keys: [keys.main, { ...jwkOf(other, 'second') }] };
+    return new Response(JSON.stringify(body), { status: 200, headers: maxAge === null ? {} : { 'cache-control': maxAge } });
   }) as typeof fetch;
   const cache = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 200, 60_000);
   check('the first lookup fetches the keys', [(await cache.getKey('main') as any)?.kid, calls], ['main', 1]);
@@ -176,6 +182,90 @@ async function main_() {
 
   finished = true;
   clearInterval(keepAlive);
+  // --- what the review of this change found
+  // (a) a burst of sign-ins on a cold server must all be answered from the one fetch, not told Google is unreachable
+  {
+    clock = NOW;
+    calls = 0;
+    mode = 'ok';
+    maxAge = 'public, max-age=600';
+    delayMs = 60;
+    const cold = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 2000, 60_000);
+    const burst = await Promise.all(Array.from({ length: 10 }, () => cold.getKey('main')));
+    check('ten sign-ins at once on a cold cache are all answered with the key, from one fetch', [burst.every((k: any) => k?.kid === 'main'), calls], [true, 1]);
+    const rotated = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 2000, 60_000);
+    await rotated.getKey('main');
+    clock += 61_000;
+    calls = 0;
+    const during = await Promise.all([rotated.getKey('second'), rotated.getKey('second'), rotated.getKey('rotated-away')]);
+    check('a burst that arrives while a refresh is under way waits for it (and the key that exists is found)', [(during[0] as any)?.kid, (during[1] as any)?.kid, during[2], calls], ['second', 'second', null, 1]);
+    delayMs = 0;
+    // (b) a failed first fetch is retried in a few seconds, not a minute
+    mode = 'fail';
+    calls = 0;
+    const flaky = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 2000, 60_000);
+    check('with no keys held, a failed first fetch answers "unavailable"', [await flaky.getKey('main'), calls], ['unavailable', 1]);
+    clock += 2000;
+    check('...and is not retried for a moment (nothing hammers Google)', [await flaky.getKey('main'), calls], ['unavailable', 1]);
+    mode = 'ok';
+    clock += 4000;
+    check('...but after a few seconds, when Google is back, the next sign-in works', [(await flaky.getKey('main') as any)?.kid, calls], ['main', 2]);
+  }
+  // (c) the fetch refuses redirects and an over-size answer even if it holds a usable key
+  {
+    mode = 'ok';
+    clock = NOW;
+    const c1 = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 2000, 60_000);
+    await c1.getKey('main');
+    check('the keys are fetched with redirects refused', lastInit?.redirect, 'error');
+    mode = 'big';
+    const c2 = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 2000, 60_000);
+    check('an answer over 64KB is refused even though it holds a usable key', await c2.getKey('main'), 'unavailable');
+    const declaredBig = (async () => new Response('{"keys":[]}', { status: 200, headers: { 'content-length': '999999' } })) as unknown as typeof fetch;
+    check('an answer that declares itself over 64KB is refused', await new GoogleKeyCache('http://x/certs', declaredBig, () => clock, 2000, 60_000).getKey('main'), 'unavailable');
+    const chunked = (async () => new Response(new ReadableStream({ start(ctrl) { const chunk = new TextEncoder().encode('x'.repeat(30_000)); ctrl.enqueue(chunk); ctrl.enqueue(chunk); ctrl.enqueue(chunk); ctrl.close(); } }), { status: 200 })) as unknown as typeof fetch;
+    check('a streamed answer with no declared size is cut off at 64KB', await new GoogleKeyCache('http://x/certs', chunked, () => clock, 2000, 60_000).getKey('main'), 'unavailable');
+    mode = 'ok';
+  }
+  // (d) Cache-Control: honoured, clamped to between five minutes and a day, an hour when absent
+  {
+    const ttlCase = async (header: string | null, expectedSeconds: number) => {
+      maxAge = header;
+      mode = 'ok';
+      clock = NOW;
+      calls = 0;
+      const c = new GoogleKeyCache('http://x/certs', fetchFake, () => clock, 2000, 1000);
+      await c.getKey('main');
+      clock = NOW + (expectedSeconds - 5) * 1000;
+      await c.getKey('main');
+      const before = calls;
+      clock = NOW + (expectedSeconds + 5) * 1000;
+      await c.getKey('main');
+      return [before, calls];
+    };
+    check('max-age=1 is raised to five minutes (no refetch before, one after)', await ttlCase('public, max-age=1', 300), [1, 2]);
+    check('max-age=99999999 is lowered to a day', await ttlCase('public, max-age=99999999', 24 * 3600), [1, 2]);
+    check('max-age=900 is honoured', await ttlCase('max-age=900', 900), [1, 2]);
+    check('no Cache-Control is an hour', await ttlCase(null, 3600), [1, 2]);
+    maxAge = 'public, max-age=600';
+  }
+  // (e) limits on what arrives
+  const sizeTok = (() => { const t = mint({ pad: 'x'.repeat(4500) }); return t; })();
+  check('a correctly signed token longer than 4096 characters is refused', await reason(sizeTok), 'malformed');
+  check('a key id longer than 128 characters is refused', await reason(mint({}, { kid: 'k'.repeat(129) })), 'malformed');
+  check('a key id of exactly 128 characters gets as far as the key lookup', await reason(mint({}, { kid: 'k'.repeat(128) })), 'unknown_key');
+  // (f) addresses: plain ASCII only, in the token and in the list
+  check('an address with the Kelvin sign (which lower-cases to an ASCII k) is not accepted from Google', await reason(mint({ email: '\u212Aim@corp.com' })), 'no_email');
+  check('...nor with it in the domain', await reason(mint({ email: 'kim@cor\u212A.com' })), 'no_email');
+  check('...nor an address with other non-ASCII letters', await reason(mint({ email: 'jos\u00e9@example.com' })), 'no_email');
+  check('ordinary addresses with a dot, a plus, an apostrophe and subdomains are accepted', await Promise.all(["o'brien@example.co.uk", 'a.b+c@sub.example.com', 'x_y-z@e-x.com'].map((e) => reason(mint({ email: e })))), ['ok', 'ok', 'ok']);
+  for (const bad of ['<a@b.com>', 'a@b.com.', '"a@b.com"', 'Name <a@b.com>', 'a@b', 'a b@c.com', 'K\u212Aim@corp.com', 'jos\u00e9@example.com']) {
+    const r = loadGoogleConfig({ GOOGLE_CLIENT_ID: CLIENT, GOOGLE_ALLOWED_EMAILS: bad });
+    check(`the invited-list entry ${JSON.stringify(bad)} is refused with a sentence, never kept as a list that matches nobody`, [r.config, typeof r.problem], [null, 'string']);
+  }
+  check('a client id with something after the Google domain is refused', loadGoogleConfig({ GOOGLE_CLIENT_ID: '1234567890-abc.apps.googleusercontent.com.evil.com', GOOGLE_ALLOWED_EMAILS: 'a@b.com' }).config, null);
+  check('a client id with a line break in it is refused', loadGoogleConfig({ GOOGLE_CLIENT_ID: 'abcdef\n1234.apps.googleusercontent.com', GOOGLE_ALLOWED_EMAILS: 'a@b.com' }).config, null);
+
   console.log(failures === 0 ? '\nAll Google sign-in checks passed.' : `\n${failures} check(s) failed.`);
   process.exit(failures === 0 ? 0 : 1);
 }

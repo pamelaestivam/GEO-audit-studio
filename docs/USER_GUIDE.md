@@ -36,7 +36,7 @@ message saying so.
 
 **Google sign-in is checked on the server.** Google tells the service which address
 you control; the service checks that address against its list of invited people.
-It never sees your Google password and asks for nothing beyond your email address and name.
+It never sees your Google password, and the only thing it uses from Google is your email address.
 Audits you saved while signing in with an access code do not follow you to Google
 sign-in: they belong to the code, and Google sign-in starts its own history.
 

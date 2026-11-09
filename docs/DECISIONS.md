@@ -31,8 +31,10 @@ route, for no benefit here); `google-auth-library` or a social-login service (a 
 replacing access codes outright (breaks the live check and the 2,000-check suite, and strands invitees without Google); an open
 Google login (spends the free quota for strangers); inviting a whole domain (a plain domain match invites every gmail.com address).
 
-**Who weighed in:** no seat debate; the owner decided the direction. Independent adversarial review (security), a UX review in a real
-browser and EVAL PM score the PR as usual (`TECH_DEBT.md` 2.18 lists what stays open).
+**Who weighed in:** no seat debate; the owner decided the direction. Independent adversarial review (security; it found a false
+"could not reach Google" for a burst of sign-ins on a cold server, which is fixed, and five protections with no test, which now have one),
+a UX review in a real browser (it found an access-code hint on a server with no codes, a layout jump while the server's status loaded,
+and the sign-in being under the pitch on a phone: all fixed) and EVAL PM score the PR as usual (`TECH_DEBT.md` 2.18 lists what stays open).
 
 ---
 

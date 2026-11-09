@@ -24,6 +24,16 @@ const MAX_TOKEN_CHARS = 4096;
 const CLOCK_SKEW_S = 60;
 const MAX_LIFETIME_S = 24 * 3600;
 const MIN_RSA_BITS = 2048;
+const MAX_KEYS_BYTES = 64 * 1024;
+const COLD_RETRY_MS = 5000;
+// Printable ASCII only, one @, a dotted domain ending in letters: no brackets, quotes, trailing dot or look-alike letters.
+const ADDRESS_PATTERN = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+/** An address Google would issue and an operator would invite: plain ASCII, no folding surprises (the Kelvin sign is not a k). */
+function plainAddress(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 254 || !ADDRESS_PATTERN.test(value.trim())) return null;
+  return normaliseEmail(value.trim().toLowerCase());
+}
 
 export interface GoogleConfig {
   clientId: string;
@@ -55,7 +65,7 @@ export function loadGoogleConfig(env: Record<string, string | undefined>): Googl
   let badEntries = 0;
   for (const entry of listRaw.split(/[\s,;]+/).filter(Boolean)) {
     // A wildcard would look like an invitation to a whole domain and match nobody: say so instead.
-    const email = /[*?]/.test(entry) ? null : normaliseEmail(entry);
+    const email = plainAddress(entry);
     if (email) allowedEmails.add(email);
     else badEntries++;
   }
@@ -113,12 +123,18 @@ export class GoogleKeyCache implements GoogleKeySource {
   ) {}
 
   async getKey(kid: string): Promise<KeyLookup> {
+    // Whoever arrives while the keys are being fetched waits for that fetch and uses its answer; it must not conclude
+    // from the fetch being under way that there are no keys (a cold server would answer its first burst of sign-ins
+    // "could not reach Google" while Google is fine).
+    if (this.inflight) await this.inflight;
     const now = this.clock();
     const have = this.keys.has(kid);
     const stale = now >= this.expiresAt;
     // Refresh when the keys are out of date, or when asked for a key that is not here (Google rotates keys), but never
-    // more than once per minute so a stream of bad tokens cannot make this server hammer Google.
-    if ((stale || !have) && now - this.lastAttemptAt >= this.minRetryMs) await this.refresh();
+    // more than once per minute so a stream of bad tokens cannot make this server hammer Google. With no keys at all
+    // there is nothing to protect and everyone is being refused, so a failed first fetch is retried after a few seconds.
+    const wait = this.keys.size === 0 ? Math.min(this.minRetryMs, COLD_RETRY_MS) : this.minRetryMs;
+    if ((stale || !have) && now - this.lastAttemptAt >= wait) await this.refresh();
     const found = this.keys.get(kid);
     if (found) return found;
     return this.keys.size === 0 ? 'unavailable' : null;
@@ -137,10 +153,13 @@ export class GoogleKeyCache implements GoogleKeySource {
   }
 
   private async load(): Promise<void> {
-    const res = await this.fetchImpl(this.url, { signal: AbortSignal.timeout(this.timeoutMs), headers: { Accept: 'application/json' } });
+    // No redirects (the address is fixed; an answer from somewhere else is not Google's), and the size is bounded while
+    // reading, not after the whole body is in memory.
+    const res = await this.fetchImpl(this.url, { signal: AbortSignal.timeout(this.timeoutMs), headers: { Accept: 'application/json' }, redirect: 'error' });
     if (!res.ok) throw new Error(`keys answered ${res.status}`);
-    const text = await res.text();
-    if (text.length > 64 * 1024) throw new Error('keys answer too large');
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared > MAX_KEYS_BYTES) throw new Error('keys answer too large');
+    const text = await readLimited(res, MAX_KEYS_BYTES);
     const body = JSON.parse(text);
     const fresh = new Map<string, JsonWebKey>();
     for (const k of Array.isArray(body?.keys) ? body.keys : []) {
@@ -152,6 +171,29 @@ export class GoogleKeyCache implements GoogleKeySource {
     this.keys = fresh;
     this.expiresAt = this.clock() + ttlS * 1000;
   }
+}
+
+/** The body as text, refusing (and abandoning the read) as soon as it is longer than `max` bytes. */
+async function readLimited(res: Response, max: number): Promise<string> {
+  if (!res.body) {
+    const text = await res.text();
+    if (Buffer.byteLength(text) > max) throw new Error('keys answer too large');
+    return text;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error('keys answer too large');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +262,9 @@ export async function verifyGoogleIdToken(credential: unknown, config: Pick<Goog
   if (payload.exp - payload.iat > MAX_LIFETIME_S) return { ok: false, reason: 'bad_lifetime' };
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) return { ok: false, reason: 'malformed' };
 
-  const email = normaliseEmail(payload.email);
+  // Only a plain ASCII address is compared with the invited list: folding case on other letters could make an address
+  // Google never issued equal to an invited one (the Kelvin sign U+212A lower-cases to an ASCII k).
+  const email = plainAddress(payload.email);
   if (!email) return { ok: false, reason: 'no_email' };
   if (payload.email_verified !== true && payload.email_verified !== 'true') return { ok: false, reason: 'email_unverified' };
   return { ok: true, email, sub: payload.sub };

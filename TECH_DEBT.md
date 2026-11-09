@@ -759,8 +759,9 @@ after a `!`/`!==` check needs `// harness-ok: <why>`.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
 
-PROVEN with a fake Google (a local keys server and tokens signed with its key; unit, built-server and browser checks, each protection
-mutation-checked): every way an ID token can be wrong is refused (algorithm none or HMAC, wrong key, key under 2048 bits, other
+PROVEN with a fake Google (a local keys server and tokens signed with its key; unit, built-server and browser checks; the core
+protections were each broken in turn and a check failed, and the independent security review found five more with no check, which now
+have one): every way an ID token can be wrong is refused (algorithm none or HMAC, wrong key, key under 2048 bits, other
 audience or issuer, expired, issued in the future, lifetime over a day, unverified or missing email, oversized or malformed); only
 invited addresses get a session; removing an address ends its session; a Google-only server accepts no access code; Google's keys are
 fetched once and kept, a refresh is limited to one a minute, keys already held keep working when Google cannot be reached; attempts
@@ -772,6 +773,13 @@ NOT proven or left open:
   `iss`, `aud`, `exp`, `iat`, `sub`, `email`, `email_verified`) is from Google's documentation, checked against nothing live. The
   first real sign-in is that measurement. Browsers that block third-party cookies or ad blockers can stop Google's button: the page
   says so and the access code still works.
+- **The invited list is matched on the email address, not pinned to Google's account id (`sub`).** If an invited address's domain
+  lapses or is re-registered, whoever controls the new mailbox on it can sign in; and a session lasts seven days whatever later
+  happens to the Google account (a closed or taken-over account stays signed in here until the session ends or the address is
+  removed from the list). Pinning `sub` at first sign-in needs somewhere to keep it (the database now exists).
+- **Only plain ASCII addresses can sign in** (in the list and in the token): a Google account with an internationalised address is
+  refused with the generic sentence. Chosen so that case folding of other alphabets (the Kelvin sign lower-cases to an ASCII k) can
+  never make an address Google did not issue equal to an invited one.
 - **No nonce or one-time use.** A valid ID token can be replayed until it expires (Google issues about an hour); the server turns it
   into its own seven-day session and does not store tokens. Stealing one needs the person's browser, and only invited addresses
   count. A signed one-time nonce would close it.

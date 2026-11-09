@@ -10,6 +10,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { PortRange, randomPort } from './ports';
 import { TEST_ACCESS_CODE, TEST_AUTH_ENV, rawFetch } from './authHelper';
 import { TEST_GOOGLE_CLIENT_ID, mintGoogleToken, startFakeKeys, strangerKey } from './googleTestKit';
+import { captureOutput, printCaptured, type CapturedOutput } from './serverOutput';
 
 let failures = 0;
 function check(name: string, actual: any, expected: any) {
@@ -31,7 +32,7 @@ async function main() {
   const keys = await startFakeKeys(KEYS_PORT);
   const procs: ChildProcess[] = [];
 
-  const start = (env: Record<string, string> = {}) => {
+  const start = (env: Record<string, string> = {}, capture = false) => {
     const port = nextPort.take();
     const proc = spawn('node', ['dist/server.cjs'], {
       env: {
@@ -52,10 +53,11 @@ async function main() {
         GOOGLE_JWKS_URL: keys.url,
         ...env,
       },
-      stdio: 'ignore',
+      // The suite that reads what the server printed (to prove it never prints a token or an address) pipes it.
+      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'ignore',
     });
     procs.push(proc);
-    return { base: `http://127.0.0.1:${port}`, proc };
+    return { base: `http://127.0.0.1:${port}`, proc, out: capture ? captureOutput(proc) : (null as CapturedOutput | null) };
   };
   const up = async (s: { base: string }) => {
     for (let i = 0; i < 100; i++) {
@@ -73,24 +75,26 @@ async function main() {
       s.proc.once('close', () => resolve());
       s.proc.kill('SIGKILL');
     });
-  const google = async (base: string, credential: unknown) => {
+  const google = async (base: string, credential: unknown, extra: Record<string, unknown> = {}) => {
     const res = await rawFetch(`${base}/api/auth/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ credential }),
+      body: JSON.stringify({ credential, ...extra }),
     });
     return { status: res.status, headers: res.headers, body: (await res.json()) as any };
   };
   const authed = (token: string) => ({ headers: { Authorization: `Bearer ${token}` } });
 
   try {
-    const A = start();
+    const A = start({}, true);
+    const COLD = start(); // never signed in to before the burst below: its keys are fetched during it
+    const NOSECRET = start({ SESSION_SECRET: '' }); // sign-in is not configured at all
     const OPEN = start({ ACCESS_CODES: '' }); // Google only
     const PARTIAL = start({ GOOGLE_ALLOWED_EMAILS: '' }); // a client id with nobody invited, next to access codes
     const NONE = start({ GOOGLE_CLIENT_ID: '', GOOGLE_ALLOWED_EMAILS: '', GOOGLE_JWKS_URL: '' });
     const LIMITED = start({ AUTH_RATE_LIMIT_PER_MIN: '3' });
     const NOKEYS = start({ GOOGLE_JWKS_URL: 'http://127.0.0.1:1/certs' });
-    await Promise.all([A, OPEN, PARTIAL, NONE, LIMITED, NOKEYS].map(up));
+    await Promise.all([A, COLD, NOSECRET, OPEN, PARTIAL, NONE, LIMITED, NOKEYS].map(up));
 
     // ---- what the login page is told
     const status = (await (await rawFetch(`${A.base}/api/audit/status`)).json()) as any;
@@ -103,6 +107,12 @@ async function main() {
     const openStatus = (await (await rawFetch(`${OPEN.base}/api/audit/status`)).json()) as any;
     check('a Google-only server says no access code works', [openStatus.auth.mode, openStatus.auth.accessCodes, openStatus.auth.google.enabled], ['configured', false, true]);
 
+    // ---- a burst of sign-ins on a server that has not fetched Google's keys yet
+    const burstBefore = keys.hits();
+    const burst = await Promise.all(Array.from({ length: 10 }, () => google(COLD.base, mintGoogleToken())));
+    check('ten sign-ins at once on a cold server are all accepted (none is told Google is unreachable)', burst.map((r) => r.status), Array(10).fill(200));
+    check('...from a single fetch of Google\'s keys', keys.hits() - burstBefore, 1);
+
     // ---- an invited person signs in
     const before = keys.hits();
     const ok = await google(A.base, mintGoogleToken());
@@ -113,12 +123,16 @@ async function main() {
     const audits = await rawFetch(`${A.base}/api/audits`, authed(ok.body.token));
     check('...and on the saved-audits route', [audits.status, ((await audits.json()) as any).audits], [200, []]);
     check('...a session whose last character is changed is refused', (await rawFetch(`${A.base}/api/auth/me`, authed(ok.body.token.slice(0, -2) + 'AA'))).status, 401);
+    const spoof = await google(A.base, mintGoogleToken(), { email: 'ricardo@example.com', accessCode: TEST_ACCESS_CODE });
+    const spoofMe = await rawFetch(`${A.base}/api/auth/me`, authed(spoof.body.token));
+    check('the session is for the address Google vouched for, whatever else the request says (checked on the session itself, not the reply)', [spoof.status, spoof.body.user?.email, ((await spoofMe.json()) as any).user?.email], [200, 'pamela@example.com', 'pamela@example.com']);
     check('the address is matched in lower case', (await google(A.base, mintGoogleToken({ email: 'Ricardo@Example.COM' }))).body.user?.email, 'ricardo@example.com');
     check('Google\'s keys were fetched once for all of that, not once per sign-in', keys.hits() - before, 1);
 
     // ---- a valid Google account that was not invited
     const stranger = await google(A.base, mintGoogleToken({ email: 'stranger@example.com' }));
     check('a valid Google token for an address that is not invited is refused, with a sentence', [stranger.status, stranger.body.code, /stranger@example\.com has not been invited/.test(stranger.body.error), /access code/.test(stranger.body.error), stranger.body.token], [403, 'google_not_invited', true, true, undefined]);
+    check('...and the sentence names that person\'s own address only, never anyone on the invited list', /pamela@example\.com|ricardo@example\.com/.test(stranger.body.error), false);
     check('...and its token does nothing on a protected route', (await rawFetch(`${A.base}/api/auth/me`, authed('not-a-session'))).status, 401);
 
     // ---- every way a token can be wrong, refused with a plain sentence that explains nothing about the check
@@ -168,6 +182,10 @@ async function main() {
     });
     check('with both configured an access code still signs in', codeOnA.status, 200);
 
+    // ---- sign-in not configured at all
+    const noSecret = await google(NOSECRET.base, mintGoogleToken());
+    check('a server with no session secret refuses Google sign-in with the configuration sentence', [noSecret.status, noSecret.body.code], [503, 'auth_unconfigured']);
+
     // ---- not set up, or set up halfway
     const unset = await google(NONE.base, mintGoogleToken());
     check('a server with no Google settings answers a Google sign-in with a 503 and a sentence', [unset.status, unset.body.code, /not set up on this server/.test(unset.body.error)], [503, 'google_unconfigured', true]);
@@ -189,6 +207,10 @@ async function main() {
     for (let i = 0; i < 5; i++) limited.push((await google(LIMITED.base, 'not.a.token')).status);
     const retry = await google(LIMITED.base, 'not.a.token');
     check('past the per-minute limit Google sign-in attempts are answered 429 with a wait time', [limited.slice(0, 3), limited.slice(3).every((s) => s === 429), retry.headers.get('retry-after') !== null], [[401, 401, 401], true, true]);
+    // ---- what the server printed: never a token, never an address
+    const printed = (A as any).out?.text() ?? '';
+    check('the server log has the reasons for refusals but never a token or anyone\'s address', [/eyJ/.test(printed), /@example\.com/.test(printed), /Google sign-in refused: not_invited/.test(printed)], [false, false, true]);
+    if (failures > 0) printCaptured('first server', (A as any).out);
   } finally {
     for (const p of procs) p.kill();
     await keys.close().catch(() => undefined);
