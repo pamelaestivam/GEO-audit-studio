@@ -26,9 +26,19 @@ the only engine that was asked - the product never fills in the others.
 
 ## 1. Sign in
 
-Enter the email you were invited with and the **access code** you were given.
-Sessions last seven days. If your code is withdrawn you are signed out with a
+If the service has Google sign-in, click **Continue with Google** and choose the Google
+account you were invited with. An account that was not invited is told so by name
+(it is not a fault; ask the person who runs the service to add it).
+Otherwise, or if you were given an **access code** instead, click **Use an access
+code instead**, then enter your email and the code.
+Sessions last seven days. If your access is withdrawn you are signed out with a
 message saying so.
+
+**Google sign-in is checked on the server.** Google tells the service which address
+you control; the service checks that address against its list of invited people.
+It never sees your Google password and asks for nothing beyond your email address and name.
+Audits you saved while signing in with an access code do not follow you to Google
+sign-in: they belong to the code, and Google sign-in starts its own history.
 
 **Privacy:** your saved audits are private to you and your code. Anyone who
 holds *the same code* can sign in under any email and see audits saved under that

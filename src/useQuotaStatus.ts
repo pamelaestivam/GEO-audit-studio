@@ -9,7 +9,7 @@ export interface AuditStatus {
   /** Whether audits are kept across a refresh or restart on this deployment. null until known. */
   storage: { kind: string; durable: boolean; note?: string } | null;
   /** Whether people can sign in at all, and if not, what the operator must fix. */
-  auth: { mode: 'configured' | 'dev' | 'unconfigured'; problem?: string } | null;
+  auth: { mode: 'configured' | 'dev' | 'unconfigured'; problem?: string; accessCodes?: boolean; google?: { enabled: boolean; clientId?: string; problem?: string } } | null;
   /** Paid engines that have a key but are switched off because paid engines are not switched on for this server. null until known. */
   paidBlocked: string[] | null;
 }

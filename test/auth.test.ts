@@ -15,6 +15,8 @@ import {
   loadAuthConfig,
   normaliseEmail,
   userFromEmail,
+  userFromGoogle,
+  GOOGLE_SESSION_ID,
   verifyToken,
 } from '../src/auth';
 
@@ -207,6 +209,41 @@ for (const reason of ['missing', 'expired', 'code_revoked', 'bad_signature', 'ma
   const msg = describeAuthFailure(reason, loadAuthConfig({ NODE_ENV: 'production' }));
   check(`the "${reason}" message is a sentence with no internals`, /[.!]$/.test(msg) && !/hmac|signature|payload/i.test(msg), true);
 }
+
+// --- Sign in with Google (the token check itself is test/googleAuth.test.ts; this is what a session is afterwards)
+const GCLIENT = '1234567890-abcdefghijklmnop.apps.googleusercontent.com';
+const gEnv = { NODE_ENV: 'production', SESSION_SECRET: SECRET, GOOGLE_CLIENT_ID: GCLIENT, GOOGLE_ALLOWED_EMAILS: 'pamela@example.com, ricardo@example.com' };
+const gOnly = loadAuthConfig(gEnv);
+check('Google sign-in alone (no access codes) is a complete configuration', [gOnly.mode, gOnly.codes.length, gOnly.google?.clientId], ['configured', 0, GCLIENT]);
+check('...and nobody can sign in with an access code then', checkAccessCode('anything-at-all', gOnly), null);
+check('Google sign-in next to access codes is configured too', [loadAuthConfig({ ...gEnv, ACCESS_CODES: 'alpha-code-1' }).mode, loadAuthConfig({ ...gEnv, ACCESS_CODES: 'alpha-code-1' }).codes.length], ['configured', 1]);
+check('a client id with nobody invited and no codes is unconfigured, and says why', [loadAuthConfig({ ...gEnv, GOOGLE_ALLOWED_EMAILS: '' }).mode, /lists nobody/.test(loadAuthConfig({ ...gEnv, GOOGLE_ALLOWED_EMAILS: '' }).problem || '')], ['unconfigured', true]);
+check('...but with access codes it stays up on codes and keeps the Google problem for the status', [loadAuthConfig({ ...gEnv, GOOGLE_ALLOWED_EMAILS: '', ACCESS_CODES: 'alpha-code-1' }).mode, loadAuthConfig({ ...gEnv, GOOGLE_ALLOWED_EMAILS: '', ACCESS_CODES: 'alpha-code-1' }).google, /lists nobody/.test(loadAuthConfig({ ...gEnv, GOOGLE_ALLOWED_EMAILS: '', ACCESS_CODES: 'alpha-code-1' }).googleProblem || '')], ['configured', null, true]);
+check('Google configuration without SESSION_SECRET is still unconfigured', loadAuthConfig({ ...gEnv, SESSION_SECRET: '' }).mode, 'unconfigured');
+check('dev mode is not entered when Google is configured', loadAuthConfig({ GOOGLE_CLIENT_ID: GCLIENT, GOOGLE_ALLOWED_EMAILS: 'a@example.com' }, { allowDev: true }).mode, 'unconfigured');
+check('an access code may not take the label "google" (its owner space belongs to Google sign-in)', [loadAuthConfig({ ...prod, ACCESS_CODES: 'google=alpha-code-1' }).mode, /reserved for Google/.test(loadAuthConfig({ ...prod, ACCESS_CODES: 'google=alpha-code-1' }).problem || '')], ['unconfigured', true]);
+check('...in any letter case', loadAuthConfig({ ...prod, ACCESS_CODES: 'GOOGLE=alpha-code-1' }).mode, 'unconfigured');
+
+const gTok = issueToken('pamela@example.com', GOOGLE_SESSION_ID, gOnly, NOW);
+const gSession = verifyToken(gTok.token, gOnly, NOW + 1000);
+check('a Google session is accepted while the address is invited', gSession.ok, true);
+check('...as that person, owning "google|email"', gSession.ok && [gSession.user.email, gSession.user.owner], ['pamela@example.com', 'google|pamela@example.com']);
+check('...with a budget of their own (per person, not shared by everyone who signs in with Google)', gSession.ok && gSession.user.budgetKey, 'google|pamela@example.com');
+const gOther = verifyToken(issueToken('ricardo@example.com', GOOGLE_SESSION_ID, gOnly, NOW).token, gOnly, NOW + 1000);
+check('...two invited people have different owners and budgets', gSession.ok && gOther.ok && [gSession.user.owner !== gOther.user.owner, gSession.user.budgetKey !== gOther.user.budgetKey], [true, true]);
+check('a Google user and an access-code user with the SAME email do not share audits or budget', userFromGoogle('a@example.com').owner !== userFromEmail('a@example.com', 'anna').owner && userFromGoogle('a@example.com').budgetKey !== userFromEmail('a@example.com', 'anna').budgetKey, true);
+check('...nor with someone who typed the same email with no code label', userFromGoogle('a@example.com').owner !== userFromEmail('a@example.com').owner, true);
+check('a Google session ends when the address is removed from the invited list', verifyToken(gTok.token, loadAuthConfig({ ...gEnv, GOOGLE_ALLOWED_EMAILS: 'ricardo@example.com' }), NOW + 1000), { ok: false, reason: 'code_revoked' });
+check('...and when Google sign-in is switched off altogether', verifyToken(gTok.token, loadAuthConfig({ ...prod }), NOW + 1000), { ok: false, reason: 'code_revoked' });
+check('...which is told the same way as a withdrawn access code', /access has been withdrawn/.test(describeAuthFailure('code_revoked', gOnly)), true);
+check('a Google session expires like any other', verifyToken(gTok.token, gOnly, NOW + gOnly.ttlMs + 1), { ok: false, reason: 'expired' });
+check('a Google session signed with another secret is refused', verifyToken(gTok.token, loadAuthConfig({ ...gEnv, SESSION_SECRET: 'b'.repeat(40) }), NOW + 1000).ok, false);
+check('an access-code session cannot be turned into a Google session by editing its code id', (() => {
+  const t = issueToken('x@example.com', 'f'.repeat(16), loadAuthConfig({ ...gEnv, ACCESS_CODES: 'alpha-code-1' }), NOW);
+  return verifyToken(t.token, loadAuthConfig({ ...gEnv, ACCESS_CODES: 'alpha-code-1' }), NOW + 1000).ok;
+})(), false);
+check('a Google session for an address that was never invited is refused even though it is correctly signed', verifyToken(issueToken('stranger@example.com', GOOGLE_SESSION_ID, gOnly, NOW).token, gOnly, NOW + 1000), { ok: false, reason: 'code_revoked' });
+check('the public user carries no owner or budget key', gSession.ok && Object.keys(publicUser(gSession.user)).sort(), ['email', 'id', 'name']);
 
 console.log(failures === 0 ? '\nAll auth checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

@@ -22,6 +22,7 @@ import { QuotaBreaker } from './src/quotaBreaker.js';
 import crypto from 'crypto';
 import { IdempotencyStore, readIdempotencyKey } from './src/idempotency.js';
 import {
+  GOOGLE_SESSION_ID,
   bearerToken,
   checkAccessCode,
   describeAuthFailure,
@@ -31,8 +32,10 @@ import {
   normaliseEmail,
   publicUser,
   userFromEmail,
+  userFromGoogle,
   verifyToken,
 } from './src/auth.js';
+import { GoogleKeyCache, describeGoogleFailure, verifyGoogleIdToken } from './src/googleAuth.js';
 import { openStore, READINESS_PROBE_OWNER, type JobStep, type StepCompletion, type StoredJob } from './src/store.js';
 import { FixedWindowLimiter, limiterKey } from './src/rateLimit.js';
 import { buildStandardQueries, DEFAULT_QUERY_COUNT } from './src/queries.js';
@@ -197,6 +200,9 @@ async function buildApp() {
   } else if (auth.mode === 'unconfigured') {
     console.error(`[auth] ${auth.problem}`);
   }
+  if (auth.googleProblem) console.warn(`[auth] Google sign-in is switched off: ${auth.googleProblem}`);
+  // Google's signing keys, fetched on the first Google sign-in and kept for as long as Google says.
+  const googleKeys = auth.google ? new GoogleKeyCache(auth.google.jwksUrl) : null;
 
   // `npm run dev` keeps data in ./data so audits survive restarts while
   // developing; production only persists when DATA_DIR is set on purpose.
@@ -585,7 +591,14 @@ async function buildApp() {
       // What the sign-in page and the sidebar need to tell the truth about
       // this deployment: can people sign in, and will their audits be kept.
       storage: store.info(),
-      auth: { mode: auth.mode, problem: auth.problem },
+      // `google.clientId` is public (it is in the page that renders Google's button); the invited list is never sent.
+      auth: {
+        mode: auth.mode,
+        problem: auth.problem,
+        // Whether an access code can sign anyone in (a Google-only deployment has none), so the page offers only what works.
+        accessCodes: auth.codes.length > 0,
+        google: auth.google ? { enabled: true, clientId: auth.google.clientId } : { enabled: false, ...(auth.googleProblem ? { problem: auth.googleProblem } : {}) },
+      },
       // What this server will and will not spend (owner directive D-1, $0). Counts are for this process only.
       spend: {
         paidEnginesBlocked: paidEnginesBlocked(process.env),
@@ -761,6 +774,56 @@ async function buildApp() {
     }
     const { token, expiresAt } = issueToken(email, matched.codeId, auth);
     res.json({ user: publicUser(userFromEmail(email, matched.label)), token, expiresAt });
+  });
+
+  // Sign in with Google. The browser sends the signed ID token Google's button gave it; it is checked here against
+  // Google's public keys (src/googleAuth.ts), and only addresses on the invited list (GOOGLE_ALLOWED_EMAILS) get a
+  // session. A valid Google account that is not invited is refused: proving who someone is is not an invitation.
+  app.post('/api/auth/google', async (req, res) => {
+    if (AUTH_RATE_LIMIT_PER_MIN > 0) {
+      const decision = authLimiter.check(limiterKey(req.ip));
+      if (!decision.allowed) {
+        res.setHeader('Retry-After', String(decision.retryAfterSeconds));
+        return res.status(429).json({
+          error: `Too many sign-in attempts. Please wait ${decision.retryAfterSeconds} seconds and try again.`,
+        });
+      }
+    }
+    if (auth.mode === 'unconfigured') {
+      return res.status(503).json({ error: auth.problem, code: 'auth_unconfigured' });
+    }
+    if (!auth.google || !googleKeys) {
+      return res.status(503).json({
+        error: auth.googleProblem ? `Google sign-in is not set up on this server: ${auth.googleProblem}` : 'Google sign-in is not set up on this server. Use an access code, or ask the person who runs this service.',
+        code: 'google_unconfigured',
+      });
+    }
+    const credential = req.body?.credential;
+    if (typeof credential !== 'string' || credential.length === 0 || credential.length > 4096) {
+      return res.status(400).json({ error: 'Google did not send a sign-in. Please try again.' });
+    }
+    let result;
+    try {
+      result = await verifyGoogleIdToken(credential, auth.google, googleKeys);
+    } catch (err: any) {
+      console.error(`[auth] Google sign-in check failed unexpectedly: ${err?.message || err}`);
+      return res.status(500).json({ error: 'Google sign-in could not be checked. Please try again.' });
+    }
+    if (!result.ok) {
+      const { status, message } = describeGoogleFailure(result.reason);
+      // The reason, never the token or the address.
+      console.log(`[auth] Google sign-in refused: ${result.reason}`);
+      return res.status(status).json({ error: message, code: 'google_refused' });
+    }
+    if (!auth.google.allowedEmails.has(result.email)) {
+      console.log('[auth] Google sign-in refused: not_invited');
+      return res.status(403).json({
+        error: `${result.email} has not been invited. Ask the person who runs this service to add it, or sign in with an access code.`,
+        code: 'google_not_invited',
+      });
+    }
+    const { token, expiresAt } = issueToken(result.email, GOOGLE_SESSION_ID, auth);
+    res.json({ user: publicUser(userFromGoogle(result.email)), token, expiresAt });
   });
 
   // Lets the client confirm a stored session is still good (not expired, its

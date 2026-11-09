@@ -147,13 +147,42 @@ check keeps it awake only if its sign-in secrets are set (`docs/PROGRAM.md` O-3 
 throwaway database; they create and drop their own schemas): `export TEST_DATABASE_URL=$(bash scripts/pg-test-cluster.sh start)`.
 Without it they print `SKIP ... NOT RUN`; CI sets `REQUIRE_POSTGRES=1` so a missing database there is a failure.
 
+## 4c. Sign in with Google (built 2026-11-09; not yet tried with a real Google account)
+
+The sign-in page shows **Continue with Google** as the first way in when `GOOGLE_CLIENT_ID` and `GOOGLE_ALLOWED_EMAILS` are set,
+with "Use an access code instead" under it (access codes keep working next to it). Google proves who someone is; it does not
+invite them, so only the addresses in `GOOGLE_ALLOWED_EMAILS` get a session. The browser gets a signed token from Google's button
+and the server checks it against Google's published keys (right issuer, issued to THIS client id, not expired, email verified);
+there is no Google secret anywhere. A person who signs in with Google has their own audits and daily budget (owner `google|email`).
+
+1. Google Cloud Console (`console.cloud.google.com`): pick or create a project (OAuth sign-in has no cost; the project that holds the
+   Gemini key will do). **APIs & Services**, **OAuth consent screen** (newer console: **Google Auth Platform**): app name
+   `GEO Audit Studio`, your support email, audience **External**, developer contact email. The basic scopes (openid, email, profile)
+   are enough and need no review. **Publish** the app (move it out of "Testing"), or every invited person must also be added as a test
+   user there.
+2. **Credentials**, **Create credentials**, **OAuth client ID**, type **Web application**. **Authorized JavaScript origins**:
+   `https://geo-audit-studio-five.vercel.app` (add a custom domain here too if one is ever added; `http://localhost:3000` for
+   development). **Authorized redirect URIs**: none. Create, and copy the **Client ID**. The client secret is not used.
+3. In Vercel, **Settings**, **Environment Variables**, for **Production**: `GOOGLE_CLIENT_ID` (the client id; type Config is fine) and
+   `GOOGLE_ALLOWED_EMAILS` (for example `a@gmail.com,b@gmail.com`). Redeploy once.
+4. Check: the sign-in page shows the Google button; `GET /api/audit/status` shows `"auth":{..."google":{"enabled":true,"clientId":"..."}}`
+   (never the list); signing in with an invited account works and an uninvited one says "has not been invited".
+5. To make Google the ONLY way in, delete `ACCESS_CODES` (keep `SESSION_SECRET`). The page then offers no access code. The daily live
+   check signs in with an access code (`LIVE_CHECK_ACCESS_CODE`), so it would lose its signed-in checks.
+
+Origins can take a few minutes to take effect after saving. If the button shows "Google sign-in could not be loaded", an ad blocker
+or network rule is blocking `accounts.google.com`; "Try again" retries and the access code still works.
+
 ## 5. Environment variables
 
 | Variable | Required | What it does |
 |---|---|---|
 | `GEMINI_API_KEY` | yes | Answers queries and writes the analysis |
 | `SESSION_SECRET` | yes (production) | Signs sessions. 32+ characters. Rotating it signs everyone out |
-| `ACCESS_CODES` | yes (production) | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
+| `GOOGLE_CLIENT_ID` | no | Turns on "Continue with Google" together with `GOOGLE_ALLOWED_EMAILS` (both or neither). The OAuth Web client id from Google Cloud (ends `.apps.googleusercontent.com`). **Public**, not a secret: it is in the page. No client secret is used. See 4c |
+| `GOOGLE_ALLOWED_EMAILS` | no | The Google accounts that may sign in: addresses separated by commas, spaces or new lines. Anyone else with a valid Google account is refused ("has not been invited"). Empty with a client id set = nobody can sign in with Google. Changing it needs a redeploy; removing an address ends that person's session on the next request |
+| `GOOGLE_JWKS_URL` | no | Tests only: where Google's signing keys are fetched from (https, or http to this machine). Leave unset |
+| `ACCESS_CODES` | yes (production) unless Google sign-in is set | `label=code` pairs, comma-separated; 8+ chars per code. Removing one ends the sessions it created |
 | `AUDIT_FORCE_STEP_EXCEPTION` | **never in production** | Test-only: a step kind (`collect`, `narrative` or `finalize`) that is made to throw, to prove a broken step ends the audit as a failed audit with an incident. The server logs a warning at start-up if it is set |
 | `AUDIT_LEASE_MS` | no (600000) | How long one claim on an audit step lasts. Keep it longer than the longest a step can take (a paced call, a rate-limit wait and retries), or a live step can be taken over and its call repeated (counted and recorded, but paid for) |
 | `AUDIT_FORCE_INVARIANT_VIOLATION` | **never in production** | Test-only: `1` makes every audit fail its consistency check, to prove the failure path. The server logs a warning at start-up if it is set |

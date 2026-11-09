@@ -330,6 +330,18 @@ have to be rediscovered from scratch, not so it can be skipped.
   once and says so (a repeated call and an incident); one killed three times on the same step stops with a sentence
   and the calls are capped; a page-driven audit carries on when the page asks again; a job with no plan is failed at
   boot with a code and a sentence (needs a current `dist/`)
+- `npx tsx test/googleAuth.test.ts` — Sign in with Google, pure: every wrong ID token refused (algorithm none or HMAC, wrong or weak key,
+  other audience or issuer, expired, future, overlong, unverified or missing email, malformed), the invited-list and client-id
+  configuration, and Google's key cache (fetched once, one refresh a minute, stale keys kept when Google is down), against keys the
+  test makes itself
+- `npx tsx test/googleAuthE2E.test.ts` — the real built server with a fake Google keys server: an invited address signs in and the
+  session works on protected routes, an uninvited valid account is refused by name, every bad token gets a plain sentence, removing an
+  address ends its session, a Google-only server accepts no access code, Google down is a 503 and held keys keep working, rate limit
+  (needs a current `dist/`)
+- `npx tsx test/googleLoginUi.test.ts` — the login page in Chromium with a stand-in for Google's button script: Google first and the
+  access code collapsed under it, not-invited and expired messages, script blocked then "Try again", Google-only and no-Google and
+  half-configured pages, the phone layout (way in on the first screen, no sideways scroll; set `GOOGLE_LOGIN_SHOTS_DIR` to save
+  screenshots) (needs a current `dist/` and a Chromium)
 - `npx tsx test/postgresConfig.test.ts` — reading `DATABASE_URL` and scrubbing it from text: TLS choice by `sslmode`/host, refusals that
   never repeat the address (pure checks, no database)
 - `export TEST_DATABASE_URL=$(bash scripts/pg-test-cluster.sh start)` — a throwaway local PostgreSQL for the next two commands (needs the

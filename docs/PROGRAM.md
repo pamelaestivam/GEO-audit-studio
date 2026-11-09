@@ -51,6 +51,7 @@ tell the owner or a client that it is dependable.
 | 9 | g. Deep health, owner health section, scheduled canary with one deduplicated issue | partly | the scheduled live check with one tracking issue is built (`live-check.yml`, #32) and has run once by manual dispatch (it exposed the unconfigured site, issue #36); its trigger on a finished Production deployment is proven (runs 38034259443 and 38034319845 fired on main after the merges of #33 and #34); the deep readiness endpoint exists (`/api/audit/readiness`) and now includes a `recent trouble` check that reads the audits that ended in the last 24 hours together: serious = a step threw or ran out of tries, a report broke its own consistency rules (now recorded as an incident), the driver failed, an audit ended in error with no reason, or EVERY audit came back empty; noted but not a fault = stopped for taking too long, interrupted by a restart, a repeated call, a few empty audits among successes. On a server that keeps nothing across restarts it says "Not checked" rather than claiming health. **The daily live check only runs it when the owner adds two repository secrets (O-3 step 4); until then each run warns that the signed-in checks were skipped.** Merged #47 (97ae7e1); the smoke script prints a `warn` line, not a green one, for any readiness check that passed only because it could not look, and `--warn-non-durable` now also softens the signed-in `readiness: storage` entry (it used to fail there, which would have turned the daily check red the day the sign-in secrets were added while the live site is on a memory store); a check that is not ok still FAILS whether or not it could be verified (`scripts/readinessLine.mjs`, unit-tested). A page that shows the owner the list is not built | O-3 for the live URL |
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
+| 12 | Sign in with Google (`TECH_DEBT.md` 1.5): "Continue with Google" first, access code second, only invited addresses | partly | BUILT 2026-11-09 (`src/googleAuth.ts`; unit, built-server and browser checks use a fake Google; mutation-checked). Waits on the owner's Google Cloud client id and the invited list (O-6); not yet tried with a real Google account or Google's real button |
 
 **Stale remote branches:** merged branches are not deleted automatically (the session
 cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
@@ -139,6 +140,13 @@ branch-protection, ruleset, repository-settings or delete-branch tool (searched
 3. If GitHub says rulesets are not available for a private repo on your plan, tell
    the assistant; the fallback is to rely on the CI workflow and the standing
    delegation in `docs/DECISIONS.md`.
+
+**O-6. Google sign-in: a client id and the invited list.** *Why only you:* it needs your Google login and your decision on who
+is invited. Steps are in `docs/DEPLOYMENT.md` 4c: (1) Google Cloud Console, OAuth consent screen (External, basic scopes, publish);
+(2) Credentials, OAuth client ID, Web application, authorized JavaScript origin `https://geo-audit-studio-five.vercel.app`, copy the
+Client ID (no secret is used); (3) Vercel, Production only: `GOOGLE_CLIENT_ID` and `GOOGLE_ALLOWED_EMAILS` (the addresses allowed to
+sign in); (4) redeploy once; (5) try it and tell the assistant what the page shows. Labels in the Google console are unverified (the
+assistant cannot open it).
 
 ## 4. Verification ledger (what has actually been checked, and what has not)
 

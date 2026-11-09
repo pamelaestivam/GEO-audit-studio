@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, CheckCircle2, AlertCircle, Info } from 'lucide-react';
+import { Sparkles, Eye, EyeOff, Lock, Mail, ArrowRight, CheckCircle2, AlertCircle, Info, KeyRound, ChevronDown } from 'lucide-react';
 import { User } from '../types';
 import { apiFetch } from '../apiClient';
 import { useAuditStatus } from '../useQuotaStatus';
 import { DeploymentNotice } from './DeploymentNotice';
+import { GoogleSignInButton } from './GoogleSignInButton';
 
 export interface Session {
   user: User;
@@ -18,7 +19,8 @@ interface AuthPageProps {
 }
 
 /**
- * Early access sign-in: an email and the access code the operator gave you.
+ * Early access sign-in: "Continue with Google" when the operator has set it up (only invited addresses get in), and an
+ * email plus the access code the operator gave you as the other way in.
  *
  * It used to catch every failure - wrong password, server down - and sign the
  * person in anyway as a locally invented user. A failed sign-in is now a
@@ -30,9 +32,44 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
   const [showCode, setShowCode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [showCodeForm, setShowCodeForm] = useState(false);
   const { auth } = useAuditStatus();
 
   const unconfigured = auth?.mode === 'unconfigured';
+  const googleClientId = !unconfigured && auth?.google?.enabled ? auth.google.clientId : undefined;
+  // Older servers do not say; an access code is the way in they always had.
+  const codesWork = auth?.accessCodes !== false;
+  // Without Google the form is simply the page. With Google it waits behind a line, unless it is the only way in.
+  const codeFormVisible = !googleClientId || !codesWork ? codesWork : showCodeForm;
+
+  const finish = (response: Response, data: any) => {
+    if (response.ok && data.user && data.token) {
+      onLoginSuccess({ user: data.user, token: data.token, expiresAt: data.expiresAt });
+    } else {
+      setError(data.error || 'Sign-in did not succeed. Please try again.');
+    }
+  };
+
+  /** Google's button gave us a signed token; the server checks it and says whether this address is invited. */
+  const handleGoogle = async (credential: string) => {
+    setError(null);
+    setGoogleBusy(true);
+    try {
+      const response = await apiFetch('/api/auth/google', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential }),
+        // A refusal is an answer, not a network failure: never retry it.
+        retries: 0,
+      });
+      finish(response, await response.json().catch(() => ({})));
+    } catch (err: any) {
+      setError(err?.message || 'Could not sign in with Google. Please try again.');
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,13 +93,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
         // A wrong code is an answer, not a network failure: never retry it.
         retries: 0,
       });
-      const data = await response.json().catch(() => ({}));
-
-      if (response.ok && data.user && data.token) {
-        onLoginSuccess({ user: data.user, token: data.token, expiresAt: data.expiresAt });
-      } else {
-        setError(data.error || 'Sign-in did not succeed. Please try again.');
-      }
+      finish(response, await response.json().catch(() => ({})));
     } catch (err: any) {
       setError(err?.message || 'Could not sign in. Please try again.');
     } finally {
@@ -79,7 +110,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
       <div className="absolute bottom-10 right-10 w-80 h-80 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-12 bg-slate-900/90 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden relative z-10 backdrop-blur-xl">
-        <div className="lg:col-span-5 bg-gradient-to-br from-indigo-950/80 via-slate-900 to-slate-950 p-6 sm:p-8 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-800">
+        {/* On a phone the way in comes first and the pitch under it; side by side, the pitch is on the left. */}
+        <div className="order-2 lg:order-1 lg:col-span-5 bg-gradient-to-br from-indigo-950/80 via-slate-900 to-slate-950 p-6 sm:p-8 flex flex-col justify-between border-t lg:border-t-0 lg:border-r border-slate-800">
           <div>
             <div className="flex items-center gap-3 mb-8">
               <div className="p-2.5 rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 flex items-center justify-center">
@@ -119,16 +151,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
           </div>
 
           <div className="mt-8 pt-6 border-t border-slate-800/80 text-[11px] text-slate-400 leading-relaxed">
-            Access is by invitation. Your access code is checked on the server; sessions expire and end if your code is
-            withdrawn.
+            Access is by invitation. Your Google account or access code is checked on the server; sessions expire and end
+            if your access is withdrawn.
           </div>
         </div>
 
-        <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between bg-slate-900/60">
+        <div className="order-1 lg:order-2 lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between bg-slate-900/60">
           <div>
             <div className="mb-6">
               <h3 className="text-lg font-bold text-white">Sign in</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Enter the email you were invited with and your access code.</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {googleClientId
+                  ? 'Continue with the Google account you were invited with.'
+                  : 'Enter the email you were invited with and your access code.'}
+              </p>
             </div>
 
             {notice && !error && (
@@ -166,7 +202,45 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            {googleClientId && (
+              <div className="mb-4">
+                <GoogleSignInButton clientId={googleClientId} onCredential={handleGoogle} busy={googleBusy} />
+              </div>
+            )}
+
+            {!unconfigured && auth?.google && !auth.google.enabled && auth.google.problem && (
+              <div className="mb-4 p-3 rounded-xl bg-slate-800/60 border border-slate-700 flex items-start gap-2 text-slate-300 text-xs">
+                <Info className="h-4 w-4 shrink-0 text-slate-400 mt-0.5" />
+                <span>Google sign-in is switched off on this server: {auth.google.problem}</span>
+              </div>
+            )}
+
+            {googleClientId && codesWork && (
+              <div className="mb-4">
+                <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-slate-500 mb-3" aria-hidden="true">
+                  <span className="h-px flex-1 bg-slate-800" />
+                  or
+                  <span className="h-px flex-1 bg-slate-800" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCodeForm((v) => !v)}
+                  aria-expanded={codeFormVisible}
+                  aria-controls="access-code-form"
+                  className="w-full py-2.5 px-4 rounded-xl border border-slate-700/80 bg-slate-950/50 hover:bg-slate-800/60 text-slate-200 text-xs font-semibold transition flex items-center justify-center gap-2"
+                >
+                  <KeyRound className="h-4 w-4 text-slate-400" />
+                  Use an access code instead
+                  <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${codeFormVisible ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+            )}
+
+            {googleClientId && !codesWork && (
+              <p className="text-[11px] text-slate-500">Only invited Google accounts can sign in here.</p>
+            )}
+
+            <form id="access-code-form" onSubmit={handleSubmit} className={`space-y-4 ${codeFormVisible ? '' : 'hidden'}`}>
               <div>
                 <label htmlFor="auth-email-input" className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
                   Email <span className="text-rose-400">*</span>
