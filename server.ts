@@ -818,7 +818,8 @@ async function buildApp() {
     if (!auth.google.allowedEmails.has(result.email)) {
       console.log('[auth] Google sign-in refused: not_invited');
       return res.status(403).json({
-        error: `${result.email} has not been invited. Ask the person who runs this service to add it, or sign in with an access code.`,
+        // Offer an access code only where one could work (a Google-only server has none).
+        error: `${result.email} has not been invited. Ask the person who runs this service to add it${auth.codes.length > 0 ? ', or sign in with an access code' : ''}.`,
         code: 'google_not_invited',
       });
     }

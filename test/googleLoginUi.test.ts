@@ -209,9 +209,72 @@ async function main() {
     const partialCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
     const partial = await newPage(partialCtx);
     await partial.goto(PARTIAL);
-    assert('a half-set-up Google sign-in says it is switched off and why', await appears(partial, 'text=Google sign-in is switched off on this server'));
+    assert('a half-set-up Google sign-in tells a visitor in plain words it is not available and what to do', await appears(partial, '[data-testid=google-off]:has-text("Google sign-in is not available right now. Use your access code.")'));
+    assert('...without the operator\'s setting names', !/GOOGLE_|lists nobody/.test(await partial.locator('body').innerText()));
     assert('...shows no Google button, and the access code form is the page', (await partial.locator('[data-testid=google-signin]').count()) === 0 && (await visible(partial, '#auth-code-input')));
     await partialCtx.close();
+
+    // ===== The server takes a while to say how people can sign in: no form that is taken away afterwards
+    const slowCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const slow = await newPage(slowCtx, mintGoogleToken());
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    await slow.route('**/api/audit/status', async (route) => {
+      await gate;
+      await route.continue();
+    });
+    await slow.goto(BOTH);
+    assert('while the server has not said how to sign in the page says it is checking', await appears(slow, '[data-testid=auth-checking]'));
+    assert('...and shows no form to start typing in', !(await visible(slow, '#auth-email-input')) && !(await visible(slow, '#auth-code-input')));
+    release();
+    assert('...then the Google button replaces the wait, and the code form never appeared', (await appears(slow, '#stub-google')) && !(await visible(slow, '#auth-email-input')) && (await slow.locator('[data-testid=auth-checking]').count()) === 0);
+    await slowCtx.close();
+
+    const deadCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const dead = await newPage(deadCtx);
+    await dead.route('**/api/audit/status', (route) => route.abort());
+    await dead.goto(BOTH);
+    assert('if the server never says, the page does not hide the way in for ever: the form appears after a few seconds', await appears(dead, '#auth-code-input', 12000));
+    await deadCtx.close();
+
+    // ===== Reading order, focus, widths, touch size (desktop, both ways in)
+    const detailCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const detail = await newPage(detailCtx, mintGoogleToken());
+    await detail.goto(BOTH);
+    await detail.waitForSelector('#stub-google');
+    const order = await detail.evaluate(() => {
+      const signIn = Array.from(document.querySelectorAll('h3')).find((h) => h.textContent === 'Sign in');
+      const pitch = Array.from(document.querySelectorAll('h2')).find((h) => /Audit Brand Visibility/.test(h.textContent || ''));
+      return !!signIn && !!pitch && !!(signIn.compareDocumentPosition(pitch) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    assert('the "Sign in" heading comes before the pitch in the page itself (a screen reader reads it first)', order);
+    const sides = await detail.evaluate(() => {
+      const signIn = Array.from(document.querySelectorAll('h3')).find((h) => h.textContent === 'Sign in')!.getBoundingClientRect();
+      const pitch = Array.from(document.querySelectorAll('h2')).find((h) => /Audit Brand Visibility/.test(h.textContent || ''))!.getBoundingClientRect();
+      return { signInLeft: signIn.left, pitchLeft: pitch.left };
+    });
+    assert('...yet side by side on a desktop the pitch is still on the left', sides.pitchLeft < sides.signInLeft, JSON.stringify(sides));
+    const widths = await detail.evaluate(() => ({
+      google: (document.querySelector('[data-testid=google-signin]') as HTMLElement).getBoundingClientRect().width,
+      toggle: (Array.from(document.querySelectorAll('button')).find((b) => /Use an access code instead/.test(b.textContent || '')) as HTMLElement).getBoundingClientRect().width,
+    }));
+    assert('the Google button and the access-code line stack at the same width', Math.abs(widths.google - widths.toggle) <= 1 && widths.google <= 400, JSON.stringify(widths));
+    await detail.click('button:has-text("Use an access code instead")');
+    assert('opening the access-code form puts the cursor in the email field', await detail.evaluate(() => document.activeElement?.id === 'auth-email-input'));
+    const eye = await detail.locator('button[aria-label="Show access code"]').boundingBox();
+    const toggleBox = await detail.locator('button:has-text("Use an access code instead")').boundingBox();
+    const submitBox = await detail.locator('button[type=submit]').boundingBox();
+    assert('the show-code eye, the toggle and Sign in are all at least 36px to hit (the toggle and Sign in 44px)', !!eye && eye.width >= 36 && eye.height >= 36 && !!toggleBox && toggleBox.height >= 44 && !!submitBox && submitBox.height >= 44, JSON.stringify({ eye, toggleBox, submitBox }));
+    await detailCtx.close();
+
+    // ===== A Google-only server tells an uninvited account the truth
+    const onlyBadCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const onlyBad = await newPage(onlyBadCtx, mintGoogleToken({ email: 'stranger@example.com' }));
+    await onlyBad.goto(ONLY);
+    await onlyBad.click('#stub-google');
+    const onlyText = await onlyBad.locator('[role=alert]').first().innerText().catch(() => '');
+    assert('on a Google-only server an uninvited account is not told to use an access code', /has not been invited/.test(onlyText) && !/access code/.test(onlyText), onlyText);
+    await onlyBadCtx.close();
 
     // ===== A phone
     const phone = await browser.newContext({ viewport: { width: 375, height: 740 }, isMobile: true, hasTouch: true });

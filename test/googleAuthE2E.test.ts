@@ -155,6 +155,8 @@ async function main() {
       body: JSON.stringify({ email: 'pamela@example.com', accessCode: TEST_ACCESS_CODE }),
     });
     check('on a Google-only server the test access code is not valid', codeOnOpen.status, 401);
+    const strangerOnOpen = await google(OPEN.base, mintGoogleToken({ email: 'stranger@example.com' }));
+    check('...and an uninvited account there is not told to use an access code that does not exist', [strangerOnOpen.status, /has not been invited\. Ask the person who runs this service to add it\.$/.test(strangerOnOpen.body.error), /access code/.test(strangerOnOpen.body.error)], [403, true, false]);
     const googleOnOpen = await google(OPEN.base, mintGoogleToken());
     check('...and Google sign-in works there', [googleOnOpen.status, googleOnOpen.body.user?.email], [200, 'pamela@example.com']);
 

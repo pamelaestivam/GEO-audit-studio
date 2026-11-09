@@ -778,6 +778,12 @@ NOT proven or left open:
 - **The invited list is an environment variable.** Adding someone is a redeploy, and there is no "invited since" record. A whole
   Google Workspace domain (`hd`) cannot be invited, on purpose: a plain domain match would invite every gmail.com address.
 - **Audits do not follow a person between sign-in methods.** Google users own `google|email`, code users own `label|email`.
+- **UX follow-ups left from the review (not login-page work):** after signing in, who is signed in and the Sign Out button are at the
+  very bottom of the sidebar (below the fold on a desktop, near the end of the page on a phone): a "Signed in as ..." chip in the
+  header would help, and matters more now that more than one Google account may be used on one machine. A malformed email in the
+  access-code form shows the browser's own validation bubble, so the page's own sentence never appears. The "Temporary storage"
+  notice arriving with the status moves the card a few pixels. Google's real dark button on the dark card could need a lighter theme
+  once seen.
 - **One keys fetch per cold instance** on Vercel (a few hundred bytes from Google); limits and the per-minute refresh are per instance.
 - **The reserved label `google`** may no longer be used in `ACCESS_CODES` (an owner would collide with Google users'); a deployment
   that already used it is refused at start with a sentence.
