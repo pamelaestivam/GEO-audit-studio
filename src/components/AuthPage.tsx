@@ -18,8 +18,12 @@ interface AuthPageProps {
   notice?: string | null;
 }
 
-/** How long to wait for the server to say how people can sign in before showing the access-code form anyway. */
-const STATUS_WAIT_MS = 6000;
+/**
+ * How long to wait for the server to say how people can sign in before showing the access-code form anyway. Short: the
+ * answer normally takes well under a second, and a server that is slow to wake should not keep the form from someone who
+ * was always going to use it.
+ */
+const STATUS_WAIT_MS = 1500;
 
 /**
  * Early access sign-in: "Continue with Google" when the operator has set it up (only invited addresses get in), and an
@@ -41,8 +45,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
   const emailInput = useRef<HTMLInputElement>(null);
   const { auth } = useAuditStatus();
 
-  // Until the server says how people can sign in, the page does not guess (a form shown first and then taken away, with
-  // someone already typing in it, is worse than a short wait). If the answer never comes, the form is shown anyway.
+  // Until the server says how people can sign in, the page waits a moment rather than show a form that is then taken away.
+  // If the answer is slower than that the form is shown anyway, and once someone has typed in it it is never taken away.
   useEffect(() => {
     const timer = window.setTimeout(() => setWaitedForStatus(true), STATUS_WAIT_MS);
     return () => window.clearTimeout(timer);
@@ -54,7 +58,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
   // Older servers do not say; an access code is the way in they always had.
   const codesWork = auth?.accessCodes !== false;
   // Without Google the form is simply the page. With Google it waits behind a line, unless it is the only way in.
-  const codeFormVisible = !checking && (!googleClientId || !codesWork ? codesWork : showCodeForm);
+  const typedSomething = email !== '' || accessCode !== '';
+  const codeFormVisible = !checking && (!googleClientId || !codesWork ? codesWork : showCodeForm || typedSomething);
 
   // Opening the form moves the cursor to its first field, so the next key goes where the person is looking.
   const opened = useRef(false);
@@ -354,8 +359,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess, notice }) =>
           </div>
 
           <div className="mt-8 pt-6 border-t border-slate-800/80 text-[11px] text-slate-400 leading-relaxed">
-            Access is by invitation. Your Google account or access code is checked on the server; sessions expire and end
-            if your access is withdrawn.
+            {googleClientId
+              ? 'Access is by invitation. Your Google account or access code is checked on the server; sessions expire and end if your access is withdrawn.'
+              : 'Access is by invitation. Your access code is checked on the server; sessions expire and end if your code is withdrawn.'}
           </div>
         </div>
       </div>

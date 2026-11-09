@@ -170,6 +170,11 @@ there is no Google secret anywhere. A person who signs in with Google has their 
 5. To make Google the ONLY way in, delete `ACCESS_CODES` (keep `SESSION_SECRET`). The page then offers no access code. The daily live
    check signs in with an access code (`LIVE_CHECK_ACCESS_CODE`), so it would lose its signed-in checks.
 
+Labels in the Google console change (unverified here; the assistant cannot open it): the newer "Google Auth Platform" calls the
+credential screen **Clients** and the button **Create client**; for development Google asks for both `http://localhost` and
+`http://localhost:3000`. Vercel preview deployments have their own addresses that are NOT authorized origins, so Google's button
+will not work on a preview (the access code still does); production is the one address listed.
+
 Origins can take a few minutes to take effect after saving. If the button shows "Google sign-in could not be loaded", an ad blocker
 or network rule is blocking `accounts.google.com`; "Try again" retries and the access code still works.
 

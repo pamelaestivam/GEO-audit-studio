@@ -305,3 +305,12 @@ sign could equal an invited one; the keys fetch followed redirects and read a bo
 five protections had no test) and UX (FIX FIRST: an access-code hint on a Google-only server, a layout jump while the status loaded, reading order,
 contrast, widths, focus, touch size). All fixed with a test that fails without each fix. Not proven: Google's real script, button and popup, and the
 real console steps (no Google account here): the first real sign-in is that measurement (`TECH_DEBT.md` 2.18). Owner action O-6 in `docs/PROGRAM.md`.
+
+**EVAL PM round (2026-11-09):** scored REVISE (73/100: Groundedness 3) for statements that outran the evidence, not for the code: the PR
+said the page is unchanged with no Google settings, but it hid the form behind a wait for the server's status (up to six seconds), moved the
+sign-in above the pitch on a phone, and its footer mentioned Google where Google is off. Fixed: the wait is 1.5 seconds, a form someone has
+started typing in is never taken away, the footer mentions Google only where Google is on (each shown to fail a check when broken), the PR
+body now lists what changes on the page even with Google unset (the short wait, the phone order, larger touch targets, small-text contrast),
+and `docs/DEPLOYMENT.md` 4c names the newer console path (Clients), both localhost origins, and that preview deployments cannot use Google's
+button. The security re-check of the fixes came back APPROVE (the cold-server burst, Kelvin sign, redirect, oversize and streamed bodies, list
+entries, and a 6000-request storm giving 24 fetches).

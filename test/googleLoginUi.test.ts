@@ -202,7 +202,7 @@ async function main() {
     const none = await newPage(noneCtx);
     await none.goto(NONE);
     assert('with no Google settings the email and code form is the page', await appears(none, '#auth-code-input'));
-    assert('...with no Google button, no "or", and the old sentence', (await none.locator('[data-testid=google-signin]').count()) === 0 && (await none.locator('button:has-text("Use an access code instead")').count()) === 0 && (await none.locator('text=Enter the email you were invited with and your access code.').count()) === 1);
+    assert('...with no Google button, no "or", and the old sentences (the footer does not mention Google either)', (await none.locator('[data-testid=google-signin]').count()) === 0 && (await none.locator('button:has-text("Use an access code instead")').count()) === 0 && (await none.locator('text=Enter the email you were invited with and your access code.').count()) === 1 && !/Google/.test(await none.locator('body').innerText()));
     await noneCtx.close();
 
     // ===== A client id with nobody invited: said plainly, access codes still work
@@ -234,8 +234,25 @@ async function main() {
     const dead = await newPage(deadCtx);
     await dead.route('**/api/audit/status', (route) => route.abort());
     await dead.goto(BOTH);
-    assert('if the server never says, the page does not hide the way in for ever: the form appears after a few seconds', await appears(dead, '#auth-code-input', 12000));
+    assert('if the server never says, the page does not hide the way in: the form appears after a moment', await appears(dead, '#auth-code-input', 6000));
     await deadCtx.close();
+
+    // the server answers, but later than the page is willing to wait: what was typed is never taken away
+    const lateCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const late = await newPage(lateCtx, mintGoogleToken());
+    let releaseLate: () => void = () => undefined;
+    const lateGate = new Promise<void>((r) => (releaseLate = r));
+    await late.route('**/api/audit/status', async (route) => {
+      await lateGate;
+      await route.continue();
+    });
+    await late.goto(BOTH);
+    assert('a server slower than the wait still gets the form shown, so it can be used', await appears(late, '#auth-email-input', 6000));
+    await late.fill('#auth-email-input', 'someone@example.com');
+    releaseLate();
+    assert('...then, when the answer says Google is on, the Google button appears', await appears(late, '#stub-google'));
+    assert('...and the form somebody started typing in is NOT taken away', (await visible(late, '#auth-email-input')) && (await late.inputValue('#auth-email-input')) === 'someone@example.com');
+    await lateCtx.close();
 
     // ===== Reading order, focus, widths, touch size (desktop, both ways in)
     const detailCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
