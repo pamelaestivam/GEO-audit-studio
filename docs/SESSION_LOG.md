@@ -327,5 +327,9 @@ almost all model hosts with no search (only Mistral's and Groq's search tools ar
 Compound and Llama models are gone; Meta's API searches with citations but is paid, US-only and waitlisted. **Written:**
 `docs/STRATEGY_2026-11-14.md` (the analysis, the plan in six steps, six decisions with a recommendation each), I-36 to I-40,
 `TECH_DEBT.md` 2.19, `docs/PROGRAM.md` row 13 and owner action O-7. **Left open:** everything in the plan; the owner's step 0 (look at the
-AI Studio limits, set `GEMINI_MODEL=gemini-2.5-flash-lite`, run one audit) comes first. **Not merged:** the owner said not to implement;
-these records sit on branch `claude/fervent-hopper-yk7ewz` until the owner says to merge them.
+AI Studio limits, set `GEMINI_MODEL=gemini-2.5-flash-lite`, run one audit) comes first. **Later the same day:** the owner side agreed to the recommendations ("I agree with your recommendation") and asked for a wrap-up and
+two prompts for later sessions. Written: the decisions (`docs/DECISIONS.md` 2026-11-14), the build specification
+(`docs/PLAN_2026-11.md`: P1 the engine probe, P2 a refused or missing search made visible and the default model changed, P3 run again
+and show what changed), and `docs/ENGINEERING_BACKLOG.md` (a review of the tool chain, architecture and code, with tasks in three
+groups). No product code changed in this session. Found while reviewing: `scripts/branch-status.sh` cannot answer in a cloud session
+(shallow clone), so hard rule 1 was met from the session's own commands instead (backlog group 1, item 1).

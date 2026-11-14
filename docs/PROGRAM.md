@@ -20,7 +20,7 @@ authorised the repair and it was done (set the URL back, fetch, reset `main` to
 than looking for another way round. History: `docs/SESSION_LOG.md`; lesson: I-13.
 
 **First action for a cold session:** run `npm ci && npm run verify` (it should report
-0 failures), then take the first row marked **next** in section 2 (currently item 3).
+0 failures), then execute `docs/PLAN_2026-11.md` from the first package that is not merged (as of 2026-11-14: P1).
 The owner actions in section 3 run in parallel and block only the rows that name them;
 never wait on them to do the others.
 
@@ -55,7 +55,11 @@ tell the owner or a client that it is dependable.
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
 | 12 | Sign in with Google (`TECH_DEBT.md` 1.5): "Continue with Google" first, access code second, only invited addresses | partly | BUILT 2026-11-09 (`src/googleAuth.ts`; unit, built-server and browser checks use a fake Google; the protections were each broken in turn and a check failed; independent security and UX reviews done). Waits on the owner's Google Cloud client id and the invited list (O-6); not yet tried with a real Google account or Google's real button |
-| 13 | Gemini free web search: the default model `gemini-3.6-flash` is listed by Google as having none on the free tier; make the failure visible and move to a model that has it | **next, before row 7 S7** | found 2026-11-14 (`docs/STRATEGY_2026-11-14.md` section 1, `TECH_DEBT.md` 2.19, I-36, I-37). Owner: O-7 (look at the limits, set `GEMINI_MODEL`, run one audit). Assistant: strategy step 1 (a true sentence for a zero allowance, a readiness call that searches, a searched-or-not flag on each answer). NOT measured: what the owner's key returns |
+| 13 | Gemini free web search: the default model `gemini-3.6-flash` is listed by Google as having none on the free tier; make the failure visible and move to a model that has it | **next** (`docs/PLAN_2026-11.md` P2; row 7's S6 and S7 are held until real audits exist, `docs/DECISIONS.md` 2026-11-14) | found 2026-11-14 (`docs/STRATEGY_2026-11-14.md` section 1, `TECH_DEBT.md` 2.19, I-36, I-37). Owner: O-7 (look at the limits, set `GEMINI_MODEL`, run one audit). Assistant: strategy step 1 (a true sentence for a zero allowance, a readiness call that searches, a searched-or-not flag on each answer). NOT measured: what the owner's key returns |
+| 14 | The engine probe: real replies from real engines, read from a workflow log (`docs/PLAN_2026-11.md` P1) | **next** | owner action O-8 for the keys (written in P1); building it waits on nothing |
+| 15 | Run an audit again and show what changed (`docs/PLAN_2026-11.md` P3) | next, after rows 14 and 13 | nothing |
+| 16 | A second searching engine; the written analysis off Gemini (strategy steps 4 and 5) | blocked | what the probe (row 14) measures on free keys |
+| 17 | Engineering backlog: tool chain, architecture, coding (`docs/ENGINEERING_BACKLOG.md`, three groups) | next, in its own session after rows 13 to 15 | nothing |
 
 **Stale remote branches:** merged branches are not deleted automatically (the session
 cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
