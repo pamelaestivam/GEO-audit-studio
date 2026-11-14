@@ -10,10 +10,10 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
 | Finding | Evidence |
 |---|---|
 | The type checker is the only lint, and it is not strict | `tsconfig.json` has no `strict`; about 140 `any` in `server.ts` and `src/` (62 in `server.ts`) |
-| The whole server is one function | `server.ts`, 2,344 lines; `buildApp()` runs from line 123 to 2233 and holds the routes, the Gemini client, the pacer, the breaker, readiness and the job driver as closures |
+| The whole server is one function | `server.ts`, 2,344 lines; `buildApp()` runs from line 123 to about line 2233 and holds the routes, the Gemini client, the pacer, the breaker, readiness and the job driver as closures |
 | Gemini is a special case | It is called through its SDK inside `server.ts`; the other three engines are in `src/providers.ts`; only Gemini has a breaker, a pacer and a call counter |
 | The questions put to engines live in two places and differ | `ANSWER_SYSTEM_PROMPT` in `src/providers.ts` says "Search the web"; the Gemini instruction in `server.ts` says "Use live web search"; the report records no version of either |
-| The test suite is one shell line | `package.json` `test`: 49 files joined by `&&`, run one after another; 38 test files each define their own `check()`; no timing, no parallel runs, no coverage |
+| The test suite is one shell line | `package.json` `test`: 47 steps (46 TypeScript files and one shell script) joined by `&&`, run one after another; 38 test files each define their own `check()`; no timing, no parallel runs, no coverage |
 | The branch-status rule cannot be met in a cloud session | `scripts/branch-status.sh` printed "status unknown: shallow clone" on 2026-11-14; cloud sessions start from a shallow clone |
 | The hard rules are prose | `.claude/` holds three agents and nothing else: no settings, no hooks, no skills. "Never `git add -A`" and "say the branch status" depend on being remembered |
 | Reviews share the author's blind spots | The review agents name no model, so they run on the author's; I-6 already records that this is not independence |
