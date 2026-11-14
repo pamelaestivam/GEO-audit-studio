@@ -349,3 +349,11 @@ answers, a second readiness call outside the retry wrapper, one hint on a quota-
 named. Also corrected: two sentences that overstated ("nothing we built can see it"; "halves the searching
 allowance"), five wrong counts in the backlog, lines in `docs/PROGRAM.md` that an entry of the same day contradicted, and the
 `docs/PRD.md` note the decision entry claimed. Lesson (I-41).
+
+**Third round, same day (a fresh reviewer):** nine more points, each with the line that contradicted the plan, none in the record of
+the finding. The hint's condition did not exist on the path a provider 429 takes and would have fired on the operator's own call cap;
+its second sentence sent the reader to a readiness check that does not ask Gemini while the breaker is tripped; the readiness error
+sentence said "refused a web search" for a timeout; the not-searched sentence would have been wrapped in "No answer captured from";
+two more pinned checks were unnamed and one named check was not pinned; "run again" did not say that the server, not the page, supplies
+the inputs. All corrected in `docs/PLAN_2026-11.md`. Because every round found a pin the plan had not named, the plan now tells its
+executor what to do when it meets another one, instead of claiming its lists are complete.
