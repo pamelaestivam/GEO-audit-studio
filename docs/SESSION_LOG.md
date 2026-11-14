@@ -357,3 +357,9 @@ sentence said "refused a web search" for a timeout; the not-searched sentence wo
 two more pinned checks were unnamed and one named check was not pinned; "run again" did not say that the server, not the page, supplies
 the inputs. All corrected in `docs/PLAN_2026-11.md`. Because every round found a pin the plan had not named, the plan now tells its
 executor what to do when it meets another one, instead of claiming its lists are complete.
+
+**EVAL PM, first score (2026-11-14): REVISE, 67 of 100** (Groundedness capped at 2 because the scorer was barred from the web and so
+could not read the live-check run the records call MEASURED; 4, 4 and 4 without the cap). Its points, all taken: the decision entry
+now lists the three things the assistant changed after the owner agreed; I-38 no longer labels the timing of the vendors' changes as
+READ; "impossible to miss" became "visible"; the backlog says how a long engineering list squares with "engineering is far ahead of
+proof".

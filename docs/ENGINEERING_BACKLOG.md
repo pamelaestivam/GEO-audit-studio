@@ -5,6 +5,13 @@ Written 2026-11-14 after a review of the repository as it stands on `main`
 product is built. Each item is one pull request unless it says otherwise, changes no
 behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
 
+**How this squares with "engineering is far ahead of proof"**
+(`docs/STRATEGY_2026-11-14.md` section 3): the owner asked for this list, and it is
+a list, not a commitment. Group 1 makes every session cheaper and safer whatever
+the product does next, so it is worth doing. Group 2 is taken an item at a time,
+when product work needs it. Group 3 is options: nothing in it starts before real
+audits exist, and each needs the owner's yes.
+
 ## What the review found (all READ in the repository, 2026-11-14)
 
 | Finding | Evidence |

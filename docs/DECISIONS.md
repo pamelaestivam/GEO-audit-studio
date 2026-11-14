@@ -28,6 +28,14 @@ with its own sentence, `metricVersion` 3); the readiness check asks with web sea
 changed" is built now (`docs/PLAN_2026-11.md` P3) rather than after the first real audits, because it needs no key and those audits are
 where it is first wanted; reliability slices S6 and S7 wait until real audits exist; no engine is adopted on documentation alone, only after the probe has measured it on a free key.
 
+**Changed after the owner agreed, by the assistant, while three review rounds corrected the build plan (the owner is told in the
+session's closing message of 2026-11-14 and can overturn any of them):** (a) the strategy's step 1 promised "its own sentence" for a
+search allowance of zero; the plan now adds only a hint beside the ordinary quota sentence, which stays, and a refused search can
+still trip the come-back-at-midnight breaker (`TECH_DEBT.md` 2.19 stays open for that); (b) `metricVersion` 3 for the rule that an
+unsearched answer is not counted; (c) "run again and show what changed" moved ahead of the owner's first real audits. The paragraph
+above lists (b) and (c) among what was "decided with" the agreement; strictly, the owner agreed to the six recommendations, and these
+three are the assistant's.
+
 **Who weighed in:** one assistant session doing the analysis (not the three-seat protocol: the owner asked for an analysis and a
 recommendation, and accepted it). EVAL PM scores each pull request that builds it.
 
