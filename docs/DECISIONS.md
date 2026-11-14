@@ -24,7 +24,7 @@ One entry per non-trivial product or architecture decision, per
    Google's free plan (a term recalled from memory, not checked).
 
 **Also decided with it (part of the agreed plan):** an answer given without a web search is not counted (it becomes a failed look-up
-with its own sentence, `metricVersion` 3); a refused search is a state of its own, separate from quota; "run again and show what
+with its own sentence, `metricVersion` 3); the readiness check asks with web search as well as without; "run again and show what
 changed" is built now (`docs/PLAN_2026-11.md` P3) rather than after the first real audits, because it needs no key and those audits are
 where it is first wanted; reliability slices S6 and S7 wait until real audits exist; no engine is adopted on documentation alone, only after the probe has measured it on a free key.
 

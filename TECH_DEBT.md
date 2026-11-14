@@ -776,9 +776,9 @@ in the code as it stands:
   searched and did not name you".
 
 The interim remedy is the owner's (`GEMINI_MODEL=gemini-2.5-flash-lite`, the last model with free search: `docs/PROGRAM.md` O-7).
-The fix is specified in `docs/PLAN_2026-11.md` P2: a searched-or-not flag on every answer, a readiness call that searches, and a
-refused-search state learned without adding a call to any audit, proved against a fake Gemini that refuses searched calls and accepts
-plain ones.
+The fix is specified in `docs/PLAN_2026-11.md` P2: a searched-or-not flag on every Gemini answer, a second readiness call that
+searches and never trips the breaker, and a hint on a quota-failed audit, proved against a fake Gemini that refuses searched calls and
+accepts plain ones. Knowingly left by that design: the audit itself still shows the ordinary quota sentence.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
 

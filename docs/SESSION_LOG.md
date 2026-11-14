@@ -336,12 +336,16 @@ groups). No product code changed in this session. Found while reviewing: `script
 
 **Independent review of these records (2026-11-14, pull request #59): CHANGES REQUESTED, all fixed in the documents.** The record of
 the finding held. The build specification did not: its first version added a diagnostic call inside the Gemini retry path, which
-would have turned a brief per-minute limit into "search refused" and changed call counts that four existing suites pin; it changed the
+would have turned a brief per-minute limit into "search refused" and changed call counts pinned in two existing suites; it changed the
 default model without knowing whether the older model accepts the look-up request shape; its readiness question gave the model no
 reason to search, and the test fake returns search metadata on every reply, so the new checks could not have failed; the probe's call
 budget did not add up; "run again" stored its link on a row that is pruned after a week and would have shown a failed look-up's
-sources as gone. `docs/PLAN_2026-11.md` was rewritten: no call is added to any audit path, the refused state is learned from the
-readiness check and from an explicit zero limit, the default model changes only on a measurement, and comparisons use only pairs
-measured in both runs. Also corrected: two sentences that overstated ("nothing we built can see it"; "halves the searching
+sources as gone. `docs/PLAN_2026-11.md` was rewritten: no call is added to any audit path, the default model changes only on a measurement, and
+comparisons use only pairs measured in both runs. **Second round, same day:** the reviewer confirmed nine of twelve fixed and found
+that the rewritten package was still too clever: a remembered "refused" state cannot work where each request may reach a fresh
+process, the readiness search call would itself have tripped the breaker, three readiness checks and five version checks were pinned
+and unnamed, and one promised sentence was false. The package was cut down to what needs no shared state (a searched flag on Gemini
+answers, a second readiness call outside the retry wrapper, one hint on a quota-failed audit), with every pinned value that changes
+named. Also corrected: two sentences that overstated ("nothing we built can see it"; "halves the searching
 allowance"), five wrong counts in the backlog, lines in `docs/PROGRAM.md` that an entry of the same day contradicted, and the
 `docs/PRD.md` note the decision entry claimed. Lesson (I-41).
