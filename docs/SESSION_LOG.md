@@ -314,3 +314,59 @@ body now lists what changes on the page even with Google unset (the short wait, 
 and `docs/DEPLOYMENT.md` 4c names the newer console path (Clients), both localhost origins, and that preview deployments cannot use Google's
 button. The security re-check of the fixes came back APPROVE (the cold-server burst, Kelvin sign, redirect, oversize and streamed bodies, list
 entries, and a 6000-request storm giving 24 fetches).
+
+## 2026-11-14: Strategy review and the free-engine list (analysis only, no product change)
+
+**Asked by Ricardo:** analyse how to evolve the product and evaluate a list of free model providers from another session; plan, do
+not implement. **Done:** read the directives, program, decisions and engine code; opened the vendors' own pages (Google, Groq, Mistral)
+and searched the rest. **Main finding:** Google's pricing page says web search ("grounding") is not available on the free tier for
+`gemini-3.6-flash`, the model this app asks by default, so real audits on the live site are probably refused, and the app would report
+that as a quota or rate limit while the readiness check (which asks without search) stays green. Not measured: there is no key in the
+workspace. **Also found:** an answer that comes back without a search is scored like a searched one; the suggested free providers are
+almost all model hosts with no search (only Mistral's and Groq's search tools are worth a trial, both unproven on a free key); Groq's
+Compound and Llama models are gone; Meta's API searches with citations but is paid, US-only and waitlisted. **Written:**
+`docs/STRATEGY_2026-11-14.md` (the analysis, the plan in six steps, six decisions with a recommendation each), I-36 to I-40,
+`TECH_DEBT.md` 2.19, `docs/PROGRAM.md` row 13 and owner action O-7. **Left open:** everything in the plan; the owner's step 0 (look at the
+AI Studio limits, set `GEMINI_MODEL=gemini-2.5-flash-lite`, run one audit) comes first. **Later the same day:** the owner side agreed to the recommendations ("I agree with your recommendation") and asked for a wrap-up and
+two prompts for later sessions. Written: the decisions (`docs/DECISIONS.md` 2026-11-14), the build specification
+(`docs/PLAN_2026-11.md`: P1 the engine probe, P2 a refused or missing search made visible and the default model changed, P3 run again
+and show what changed), and `docs/ENGINEERING_BACKLOG.md` (a review of the tool chain, architecture and code, with tasks in three
+groups). No product code changed in this session. Found while reviewing: `scripts/branch-status.sh` cannot answer in a cloud session
+(shallow clone), so hard rule 1 was met from the session's own commands instead (backlog group 1, item 1).
+
+**Independent review of these records (2026-11-14, pull request #59): CHANGES REQUESTED, all fixed in the documents.** The record of
+the finding held. The build specification did not: its first version added a diagnostic call inside the Gemini retry path, which
+would have turned a brief per-minute limit into "search refused" and changed call counts pinned in two existing suites; it changed the
+default model without knowing whether the older model accepts the look-up request shape; its readiness question gave the model no
+reason to search, and the test fake returns search metadata on every reply, so the new checks could not have failed; the probe's call
+budget did not add up; "run again" stored its link on a row that is pruned after a week and would have shown a failed look-up's
+sources as gone. `docs/PLAN_2026-11.md` was rewritten: no call is added to any audit path, the default model changes only on a measurement, and
+comparisons use only pairs measured in both runs. **Second round, same day:** the reviewer confirmed nine of twelve fixed and found
+that the rewritten package was still too clever: a remembered "refused" state cannot work where each request may reach a fresh
+process, the readiness search call would itself have tripped the breaker, three readiness checks and five version checks were pinned
+and unnamed, and one promised sentence was false. The package was cut down to what needs no shared state (a searched flag on Gemini
+answers, a second readiness call outside the retry wrapper, one hint on a quota-failed audit), with every pinned value that changes
+named. Also corrected: two sentences that overstated ("nothing we built can see it"; "halves the searching
+allowance"), five wrong counts in the backlog, lines in `docs/PROGRAM.md` that an entry of the same day contradicted, and the
+`docs/PRD.md` note the decision entry claimed. Lesson (I-41).
+
+**Third round, same day (a fresh reviewer):** nine more points, each with the line that contradicted the plan, none in the record of
+the finding. The hint's condition did not exist on the path a provider 429 takes and would have fired on the operator's own call cap;
+its second sentence sent the reader to a readiness check that does not ask Gemini while the breaker is tripped; the readiness error
+sentence said "refused a web search" for a timeout; the not-searched sentence would have been wrapped in "No answer captured from";
+two more pinned checks were unnamed and one named check was not pinned; "run again" did not say that the server, not the page, supplies
+the inputs. All corrected in `docs/PLAN_2026-11.md`. Because every round found a pin the plan had not named, the plan now tells its
+executor what to do when it meets another one, instead of claiming its lists are complete.
+
+**EVAL PM, first score (2026-11-14): REVISE, 67 of 100** (Groundedness capped at 2 because the scorer was barred from the web and so
+could not read the live-check run the records call MEASURED; 4, 4 and 4 without the cap). Its points, all taken: the decision entry
+now lists the three things the assistant changed after the owner agreed; I-38 no longer labels the timing of the vendors' changes as
+READ; "impossible to miss" became "visible"; the backlog says how a long engineering list squares with "engineering is far ahead of
+proof".
+
+**EVAL PM, second score (2026-11-14): SHIP, 87 of 100** (Groundedness 4, Completeness 4, Relevance 5; the scorer read the live-check
+run itself, which lifted the cap). Taken from its remaining points: the decision entry's label no longer calls the assistant's choices
+part of the agreement, and the strategy's status line points at what changed afterwards. Left as it is and said here: the plan's
+third-round fixes were checked against the code by the scorer but not sent to a fourth fresh review, so the plan tells its executor
+what to do when the code and the plan disagree; the stale lines in `docs/PROGRAM.md` are corrected by a dated note at the top, not
+where they sit.

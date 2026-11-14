@@ -5,6 +5,51 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-11-14 - Strategy: one true engine first, consultant-first, $0 kept; the owner agreed
+
+**Decision (owner side, Ricardo, 2026-11-14, in chat: "I agree with your recommendation"):** the six recommendations of
+`docs/STRATEGY_2026-11-14.md` section 5 stand as decisions:
+
+1. **Spend stays $0.** It is reconsidered only when five real audits exist and at least one business asks for more; the first money
+   would then be a capped monthly sum on Google's paid plan, after a spending cap is confirmed.
+2. **Gemini moves to `gemini-2.5-flash-lite`,** the only model Google lists with free web search that is not being withdrawn (READ on
+   Google's pricing page, 2026-11-14; not measured on the owner's key). The report will name that model. The owner can set
+   `GEMINI_MODEL` on Vercel at once (`docs/PROGRAM.md` O-7); the default in code changes in `docs/PLAN_2026-11.md` P2, and only
+   once the probe has measured that the model searches on the owner's key.
+3. **The first user is the owner, as a consultant, on real businesses.** The product is positioned as an audit instrument, not a
+   self-serve tracker. `docs/PRD.md` (Customer segments) carries a dated note: the segment stays open, the first user is named.
+4. **Open models without web search are not shown as answer engines.** At most, later, a separate and clearly labelled section.
+5. **Meta Muse Spark is parked** (paid, US-only, waitlisted) until decision 1 is revisited.
+6. **Open:** where the owner and her clients are based. Needed before any client in the EU, UK or Switzerland uses a site that runs on
+   Google's free plan (a term recalled from memory, not checked).
+
+**Also in the plan built from the agreement (the assistant's choices, not the owner's words; the next paragraph says which were made after the owner agreed):** an answer given without a web search is not counted (it becomes a failed look-up
+with its own sentence, `metricVersion` 3); the readiness check asks with web search as well as without; "run again and show what
+changed" is built now (`docs/PLAN_2026-11.md` P3) rather than after the first real audits, because it needs no key and those audits are
+where it is first wanted; reliability slices S6 and S7 wait until real audits exist; no engine is adopted on documentation alone, only after the probe has measured it on a free key.
+
+**Changed after the owner agreed, by the assistant, while three review rounds corrected the build plan (to be told to the owner in the
+closing message of the session of 2026-11-14; if that message is not in the record, treat the owner as not told and tell them; the
+owner can overturn any of them):** (a) the strategy's step 1 promised "its own sentence" for a
+search allowance of zero; the plan now adds only a hint beside the ordinary quota sentence, which stays, and a refused search can
+still trip the come-back-at-midnight breaker (`TECH_DEBT.md` 2.19 stays open for that); (b) `metricVersion` 3 for the rule that an
+unsearched answer is not counted; (c) "run again and show what changed" moved ahead of the owner's first real audits. The paragraph
+Strictly, the owner agreed to the six recommendations; these three are the assistant's.
+
+**Who weighed in:** one assistant session doing the analysis (not the three-seat protocol: the owner asked for an analysis and a
+recommendation, and accepted it). EVAL PM scores each pull request that builds it.
+
+**Alternatives rejected:** adding the free model hosts from the roundup as engines (they do not search and no client knows them);
+staying on `gemini-3.6-flash` and enabling billing now (breaks D-1 before any real audit exists); `gemini-2.5-flash` (Google routes it
+to a model without free search from 2026-12-01); building the second engine before measuring the first.
+
+**Not verified:** what the owner's key returns; whether `gemini-2.5-flash-lite` accepts web search together with a JSON reply shape
+(the look-up route uses that); every free limit at Mistral and Groq. The engine probe (`docs/PLAN_2026-11.md` P1) is how these get measured.
+
+**Reversibility:** the model is one environment variable; `metricVersion` marks which rule a saved report was measured under.
+
+---
+
 ## 2026-11-09 - Sign in with Google, next to access codes, for invited addresses only
 
 **Decision (assistant, on the owner's request of 2026-11-09 "let's get this login page fully login in with Google"; the owner

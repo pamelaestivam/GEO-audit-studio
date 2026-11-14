@@ -61,6 +61,11 @@ testing the pipeline, not confirmed paying customers, and that stays
 true for now. Product/UI decisions should stay segment-agnostic until
 real usage picks a segment, rather than optimizing for a guess.
 
+**Added 2026-11-14 (owner side, `docs/DECISIONS.md` same date):** the segment
+stays open, but the first user is now named: the owner herself, as a
+consultant, running audits for real businesses. The product is positioned as
+an audit instrument, not a self-serve tracker, until that use says otherwise.
+
 ### User personas
 Deliberately deferred alongside customer segments above — inventing a
 named persona ahead of a chosen segment would be exactly the kind of
