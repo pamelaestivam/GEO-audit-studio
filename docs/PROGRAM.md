@@ -6,7 +6,10 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 `docs/OWNER_DIRECTIVES.md`; the design is `docs/RELIABILITY.md`; the reasons are
 `docs/DECISIONS.md`; the history is `docs/SESSION_LOG.md`.
 
-Last updated: 2026-11-04.
+Last updated: 2026-11-14.
+
+**Read `docs/STRATEGY_2026-11-14.md` before choosing work (2026-11-14):** the default Gemini model probably has no free web
+search any more, so real audits are probably refused (row 13, owner action O-7). That comes before every other row.
 
 **Check this first (a failure that happened once and is fixed):** run
 `git remote get-url origin` in `/home/user/GEO-audit-studio`. It must print
@@ -52,6 +55,7 @@ tell the owner or a client that it is dependable.
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
 | 12 | Sign in with Google (`TECH_DEBT.md` 1.5): "Continue with Google" first, access code second, only invited addresses | partly | BUILT 2026-11-09 (`src/googleAuth.ts`; unit, built-server and browser checks use a fake Google; the protections were each broken in turn and a check failed; independent security and UX reviews done). Waits on the owner's Google Cloud client id and the invited list (O-6); not yet tried with a real Google account or Google's real button |
+| 13 | Gemini free web search: the default model `gemini-3.6-flash` is listed by Google as having none on the free tier; make the failure visible and move to a model that has it | **next, before row 7 S7** | found 2026-11-14 (`docs/STRATEGY_2026-11-14.md` section 1, `TECH_DEBT.md` 2.19, I-36, I-37). Owner: O-7 (look at the limits, set `GEMINI_MODEL`, run one audit). Assistant: strategy step 1 (a true sentence for a zero allowance, a readiness call that searches, a searched-or-not flag on each answer). NOT measured: what the owner's key returns |
 
 **Stale remote branches:** merged branches are not deleted automatically (the session
 cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
@@ -148,6 +152,17 @@ Client ID (no secret is used); (3) Vercel, Production only: `GOOGLE_CLIENT_ID` a
 sign in); (4) redeploy once; (5) try it and tell the assistant what the page shows. Labels in the Google console are unverified (the
 assistant cannot open it).
 
+**O-7. Find out whether Gemini still searches for free, and switch model (about 15 minutes).** *Why only you:* the workspace holds no
+Gemini key and cannot open AI Studio or Vercel (tried 2026-11-14: `GEMINI_API_KEY` is not set here; O-1 lists the blocked hosts).
+1. Open `https://aistudio.google.com`, sign in, and open the rate-limit page for the project that owns the key. Find the line for
+   search grounding. Tell the assistant the number beside Gemini 3 and beside Gemini 2.5, and the requests-per-day shown for
+   `gemini-2.5-flash-lite`.
+2. Vercel, project `geo-audit-studio`, **Settings**, **Environment Variables**: add `GEMINI_MODEL` with the value
+   `gemini-2.5-flash-lite`, **Production** only. **Redeploy** the Production deployment once.
+3. Sign in to the live site and run one audit with one question. Send the assistant a screenshot of the result and of the answer text.
+Know before you start: this changes the model the report names (an older, smaller Gemini). It is the only one Google still lets a
+free key search with (READ on Google's pricing page, 2026-11-14), and it is the last of its generation, so it may be withdrawn too.
+
 ## 4. Verification ledger (what has actually been checked, and what has not)
 
 | Claim | Status | How / date |
@@ -169,6 +184,9 @@ assistant cannot open it).
 | PostgresStore against a real PostgreSQL 16.15 | verified | `test/store.test.ts` (159 postgres checks), `test/postgresE2E.test.ts` (28), `test/postgresConfig.test.ts` (26) and `test/testIsolation.test.ts` (18), local on a UTF8 server and in CI; deliberate breakages (no advisory lock, no row lock, no owner guard, no error listener on a checked-out connection, closing a timed-out connection, the JSONB cast, an unreadable plan answering NULL, no rounding, a raw log line, no start-up claim rule, no replay of a lost click or of a click refused by the caps, a suite that starts the server, in a child process or in its own, without removing DATABASE_URL) each made a check fail |
 | PostgresStore against Supabase's pooler, from Vercel | **not verified** | nothing has connected; see `TECH_DEBT.md` 2.17 |
 | Vercel Hobby deployment cap | MEASURED twice | refused a redeploy on 2026-10-28 ("more than 100 in 24 hours", account-wide); the project's own list showed 8 deployments, so the count includes other projects or deleted deployments |
+| Free Gemini web search on the default model `gemini-3.6-flash` | **READ: "Not available" on the free tier; not measured on the owner's key** | Google's pricing page, fetched 2026-11-14 (I-36); owner action O-7 |
+| Live site: engine key, sign-in, durable storage | MEASURED | `live-check` run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/43603783051 (2026-11-14): all three pass; the signed-in checks were skipped (no secrets). Which store kind it reported was not printed |
+| A real audit on the live site returns a measured answer | **not verified** | nobody has reported one; see row 13 |
 | Docker image on a real host | **not verified** | no daemon in the sandbox |
 | Rulesets on this plan | **not verified** | AGENT unsure |
 

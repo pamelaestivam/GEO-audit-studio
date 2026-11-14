@@ -314,3 +314,18 @@ body now lists what changes on the page even with Google unset (the short wait, 
 and `docs/DEPLOYMENT.md` 4c names the newer console path (Clients), both localhost origins, and that preview deployments cannot use Google's
 button. The security re-check of the fixes came back APPROVE (the cold-server burst, Kelvin sign, redirect, oversize and streamed bodies, list
 entries, and a 6000-request storm giving 24 fetches).
+
+## 2026-11-14: Strategy review and the free-engine list (analysis only, no product change)
+
+**Asked by Ricardo:** analyse how to evolve the product and evaluate a list of free model providers from another session; plan, do
+not implement. **Done:** read the directives, program, decisions and engine code; opened the vendors' own pages (Google, Groq, Mistral)
+and searched the rest. **Main finding:** Google's pricing page says web search ("grounding") is not available on the free tier for
+`gemini-3.6-flash`, the model this app asks by default, so real audits on the live site are probably refused, and the app would report
+that as a quota or rate limit while the readiness check (which asks without search) stays green. Not measured: there is no key in the
+workspace. **Also found:** an answer that comes back without a search is scored like a searched one; the suggested free providers are
+almost all model hosts with no search (only Mistral's and Groq's search tools are worth a trial, both unproven on a free key); Groq's
+Compound and Llama models are gone; Meta's API searches with citations but is paid, US-only and waitlisted. **Written:**
+`docs/STRATEGY_2026-11-14.md` (the analysis, the plan in six steps, six decisions with a recommendation each), I-36 to I-40,
+`TECH_DEBT.md` 2.19, `docs/PROGRAM.md` row 13 and owner action O-7. **Left open:** everything in the plan; the owner's step 0 (look at the
+AI Studio limits, set `GEMINI_MODEL=gemini-2.5-flash-lite`, run one audit) comes first. **Not merged:** the owner said not to implement;
+these records sit on branch `claude/fervent-hopper-yk7ewz` until the owner says to merge them.

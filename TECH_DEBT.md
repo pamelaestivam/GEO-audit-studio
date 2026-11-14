@@ -757,6 +757,26 @@ the negated `if`; `return` without a semicolon; a template literal with text at 
 literal in the condition ahead of `=== false`; a status written only inside a string. A fake-server handler that returns
 after a `!`/`!==` check needs `// harness-ok: <why>`.
 
+### 2.19 A search allowance of zero is invisible to the product (HIGH; found 2026-11-14, not fixed)
+
+Google lists Grounding with Google Search as "Not available" on the free tier for `gemini-3.6-flash`, this app's default model
+(READ on Google's pricing page; `docs/INSIGHTS.md` I-36). Not measured against the owner's key. If it holds, three things are wrong
+in the code as it stands:
+
+- **The sentence is false.** A refused search arrives as a 429, and `describeProviderError` (`src/errors.ts`) makes every 429 either
+  "rate limited, wait a minute" or "daily quota used up, resets at midnight Pacific". Neither is true of an allowance of zero, and the
+  daily form trips the breaker until midnight for nothing.
+- **The health check cannot see it.** `checkReadiness` (`server.ts`) asks Gemini for one word without search, which a free key is
+  allowed, so readiness is green while every audit question is refused. The daily live check also skips its signed-in part until the
+  owner adds two secrets (`docs/PROGRAM.md` O-3 step 4).
+- **An answer without a search is scored as if it had one.** `collectGeminiEvidence` keeps whatever text comes back; nothing records
+  whether a search ran. A from-memory answer (after a silent re-route by the provider, for instance) would count as "the engine
+  searched and did not name you".
+
+The interim remedy is the owner's (`GEMINI_MODEL=gemini-2.5-flash-lite`, the last model with free search: `docs/PROGRAM.md` O-7).
+The fix is step 1 of `docs/STRATEGY_2026-11-14.md`: its own sentence for a zero allowance, a readiness call that searches, a
+searched-or-not flag on every answer, proved against a fake Gemini that refuses searched calls and accepts plain ones.
+
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
 
 PROVEN with a fake Google (a local keys server and tokens signed with its key; unit, built-server and browser checks; the core
