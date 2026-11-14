@@ -23,18 +23,18 @@ One entry per non-trivial product or architecture decision, per
 6. **Open:** where the owner and her clients are based. Needed before any client in the EU, UK or Switzerland uses a site that runs on
    Google's free plan (a term recalled from memory, not checked).
 
-**Also decided with it (part of the agreed plan):** an answer given without a web search is not counted (it becomes a failed look-up
+**Also in the plan built from the agreement (the assistant's choices, not the owner's words; the next paragraph says which were made after the owner agreed):** an answer given without a web search is not counted (it becomes a failed look-up
 with its own sentence, `metricVersion` 3); the readiness check asks with web search as well as without; "run again and show what
 changed" is built now (`docs/PLAN_2026-11.md` P3) rather than after the first real audits, because it needs no key and those audits are
 where it is first wanted; reliability slices S6 and S7 wait until real audits exist; no engine is adopted on documentation alone, only after the probe has measured it on a free key.
 
-**Changed after the owner agreed, by the assistant, while three review rounds corrected the build plan (the owner is told in the
-session's closing message of 2026-11-14 and can overturn any of them):** (a) the strategy's step 1 promised "its own sentence" for a
+**Changed after the owner agreed, by the assistant, while three review rounds corrected the build plan (to be told to the owner in the
+closing message of the session of 2026-11-14; if that message is not in the record, treat the owner as not told and tell them; the
+owner can overturn any of them):** (a) the strategy's step 1 promised "its own sentence" for a
 search allowance of zero; the plan now adds only a hint beside the ordinary quota sentence, which stays, and a refused search can
 still trip the come-back-at-midnight breaker (`TECH_DEBT.md` 2.19 stays open for that); (b) `metricVersion` 3 for the rule that an
 unsearched answer is not counted; (c) "run again and show what changed" moved ahead of the owner's first real audits. The paragraph
-above lists (b) and (c) among what was "decided with" the agreement; strictly, the owner agreed to the six recommendations, and these
-three are the assistant's.
+Strictly, the owner agreed to the six recommendations; these three are the assistant's.
 
 **Who weighed in:** one assistant session doing the analysis (not the three-seat protocol: the owner asked for an analysis and a
 recommendation, and accepted it). EVAL PM scores each pull request that builds it.

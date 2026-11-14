@@ -363,3 +363,10 @@ could not read the live-check run the records call MEASURED; 4, 4 and 4 without 
 now lists the three things the assistant changed after the owner agreed; I-38 no longer labels the timing of the vendors' changes as
 READ; "impossible to miss" became "visible"; the backlog says how a long engineering list squares with "engineering is far ahead of
 proof".
+
+**EVAL PM, second score (2026-11-14): SHIP, 87 of 100** (Groundedness 4, Completeness 4, Relevance 5; the scorer read the live-check
+run itself, which lifted the cap). Taken from its remaining points: the decision entry's label no longer calls the assistant's choices
+part of the agreement, and the strategy's status line points at what changed afterwards. Left as it is and said here: the plan's
+third-round fixes were checked against the code by the scorer but not sent to a fourth fresh review, so the plan tells its executor
+what to do when the code and the plan disagree; the stale lines in `docs/PROGRAM.md` are corrected by a dated note at the top, not
+where they sit.
