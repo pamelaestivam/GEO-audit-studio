@@ -13,13 +13,13 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
 | The whole server is one function | `server.ts`, 2,344 lines; `buildApp()` runs from line 123 to about line 2233 and holds the routes, the Gemini client, the pacer, the breaker, readiness and the job driver as closures |
 | Gemini is a special case | It is called through its SDK inside `server.ts`; the other three engines are in `src/providers.ts`; only Gemini has a breaker, a pacer and a call counter |
 | The questions put to engines live in two places and differ | `ANSWER_SYSTEM_PROMPT` in `src/providers.ts` says "Search the web"; the Gemini instruction in `server.ts` says "Use live web search"; the report records no version of either |
-| The test suite is one shell line | `package.json` `test`: 47 steps (46 TypeScript files and one shell script) joined by `&&`, run one after another; 38 test files each define their own `check()`; no timing, no parallel runs, no coverage |
-| The branch-status rule cannot be met in a cloud session | `scripts/branch-status.sh` printed "status unknown: shallow clone" on 2026-11-14; cloud sessions start from a shallow clone |
+| The test suite is one shell line | `package.json` `test`: 47 steps (46 TypeScript files and one shell script) joined by `&&`, run one after another; 37 test files each define their own `check()` and eight more their own `assert`, `pass` or `fail`; no timing, no parallel runs, no coverage |
+| The branch-status rule cannot be met in a cloud session | `scripts/branch-status.sh` printed "Branch: unknown \| this is a shallow clone, so merges older than its history are invisible \| status unknown" on 2026-11-14; cloud sessions start from a shallow clone |
 | The hard rules are prose | `.claude/` holds three agents and nothing else: no settings, no hooks, no skills. "Never `git add -A`" and "say the branch status" depend on being remembered |
 | Reviews share the author's blind spots | The review agents name no model, so they run on the author's; I-6 already records that this is not independence |
 | Build tools are production dependencies | `vite`, `@vitejs/plugin-react`, `@tailwindcss/vite` are in `dependencies`; the server bundle needs only `express`, `pg`, `@google/genai`, `dotenv` |
-| Dependency updates are watched for GitHub Actions only | `.github/dependabot.yml`; an npm advisory turned `main` red three times in October (I-22) |
-| Nothing checks that the live site runs the merged commit | The live check tests behaviour, not which commit is deployed; Vercel has refused deployments before (I-26) |
+| Dependency updates are watched for GitHub Actions only | `.github/dependabot.yml`; three npm advisories published in October failed the audit step on every branch (I-22) |
+| Nothing checks that the live site runs the merged commit | `/api/health` already reports the commit it was built from (`server.ts`), but nothing compares it with `main`; Vercel has refused deployments before (I-26) |
 | Model ids and their end dates are comments | `src/providers.ts`; the default Gemini model lost free search with no signal (I-36) |
 | The records are large and hand-kept | `TECH_DEBT.md` is 1,197 lines with sections out of order; one `docs/PROGRAM.md` table cell is a page long; `CLAUDE.md` is loaded into every session and repeats the test list |
 
@@ -29,7 +29,10 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
    the history it needs (`git fetch --deepen` or `--unshallow` of `origin/main`) or
    says exactly which command would, and `test/branchStatus.test.sh` gains a shallow
    case. Hard rule 1 is unmeetable in cloud sessions until this lands.
-2. **Turn the hard rules into machinery** (`.claude/settings.json`): a pre-tool hook
+2. **Turn the hard rules into machinery** (`.claude/settings.json`). **Needs the
+   owner's explicit yes before it merges:** it changes what every later session may
+   do without asking. Open the pull request, show the owner the exact file, and
+   leave it unmerged until they answer. Contents: a pre-tool hook
    that refuses `git add -A`, `git add .` and `git commit -a`; a stop hook that runs
    the branch-status script and prints its first line; a session-start hook that
    runs `npm ci`, starts the test PostgreSQL when the programs exist, and prints the
@@ -51,17 +54,16 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
    one checkout collide, so the build happens once, before anything). It prints a
    per-file timing table and the total check count, keeps going after a failure and
    exits non-zero at the end, and supports `--tier` and `--changed` (only the files
-   mapped to what the diff touched). One shared `test/harness.ts` replaces the 38
-   copies of `check()` and carries the early-exit guard from I-31. `npm test` calls
+   mapped to what the diff touched). One shared `test/harness.ts` replaces the
+   per-file copies of `check()` and its relatives and carries the early-exit guard from I-31. `npm test` calls
    the runner; the commands list in `CLAUDE.md` is generated from the manifest.
 6. **CI in parallel under the same required name.** Split `ci.yml` into jobs (lint
    and unit, server suites in two shards, browser, postgres, production install)
    with a final job still named `test` that needs them all, so the ruleset keeps
    working. Cache the Playwright browser. Write the timing table to the job summary.
-7. **The live check proves which commit is live.** `/api/health` reports the commit
-   it was built from (Vercel provides it at build time); `scripts/smoke.mjs --expect-commit`
-   compares it with the head of `main`; the live check fails with a sentence when
-   the site is behind.
+7. **The live check proves which commit is live.** `/api/health` already reports the
+   commit it was built from; add `scripts/smoke.mjs --expect-commit`, have the live
+   check pass the head of `main`, and fail with a sentence when the site is behind.
 8. **Dependabot for npm (security updates, grouped, weekly), and build tools moved to
    `devDependencies`.** Confirm the Vercel build and `scripts/prod-install-check.sh`
    still pass; the production audit surface shrinks.
@@ -77,10 +79,10 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
 1. **Split `server.ts` behind the golden reports.** A composition root that builds
    the parts and hands them to each other: `src/server/app.ts`, `routes/` (auth,
    audit, audits, status), `gemini.ts` (client, pacer, retry), `readiness.ts`,
-   `driver.ts`. No behaviour change: the twelve golden reports, the end-to-end
+   `driver.ts`. No behaviour change: the golden reports, the end-to-end
    suites and a new check that the list of routes and their status codes is
-   unchanged are the proof (I-18 is the method). Do it in three or four pull
-   requests, one seam at a time.
+   unchanged are the proof (I-18 is the method; there are thirteen golden reports
+   today). Do it in three or four pull requests, one seam at a time.
 2. **One port for answer engines.** `AnswerEngine { id, describe(), ask(question) }`
    where `describe()` states what the engine is (vendor, exact model, searches or
    not, free or paid, the key variable) and `ask` returns the evidence with its
@@ -102,7 +104,8 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
    `promptVersion` next to `metricVersion`. Changing the wording of a question
    changes what is measured; today nothing records it.
 6. **The pacer, breaker and call counter in the shared store** (slice S6 of
-   `docs/PLAN_STEP_E.md`). On Vercel every instance starts with empty memory, so the
+   `docs/PLAN_STEP_E.md`). **Held** by `docs/DECISIONS.md` 2026-11-14 until real
+   audits exist; listed here so it is not lost, not to be started. On Vercel every instance starts with empty memory, so the
    breaker forgets a wall it just hit and the daily cap counts one instance.
 7. **Property-based tests for `src/analysis.ts`.** It is pure, so state its laws and
    let a generator attack them: named plus cited-only never exceeds usable answers;
@@ -127,8 +130,9 @@ behaviour a person can see unless it says otherwise, and follows `CLAUDE.md`.
    instruction text; and writes the result as a dated note. It measures the
    measurement, which is what turns "an observation" into a defensible range
    (`TECH_DEBT.md` 2.13) and is the product's real difference from trackers.
-3. **Smoke-test every pull request's own preview deployment** before merge. All four
-   Vercel-only incidents (`TECH_DEBT.md` 1.4a to 1.4c) would have been caught there.
+3. **Smoke-test every pull request's own preview deployment** before merge. The
+   Vercel-only incidents (`TECH_DEBT.md` 1.4a and 1.4b) would have been caught there,
+   and the open question in 1.4c would have been answered.
 4. **The records as data.** One ledger file per kind (program rows, debt items,
    insights) in a structured format, with `docs/PROGRAM.md` and `TECH_DEBT.md`
    generated from it; a docs check that every file path, pull request number and

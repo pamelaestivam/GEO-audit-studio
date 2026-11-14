@@ -766,16 +766,19 @@ in the code as it stands:
 - **The sentence is false.** A refused search arrives as a 429, and `describeProviderError` (`src/errors.ts`) makes every 429 either
   "rate limited, wait a minute" or "daily quota used up, resets at midnight Pacific". Neither is true of an allowance of zero, and the
   daily form trips the breaker until midnight for nothing.
-- **The health check cannot see it.** `checkReadiness` (`server.ts`) asks Gemini for one word without search, which a free key is
-  allowed, so readiness is green while every audit question is refused. The daily live check also skips its signed-in part until the
-  owner adds two secrets (`docs/PROGRAM.md` O-3 step 4).
+- **The health check does not look there.** The Gemini call in `checkReadiness` (`server.ts`) asks for one word without search, which a
+  free key is allowed, so that line is green while every audit question is refused. Two other readiness lines could turn red
+  afterwards (`recent trouble` when every audit of the last 24 hours came back empty; `gemini` once the breaker has tripped), but
+  readiness runs only for a signed-in caller, and the daily live check skips its signed-in part until the owner adds two secrets
+  (`docs/PROGRAM.md` O-3 step 4).
 - **An answer without a search is scored as if it had one.** `collectGeminiEvidence` keeps whatever text comes back; nothing records
   whether a search ran. A from-memory answer (after a silent re-route by the provider, for instance) would count as "the engine
   searched and did not name you".
 
 The interim remedy is the owner's (`GEMINI_MODEL=gemini-2.5-flash-lite`, the last model with free search: `docs/PROGRAM.md` O-7).
-The fix is step 1 of `docs/STRATEGY_2026-11-14.md`: its own sentence for a zero allowance, a readiness call that searches, a
-searched-or-not flag on every answer, proved against a fake Gemini that refuses searched calls and accepts plain ones.
+The fix is specified in `docs/PLAN_2026-11.md` P2: a searched-or-not flag on every answer, a readiness call that searches, and a
+refused-search state learned without adding a call to any audit, proved against a fake Gemini that refuses searched calls and accepts
+plain ones.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
 

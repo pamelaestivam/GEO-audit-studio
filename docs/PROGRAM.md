@@ -9,7 +9,13 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 Last updated: 2026-11-14.
 
 **Read `docs/STRATEGY_2026-11-14.md` before choosing work (2026-11-14):** the default Gemini model probably has no free web
-search any more, so real audits are probably refused (row 13, owner action O-7). That comes before every other row.
+search any more, so real audits are probably refused. The work is specified in `docs/PLAN_2026-11.md`, in this order: P1 (row 14,
+the probe that measures it), P2 (row 13, the fix), P3 (row 15). The owner's part is O-7 now and O-8 once P1 is merged.
+
+**Stale lines below, corrected here rather than rewritten (2026-11-14):** the live check of 2026-11-14 (run 43603783051) reports
+sign-in set, an engine key set and durable storage. So "Storage on Vercel is process memory" (section 1), "What is left is the
+owner's: add `DATABASE_URL`" (row 8), "sign-in is impossible today" (O-3) and "nothing has connected" (ledger) describe an earlier
+state. What the run did not print is which kind of store answered, and no signed-in check has run.
 
 **Check this first (a failure that happened once and is fixed):** run
 `git remote get-url origin` in `/home/user/GEO-audit-studio`. It must print
@@ -59,7 +65,7 @@ tell the owner or a client that it is dependable.
 | 14 | The engine probe: real replies from real engines, read from a workflow log (`docs/PLAN_2026-11.md` P1) | **next** | owner action O-8 for the keys (written in P1); building it waits on nothing |
 | 15 | Run an audit again and show what changed (`docs/PLAN_2026-11.md` P3) | next, after rows 14 and 13 | nothing |
 | 16 | A second searching engine; the written analysis off Gemini (strategy steps 4 and 5) | blocked | what the probe (row 14) measures on free keys |
-| 17 | Engineering backlog: tool chain, architecture, coding (`docs/ENGINEERING_BACKLOG.md`, three groups) | next, in its own session after rows 13 to 15 | nothing |
+| 17 | Engineering backlog: tool chain, architecture, coding (`docs/ENGINEERING_BACKLOG.md`, three groups) | next, in its own session after rows 13 to 15 | the owner starting that session; two items in it wait on the owner by name (the session's own settings, and slice S6) |
 
 **Stale remote branches:** merged branches are not deleted automatically (the session
 cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
@@ -166,6 +172,10 @@ Gemini key and cannot open AI Studio or Vercel (tried 2026-11-14: `GEMINI_API_KE
 3. Sign in to the live site and run one audit with one question. Send the assistant a screenshot of the result and of the answer text.
 Know before you start: this changes the model the report names (an older, smaller Gemini). It is the only one Google still lets a
 free key search with (READ on Google's pricing page, 2026-11-14), and it is the last of its generation, so it may be withdrawn too.
+On this model "Auto-Detect" and "Generate Query Matrix" may stop working (they ask for a search and a structured reply in one
+request, which older models are believed to refuse; unverified, and they probably do not work today either if search is refused).
+Typing the details yourself always works. If you would rather wait for a measurement first, skip step 2 until the probe has run (O-8,
+written when `docs/PLAN_2026-11.md` P1 is merged).
 
 ## 4. Verification ledger (what has actually been checked, and what has not)
 

@@ -14,17 +14,19 @@ One entry per non-trivial product or architecture decision, per
    would then be a capped monthly sum on Google's paid plan, after a spending cap is confirmed.
 2. **Gemini moves to `gemini-2.5-flash-lite`,** the only model Google lists with free web search that is not being withdrawn (READ on
    Google's pricing page, 2026-11-14; not measured on the owner's key). The report will name that model. The owner can set
-   `GEMINI_MODEL` on Vercel at once (`docs/PROGRAM.md` O-7); the default in code changes in `docs/PLAN_2026-11.md` P2.
+   `GEMINI_MODEL` on Vercel at once (`docs/PROGRAM.md` O-7); the default in code changes in `docs/PLAN_2026-11.md` P2, and only
+   once the probe has measured that the model searches on the owner's key.
 3. **The first user is the owner, as a consultant, on real businesses.** The product is positioned as an audit instrument, not a
-   self-serve tracker. This replaces "ICP deferred" in `docs/PRD.md` with a first user; it closes no later door.
+   self-serve tracker. `docs/PRD.md` (Customer segments) carries a dated note: the segment stays open, the first user is named.
 4. **Open models without web search are not shown as answer engines.** At most, later, a separate and clearly labelled section.
 5. **Meta Muse Spark is parked** (paid, US-only, waitlisted) until decision 1 is revisited.
 6. **Open:** where the owner and her clients are based. Needed before any client in the EU, UK or Switzerland uses a site that runs on
    Google's free plan (a term recalled from memory, not checked).
 
 **Also decided with it (part of the agreed plan):** an answer given without a web search is not counted (it becomes a failed look-up
-with its own sentence, `metricVersion` 3); a refused search is a state of its own, separate from quota; reliability slices S6 and S7
-wait until real audits exist; no engine is adopted on documentation alone, only after the probe has measured it on a free key.
+with its own sentence, `metricVersion` 3); a refused search is a state of its own, separate from quota; "run again and show what
+changed" is built now (`docs/PLAN_2026-11.md` P3) rather than after the first real audits, because it needs no key and those audits are
+where it is first wanted; reliability slices S6 and S7 wait until real audits exist; no engine is adopted on documentation alone, only after the probe has measured it on a free key.
 
 **Who weighed in:** one assistant session doing the analysis (not the three-seat protocol: the owner asked for an analysis and a
 recommendation, and accepted it). EVAL PM scores each pull request that builds it.
