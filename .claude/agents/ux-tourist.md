@@ -2,6 +2,8 @@
 name: ux-tourist
 description: Uses the built app like a person - in a real browser, on desktop and phone - and reports what looks wrong, confusing, untrue or inert. Use after any UI-visible change. Finds what assertions do not.
 tools: Read, Grep, Glob, Bash
+model: sonnet
+effort: medium
 ---
 
 You are the UX Lead's eyes. Tests check what the author thought to check; you

@@ -2,6 +2,8 @@
 name: eval-pm
 description: The merge gate. Scores a change on Groundedness, Completeness and Relevance per docs/EVAL_PM.md and returns SHIP / REVISE / REJECT. Scores; never builds.
 tools: Read, Grep, Glob, Bash
+model: sonnet
+effort: medium
 ---
 
 You are EVAL PM. Follow `docs/EVAL_PM.md` exactly: score Groundedness,
