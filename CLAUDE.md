@@ -328,126 +328,80 @@ have to be rediscovered from scratch, not so it can be skipped.
 - `npm run build` — client bundle + `dist/server.cjs`
 - `npm start` — run the built server
 - `npm run lint` — `tsc --noEmit`
-- `npm test` — build, then every check below, in order
-- `npx tsx test/auditClient.test.ts` — the page's side of an audit against a faked `fetch`: a page-driven
-  audit posts to advance and never polls; a server-driven one is only polled; a lost job on a stateless
-  deployment is `AuditInterrupted` with its exact sentence
-- `npx tsx test/auditClientDriverE2E.test.ts` — the real built server with `AUDIT_DRIVER=client`: nothing runs
-  after the 202; a replayed or abandoned submit spends nothing; advancing to the end makes exactly the planned
-  calls; two simultaneous advances give one `advanced` and one `busy` and one real call; a job on another
-  instance of a stateless deployment is a typed 404; advances are not counted by the per-minute limiter; an
-  undriven audit stops holding a concurrent-audit slot (needs a current `dist/`)
-- `npx tsx test/auditResumeE2E.test.ts` — the real built server on a durable `DATA_DIR`, killed with SIGKILL and started
-  again: an audit killed between steps finishes with exactly the planned calls; one killed mid-call repeats that call
-  once and says so (a repeated call and an incident); one killed three times on the same step stops with a sentence
-  and the calls are capped; a page-driven audit carries on when the page asks again; a job with no plan is failed at
-  boot with a code and a sentence (needs a current `dist/`)
-- `npx tsx test/googleAuth.test.ts` — Sign in with Google, pure: every wrong ID token refused (algorithm none or HMAC, wrong or weak key,
-  other audience or issuer, expired, future, overlong, unverified or missing email, malformed), the invited-list and client-id
-  configuration, and Google's key cache (fetched once, one refresh a minute, stale keys kept when Google is down), against keys the
-  test makes itself
-- `npx tsx test/googleAuthE2E.test.ts` — the real built server with a fake Google keys server: an invited address signs in and the
-  session works on protected routes, an uninvited valid account is refused by name, every bad token gets a plain sentence, removing an
-  address ends its session, a Google-only server accepts no access code, Google down is a 503 and held keys keep working, rate limit
-  (needs a current `dist/`)
-- `npx tsx test/googleLoginUi.test.ts` — the login page in Chromium with a stand-in for Google's button script: Google first and the
-  access code collapsed under it, not-invited and expired messages, script blocked then "Try again", Google-only and no-Google and
-  half-configured pages, the phone layout (way in on the first screen, no sideways scroll; set `GOOGLE_LOGIN_SHOTS_DIR` to save
-  screenshots) (needs a current `dist/` and a Chromium)
-- `npx tsx test/postgresConfig.test.ts` — reading `DATABASE_URL` and scrubbing it from text: TLS choice by `sslmode`/host, refusals that
-  never repeat the address (pure checks, no database)
-- `export TEST_DATABASE_URL=$(bash scripts/pg-test-cluster.sh start)` — a throwaway local PostgreSQL for the next two commands (needs the
-  `postgresql` server programs installed; without `TEST_DATABASE_URL` they print `SKIP ... NOT RUN`, and CI sets `REQUIRE_POSTGRES=1`)
-- `npx tsx test/store.test.ts` also runs the whole contract suite on the PostgreSQL store when `TEST_DATABASE_URL` is set: six stores
-  opening at once, a newer database refused, restart survival, eight simultaneous claims from two stores give one, the same key from
-  two stores refused, the same columns as SQLite, `openStore` fallbacks that never leak the address
-- `npx tsx test/postgresE2E.test.ts` — the real built server, two processes on one PostgreSQL (`AUDIT_DRIVER=client`): the same click
-  sent to both makes one job; an audit advanced alternately by both finishes with the planned calls; a server killed mid-call is taken
-  over after its claim expires with the repeat recorded; nothing lost when every server is killed; readiness says postgres (needs a
-  current `dist/` and `TEST_DATABASE_URL`)
-- `npx tsx test/recentTrouble.test.ts` — the "recent trouble" sentence the deep readiness check reports: quiet is healthy, a step that threw or ran out of tries is a fault, restarts and slow audits are noted but are not (pure checks; the end-to-end proof is in `auditStepsE2E`)
-- `npx tsx test/engineProbe.test.ts` — the engine probe (`scripts/engine-probe.mjs`, started by hand as the `engine-probe` workflow) as a real
-  child process against local fakes of Gemini, Mistral and Groq: the printed blocks (status, whether a search ran, source count, field names,
-  the reply cut at 4,000 characters), the call budget (13 calls at 2 questions, 17 at 3; a bigger run or a bad `--questions` is refused before
-  any call), SKIP lines for a missing key, and that no key, `projects/<digits>` or ten-digit number reaches the public log although the fake
-  failures carry them (no network, no `dist/` needed)
-- `npx tsx test/searchedAnswer.test.ts` — the searched-or-not rule on reply shapes and the exact not-searched and hint sentences (pure)
-- `npx tsx test/unsearchedE2E.test.ts` — the real built server and the fake Gemini (grounding only when the request carries the search tool;
-  modes `unsearched_answer`, `unsearched_second`, `search_refused`, `search_500`): an unsearched answer is not counted (1 of 2, the same
-  calls as a searched audit), all unsearched is a failed audit with 1 call, a refused search fails as before (baseline measured on main) plus
-  the hint, the cap carries no hint, and each readiness case (two calls, breaker not tripped by a refused search, cached = 0 calls) (needs a current `dist/`)
-- `npx tsx test/reportCompare.test.ts` — `compareReports` (`src/reportCompare.ts`), pure: every reason two audits are not comparable, a failed look-up
-  on each side with its sources, a rival named only in a pair that failed in the other run, identical, empty and one-question audits
-- `npx tsx test/rerunE2E.test.ts` — the real built server and a fake Gemini that changes its answer between two runs: `/api/audit/rerun` reads
-  every input from the saved audit (a junk body is ignored), costs exactly what the audit costs, carries `previousAuditId` on the saved report, a second
-  user gets the not-found answer, a retried click is one audit, a failed re-run is not saved, the limiter and sign-in apply (needs a current `dist/`)
-- `npx tsx test/rerunUi.test.ts` — "Run again" and the "Since the previous run" strip in Chromium, desktop and phone (counts, the caveat, no percentage,
-  no sideways scroll, the strip on the first screen, the deleted-earlier-audit sentence, a failed re-run) (needs a current `dist/` and a Chromium)
-- `npx tsx test/testHarness.test.ts` — a guard on the tests themselves: no test may `return` early after a failed check without setting an exit status (that printed FAIL and exited 0, so the suite stayed green without having run the test; source scan, checked against fixtures of each shape)
-- `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
-  quota-breaker rule (including the several-engine cases no end-to-end test can reach)
-- `npx tsx test/auditStepsE2E.test.ts` — the real built server, a fake Gemini that counts hits, and the real
-  SQLite file: an audit's step rows agree with the calls it made (one question = 2 calls and 3 done steps;
-  every engine failing = 1 call and a skipped analysis; a forced step exception = a failed step, an incident,
-  a failed audit, not billable). Needs a current `dist/`
-- `npx tsx test/auditGoldenE2E.test.ts` — the real built server and a fake Gemini; twelve scenarios' reports
-  compared with `test/golden/` after dropping per-run values and sorting keys (captured before `src/auditPipeline.ts` was split out).
-  A deliberate change to the report is `UPDATE_GOLDEN=1`, then read the diff (needs a current `dist/`)
-- `npx tsx test/analysis.test.ts` — deterministic analysis + vendor-extraction
-  unit checks, no server involved
-- `npx tsx test/apiClient.test.ts` — frontend network-retry wrapper, against a
-  faked `fetch`
-- `npx tsx test/quotaBreaker.test.ts` — circuit breaker + cooldown math, pure
-  unit checks
-- `npx tsx test/quotaBreakerE2E.test.ts` — spawns the real built server against
-  a fake Gemini endpoint that always 429s; counts real HTTP hits to prove the
-  breaker actually stops repeated calls (needs a current `dist/`)
-- `npx tsx test/quotaEfficiencyE2E.test.ts` — spawns the real built server
-  against a fake Gemini endpoint that always succeeds; counts real HTTP hits
-  to prove a single-query audit costs exactly 2 calls (needs a current
-  `dist/`)
-- `npx tsx test/idempotency.test.ts` — retry-safety store, pure unit checks
-- `npx tsx test/retrySpendE2E.test.ts` — spawns the real built server against
-  a fake Gemini endpoint; proves a retried submit costs one audit's quota
-  rather than four, and that a transient per-minute 429 is waited out instead
-  of destroying the audit (needs a current `dist/`)
-- `npx tsx test/vercelServerless.test.ts` — proves `api/[...path].ts` (the
-  Vercel entry point) actually answers `/api/*` on a real socket, and that
-  it does not fall back to serving the frontend for a non-API path; also
-  proves the Render/local long-running path is unchanged (needs a current
-  `dist/`)
-- `npx tsx test/mvpHardeningE2E.test.ts` — spawns the real built server against
-  a fake Gemini endpoint with switchable failure modes; proves vendor discovery
-  precision end to end, that a failed analysis step is "not assessed" (not 100%
-  accurate), that a failed audit carries no fabricated findings, and the rate
-  limit / concurrency cap / JSON error behaviour (needs a current `dist/`)
-- `npx tsx test/ports.test.ts` — guards the ports the end-to-end suites use: Node's `fetch` refuses a fixed list
-  of ports (3659, 4045, 4190, 6000, 6566 and others) at once, so every suite draws ports through `test/ports.ts`;
-  checks the list against the running Node and fails if a suite draws ports by hand
-- `npx tsx test/diagnostics.test.ts` — the failure diagnostics themselves: what the server logs about a
-  failed Gemini request (the real cause, never a key), what the end-to-end suites print for a server when they fail,
-  and, against the real built server with Gemini on a closed port, that the log names ECONNREFUSED while the
-  person's sentence does not (needs a current `dist/`)
-- `npx tsx test/reportView.test.ts`, `npx tsx test/rateLimit.test.ts`,
-  `npx tsx test/auth.test.ts`, `npx tsx test/store.test.ts`,
-  `npx tsx test/queries.test.ts` — pure unit checks (presentation of headline
-  numbers, the limiter, sign-in and sessions, the SQLite/memory store contract,
-  the standard queries)
-- `npx tsx test/foundationE2E.test.ts` — the real built server: sign-in enforced
-  on every spending route, ownership, restart survival (incl. SIGKILL
-  mid-audit), budgets, readiness, X-Forwarded-For handling, unconfigured
-  production (needs a current `dist/`)
-- `npx tsx test/uiSmoke.test.ts` — the real built app in Chromium (desktop and
-  phone): sign-in, an audit, every module, reload, delete, failure states
-  (needs a current `dist/` and `npx playwright install chromium`)
-- `node scripts/smoke.mjs <url>` — post-deploy check of a RUNNING instance;
-  `bash scripts/prod-install-check.sh` — the built server from a clean
+- `npm test` — `node scripts/run-tests.mjs`: one build, then every test file in `test/manifest.json` (unit files in parallel, server files two at a time,
+  browser and PostgreSQL files one at a time), a timing table at the end, exit 1 if any file failed
+- `npm run verify` — lint, `npm test`, and the production audit
+- `node scripts/run-tests.mjs --tier unit` (or `server`, `browser`, `postgres`, comma-separated) — one tier; `--changed [base]` — only tests that touch
+  what the diff touches (a quick check; CI runs everything); `--list` — show the selection; `--no-build`; `test/x.test.ts ...` — exactly those files
+- `export TEST_DATABASE_URL=$(bash scripts/pg-test-cluster.sh start)` — a throwaway local PostgreSQL for the `postgres` tier (without it those files print
+  `SKIP ... NOT RUN`; CI sets `REQUIRE_POSTGRES=1`)
+- `node scripts/smoke.mjs <url>` — post-deploy check of a RUNNING instance; `bash scripts/prod-install-check.sh` — the built server from a clean
   production-dependencies-only install
-- `npx tsx test/contract.test.ts` — full server contract checks (needs a
-  current `dist/`)
-- `bash test/branchStatus.test.sh` — the branch-status script against a throwaway
-  repository (part of `npm test`)
-- `bash test/reviewAgents.test.sh` — the three agents pin `model: sonnet`, the owner's rule D-11 (part of `npm test`)
+
+The test files, generated from `test/manifest.json` (`node scripts/gen-test-list.mjs`; a test fails if this block is out of date; the long description of each
+test is in `docs/TEST_GUIDE.md`):
+
+<!-- tests:start -->
+- `test/testHarness.test.ts` (unit) — A guard on the tests themselves. An end-to-end test that checks its server came up and then does
+- `test/testIsolation.test.ts` (server, needs dist/) — A guard on the tests themselves: a test that starts the built server must not pick up the developer's DATABASE_URL.
+- `test/ports.test.ts` (unit) — Guards the ports the end-to-end suites use (see test/ports.ts for why): Node's `fetch` refuses a fixed list of "bad
+- `test/analysis.test.ts` (unit) — Deterministic checks for the analysis layer.
+- `test/reportView.test.ts` (unit) — Pure checks for how headline numbers are presented. Run: npx tsx test/reportView.test.ts
+- `test/statusView.test.ts` (unit) — What the server's own status becomes on screen. Run with: npx tsx test/statusView.test.ts
+- `test/reportGuard.test.ts` (unit) — The machine checks on a finished report (src/reportGuard.ts): no figure in the model's
+- `test/spendGuard.test.ts` (unit) — The $0 guard (src/spendGuard.ts): paid engines are off unless allowed, the per-day call counter and
+- `test/rateLimit.test.ts` (unit) — Pure unit checks for the per-IP request limiter. Run: npx tsx test/rateLimit.test.ts
+- `test/auth.test.ts` (unit) — Pure checks for sign-in and sessions. Run: npx tsx test/auth.test.ts
+- `test/googleAuth.test.ts` (unit) — Pure checks for Sign in with Google (src/googleAuth.ts): the ID token is checked against keys we control, so every way
+- `test/store.test.ts` (postgres, needs dist/) — Contract checks for the durable store. The same suite runs against the
+- `test/postgresConfig.test.ts` (unit) — Pure checks for reading DATABASE_URL: no database is contacted. The address carries the password, so what these
+- `test/queries.test.ts` (unit) — The standard queries are the literal questions asked of the answer engines.
+- `test/providers.test.ts` (unit) — The ChatGPT / Perplexity / Claude adapters, against response bodies shaped as
+- `test/engineProbe.test.ts` (server, needs dist/) — The engine probe (scripts/engine-probe.mjs, docs/PLAN_2026-11.md P1), run as a real child process against local fakes of the
+- `test/backup.test.ts` (server, needs dist/) — scripts/backup.mjs makes a restorable copy of a database that a server still
+- `test/apiClient.test.ts` (unit) — Checks for the network-resilience wrapper (`src/apiClient.ts`).
+- `test/auditClient.test.ts` (unit) — The page's side of running an audit (`src/auditClient.ts`), against a fake global `fetch`:
+- `test/idempotency.test.ts` (unit) — Checks for the retry-safety store (`src/idempotency.ts`).
+- `test/quotaBreaker.test.ts` (unit) — Checks for the quota circuit breaker (src/quotaBreaker.ts) and the cooldown
+- `test/quotaBreakerE2E.test.ts` (server, needs dist/) — End-to-end proof that the circuit breaker stops the amplification that
+- `test/quotaEfficiencyE2E.test.ts` (server, needs dist/) — Proves the actual call budget of a real audit against a *succeeding* fake
+- `test/searchedAnswer.test.ts` (unit) — The searched-or-not rule (src/searchedAnswer.ts) and the sentences that go with it (src/errors.ts). Pure: no server, no model.
+- `test/unsearchedE2E.test.ts` (server, needs dist/) — End to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P2):
+- `test/reportCompare.test.ts` (unit) — compareReports (src/reportCompare.ts, docs/PLAN_2026-11.md P3), pure: every reason two audits are not comparable, empty and
+- `test/rerunE2E.test.ts` (server, needs dist/) — Run an audit again, end to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P3):
+- `test/retrySpendE2E.test.ts` (server, needs dist/) — End-to-end proof that a retried request costs what one request costs, and
+- `test/mvpHardeningE2E.test.ts` (server, needs dist/) — End-to-end proof, against the real built server (dist/server.cjs) and a fake
+- `test/diagnostics.test.ts` (server, needs dist/) — The failure diagnostics themselves are tested, because a diagnostic nobody checks can quietly stop working just when
+- `test/narrativeAttributionE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini: what the report
+- `test/reportGuardE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini: a figure the narrative model
+- `test/auditGoldenE2E.test.ts` (server, needs dist/) — A golden-report test for the audit pipeline, at the boundary: the real built server, a fake Gemini,
+- `test/auditSteps.test.ts` (unit) — Pure checks for the step helpers (`src/auditSteps.ts`): the plan, which answers a set of steps produced, and the
+- `test/recentTrouble.test.ts` (unit) — Pure checks for the "recent trouble" sentence and verdict the deep readiness check reports
+- `test/readinessLine.test.ts` (unit) — How the smoke script reads each entry of the deep readiness answer (scripts/readinessLine.mjs): measured and ok is
+- `test/citedOnlyUi.test.ts` (unit) — The executive summary card, rendered to markup: decision A's sub-line, explainer and old-rule note are actually on
+- `test/auditStepsE2E.test.ts` (server, needs dist/) — End to end, against the real built server, a fake Gemini that counts real HTTP hits, and the real SQLite file:
+- `test/auditClientDriverE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini that counts real HTTP hits: an audit the PAGE
+- `test/auditResumeE2E.test.ts` (server, needs dist/) — End to end: an audit that was running when the server died is RESUMED on a durable store, from the step it was
+- `test/postgresE2E.test.ts` (postgres, needs dist/) — End to end: the real built server on a real PostgreSQL database, the way two Vercel instances would share one.
+- `test/spendGuardE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini: the $0 guard.
+- `test/foundationE2E.test.ts` (server, needs dist/) — End-to-end proof of the foundation: real sign-in enforced on every spending
+- `test/googleAuthE2E.test.ts` (server, needs dist/) — End to end: Sign in with Google against the real built server, with a fake Google (a local keys server and tokens
+- `test/uiSmoke.test.ts` (browser, needs dist/) — Drives the real built app in a real browser (Chromium via Playwright) against
+- `test/rerunUi.test.ts` (browser, needs dist/) — "Run again" and "Since the previous run" in a real browser, desktop and phone, on the real built server with a fake Gemini that
+- `test/googleLoginUi.test.ts` (browser, needs dist/) — The login page with Google, in a real browser (Chromium via Playwright) against the real built server. Google's own
+- `test/lookupAndBlankDomainE2E.test.ts` (browser, needs dist/) — In the real browser against the real server: what Auto-Detect hands the form,
+- `test/discardedClaimsUi.test.ts` (browser, needs dist/) — In a real browser: when the analysis reports inaccuracy claims that cannot be
+- `test/vercelEsmImports.test.ts` (server, needs dist/) — Regression test for the actual production bug this proves it would have
+- `test/vercelServerless.test.ts` (server, needs dist/) — Proof that the Vercel serverless entry point (api/index.ts) actually
+- `test/liveCommit.test.ts` (server, needs dist/) — "Which commit is live?" (item G1.7 of docs/ENGINEERING_BACKLOG.md): scripts/smoke.mjs --expect-commit against a stand-in site
+- `test/modelCalendar.test.ts` (unit) — The model calendar (item G1.9 of docs/ENGINEERING_BACKLOG.md): the RULE is tested here with fixed dates, and the DATA is tested for
+- `test/contract.test.ts` (server, needs dist/) — Contract tests: boot the real built server and assert the guarantees the
+- `test/branchStatus.test.sh` (unit) — !/usr/bin/env bash
+- `test/shipSkill.test.sh` (unit) — !/usr/bin/env bash
+- `test/reviewAgents.test.sh` (unit) — !/usr/bin/env bash
+- `test/dependencyLayout.test.sh` (unit, needs dist/) — !/usr/bin/env bash
+- `test/manifest.test.ts` (unit) — The manifest lists every test file; the runner (real child processes against fake tests): failures, early-exit FAIL lines, skips, tiers, --changed; CLAUDE.md list is up to date.
+<!-- tests:end -->
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
 `server.ts`) to redirect the SDK at a local fake server — a no-op unless
