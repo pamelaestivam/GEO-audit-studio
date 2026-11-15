@@ -21,8 +21,8 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 |---|---|---|---|
 | G1.1 Branch status in a shallow clone | in review | #65 | `test/branchStatus.test.sh` shallow cases; fails when the deepening is switched off; run on the real shallow clone of this session |
 | G1.2 Hard rules as machinery (`.claude/settings.json`) | not started | | |
-| G1.3 `ship` skill | not started | | |
-| G1.4 Reviewers on a different model | not started | | |
+| G1.3 `ship` skill | **done** | #67, merge commit 2a1a589 (CI green; review SHIP after two fix rounds; EVAL PM 87 SHIP) | `test/shipSkill.test.sh`: front matter, every gate named in order, the real files and scripts it points at exist |
+| G1.4 Reviewers on a different model | **done** | #68, merge commit a29d152 (CI green on the head; a first run failed with EADDRINUSE in `engineProbe`, I-53; review SHIP; EVAL PM 87 SHIP) | `test/reviewAgents.test.sh`; the pinned model of each review seat is `opus`, the author's session model is `sonnet` |
 | G1.5 Test runner and shared harness | not started | | |
 | G1.6 CI in parallel under the name `test` | not started | | |
 | G1.7 Live check proves the live commit | not started | | |
