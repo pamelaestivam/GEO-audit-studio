@@ -41,5 +41,14 @@ check('the two ends known on 2026-11-15 are recorded (ChatGPT gpt-5 shutdown 202
 check('every date is a real calendar date', MODEL_CALENDAR.every((m) => isCalendarDate(m.confirmedOn) && (m.endDate === null || isCalendarDate(m.endDate))));
 check('Gemini free web search is recorded as "no" (docs/TECH_DEBT.md 2.19, the vendor pricing page)', MODEL_CALENDAR.find((m) => m.engine === 'Gemini')?.freeSearch === 'no');
 
+// the weekly workflow's wiring (it has not run yet: these pin what was read)
+import { readFileSync } from 'node:fs';
+const wf = readFileSync('.github/workflows/model-calendar.yml', 'utf8');
+check('the workflow runs weekly and by hand', /cron: '\d+ \d+ \* \* 1'/.test(wf) && /workflow_dispatch:/.test(wf));
+check('...may write issues and nothing else', /issues: write/.test(wf) && /contents: read/.test(wf) && !/contents: write/.test(wf));
+check('...runs the issue step even when an earlier step failed, and counts a missing result as due', /if: always\(\)/.test(wf) && /outputs\.code \|\| 1/.test(wf));
+check('...lists the script\'s DUE lines in the issue (the script prints "DUE  " and the workflow greps "^DUE")', /grep '\^DUE' calendar\.log/.test(wf) && /console\.log\(`DUE  /.test(readFileSync('scripts/model-calendar-check.ts', 'utf8')));
+check('...opens one issue, comments on it while due, closes it when nothing is due', /gh issue create/.test(wf) && /gh issue comment/.test(wf) && /gh issue close/.test(wf));
+
 console.log(failures === 0 ? '\nAll model-calendar checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
