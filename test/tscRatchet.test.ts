@@ -17,7 +17,7 @@ check('a flag with no stored baseline fails, and so does a stored one that is no
 check('--update never raises a count and starts a new flag at its measured value', (() => { const n = lowered({ a: 12, b: 5, c: 3 }, { a: 10, b: 9 }); return n.a === 10 && n.b === 5 && n.c === 3; })());
 
 const stored = JSON.parse(readFileSync('test/tsc-baseline.json', 'utf8')).counts as Record<string, number>;
-check('the stored baseline names both flags with whole numbers', ['strictNullChecks', 'noImplicitAny'].every((f) => Number.isInteger(stored[f]) && stored[f] >= 0));
+check('the stored baseline names both flags and the suppression count with whole numbers', ['strictNullChecks', 'noImplicitAny', 'suppressions'].every((f) => Number.isInteger(stored[f]) && stored[f] >= 0));
 const r = spawnSync('node', ['scripts/tsc-ratchet.mjs'], { encoding: 'utf8' });
 check('the real compiler, run through the script, matches the stored baseline exactly (exit 0)', r.status === 0, `${r.stdout}${r.stderr}`.slice(-400));
 
