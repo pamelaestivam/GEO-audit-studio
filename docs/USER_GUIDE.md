@@ -107,6 +107,15 @@ spends a request of a shared quota):
   could not be queried (key rejected, quota used up, network). Every number is
   shown as **—**, not zero. Read the reason and re-run; it was not counted
   against your daily allowance.
+  If the reason is a quota or rate limit, a second line may say the model this
+  server uses might have no free web search on this key: that is a hint, not a
+  finding, and the owner can check it on Google AI Studio's rate-limit page.
+- **"Gemini answered without searching the web, so the answer was not counted."**
+  The engine replied from memory instead of searching. An answer with no search
+  behind it is not what a person asking an answer engine would get with live
+  results, so it is left out of every figure (it is listed as not counted, never
+  as "the engine did not name you"). Run it again; if it keeps happening, the
+  model is not searching for that question.
 - **"Qualitative analysis unavailable."** The answers were captured and the
   visibility numbers are real, but the inaccuracy / omission / remediation
   analysis failed. Those sections say **Not assessed** - they are not "none
@@ -115,6 +124,14 @@ spends a request of a shared quota):
   Export before you leave.
 - **"N attempted answers failed and are not counted."** Some queries failed; the
   rest are what the numbers are based on.
+
+**One more thing about how it was measured.** The figures come through each
+engine's API (the developer interface), which can differ from what the engine's
+own app shows you. The report says so beside the model names. Audits are marked
+with the rule they were measured under (rule 3 counts only answers where a web
+search ran); an audit saved before that rule and one run after it are not
+measured the same way, although the page does not mark either, so do not read a
+difference between them as a change in your visibility.
 
 **The modules (left side; on a phone, the list above the report)**
 

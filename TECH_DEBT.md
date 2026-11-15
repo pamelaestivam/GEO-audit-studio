@@ -757,7 +757,7 @@ the negated `if`; `return` without a semicolon; a template literal with text at 
 literal in the condition ahead of `=== false`; a status written only inside a string. A fake-server handler that returns
 after a `!`/`!==` check needs `// harness-ok: <why>`.
 
-### 2.19 A search allowance of zero is invisible to the product (HIGH; found 2026-11-14, not fixed)
+### 2.19 A search allowance of zero is invisible to the product (HIGH; found 2026-11-14; narrowed 2026-11-15, still open)
 
 Google lists Grounding with Google Search as "Not available" on the free tier for `gemini-3.6-flash`, this app's default model
 (READ on Google's pricing page; `docs/INSIGHTS.md` I-36). Not measured against the owner's key. If it holds, three things are wrong
@@ -779,6 +779,20 @@ The interim remedy is the owner's (`GEMINI_MODEL=gemini-2.5-flash-lite`, the las
 The fix is specified in `docs/PLAN_2026-11.md` P2: a searched-or-not flag on every Gemini answer, a second readiness call that
 searches and never trips the breaker, and a hint on a quota-failed audit, proved against a fake Gemini that refuses searched calls and
 accepts plain ones. Knowingly left by that design: the audit itself still shows the ordinary quota sentence.
+
+**Narrowed 2026-11-15 (`docs/PLAN_2026-11.md` P2, built):** the second bullet (the health check does not look there) and the third
+(an answer without a search is scored as if it had one) are closed against tests: `readiness` now has a `gemini search` line that asks
+what an audit asks, made outside the retry wrapper so it can never trip the breaker (`test/unsearchedE2E.test.ts`: both fine, refused
+search, a 500 on the search only, an unsearched reply, no key, the cap, cached), and a Gemini reply with text but no search is not
+counted (`test/searchedAnswer.test.ts`, `test/unsearchedE2E.test.ts`; `metricVersion` 3). **Still open:** the first bullet. An audit that
+hits a refused search still shows the ordinary quota or rate-limit sentence, and the daily form still trips the breaker until midnight,
+with only a hint beside it (`degradedHint`), because telling an allowance of zero from a used-up one needs a call the audit should not
+spend. **Also open:** (a) how often real Gemini answers without searching is UNKNOWN until the engine probe has run with a key
+(`docs/PROGRAM.md` O-8; it prints "web search ran: yes or no" for every call): if it is common the rule is revisited with the owner;
+(b) the suites with their own fake Gemini (`mvpHardeningE2E`, `quotaEfficiencyE2E`, `retrySpendE2E`) always send grounding, so they do not
+exercise the new rule; (c) the default model is unchanged (no probe measurement yet); if it moves to `gemini-2.5-flash-lite`, the
+look-ups that send a search together with a structured reply (`/api/audit/parse-url`, `/api/audit/generate-queries`) may be refused by
+that model (unknown; probe shape (c) measures it), and the follow-up is to redesign them, not to patch around them.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
 

@@ -12,6 +12,8 @@ import {
 } from './src/analysis.js';
 import {
   computeQuotaCooldownMs,
+  DEGRADED_HINT,
+  NOT_SEARCHED_MESSAGE,
   describeProviderError,
   formatDuration,
   summariseFailures,
@@ -19,6 +21,7 @@ import {
   underlyingCause,
 } from './src/errors.js';
 import { QuotaBreaker } from './src/quotaBreaker.js';
+import { geminiSearched } from './src/searchedAnswer.js';
 import crypto from 'crypto';
 import { IdempotencyStore, readIdempotencyKey } from './src/idempotency.js';
 import {
@@ -97,6 +100,10 @@ const geminiBreaker = new QuotaBreaker();
 
 /** Single source of truth for the audit model, so it can be swapped in one place. */
 const AUDIT_MODEL = engineModelId('Gemini');
+/** What every audit question is asked with (collectGeminiEvidence) and what the readiness search check asks with. */
+const GEMINI_AUDIT_SYSTEM_INSTRUCTION =
+  'You are an AI search assistant answering a real user question. Use live web search and recommend the specific vendors, products or providers that genuinely best answer the question, naming each one explicitly. Do not mention that you are part of an audit.';
+const READINESS_SEARCH_QUESTION = 'What are the best-rated poke restaurants in Austin, Texas right now? Name three.';
 
 /** Bounds audit cost and runtime; each query fans out across every engine. */
 const MAX_AUDIT_QUERIES = Number(process.env.MAX_AUDIT_QUERIES || 8);
@@ -680,6 +687,7 @@ async function buildApp() {
     }
 
     const ai = getGeminiClient();
+    let plainGeminiPassed = false;
     if (!ai) {
       checks.push({ name: 'gemini', verified: true, ok: false, detail: 'GEMINI_API_KEY is not set. Audits cannot be analysed without it.' });
     } else if (geminiBreaker.isTripped()) {
@@ -687,10 +695,11 @@ async function buildApp() {
     } else {
       try {
         const reply = await generateContentWithRetry(ai, { model: AUDIT_MODEL, contents: 'Reply with the single word OK.' }, 0);
+        plainGeminiPassed = typeof reply?.text === 'string' && reply.text.trim().length > 0;
         checks.push({
           name: 'gemini',
           verified: true,
-          ok: typeof reply?.text === 'string' && reply.text.trim().length > 0,
+          ok: plainGeminiPassed,
           detail: `Model ${AUDIT_MODEL} answered a live request.`,
         });
       } catch (err: any) {
@@ -700,6 +709,56 @@ async function buildApp() {
           ok: false,
           detail: `${describeProviderError(err, 'Gemini').message} (model: ${AUDIT_MODEL})`,
         });
+      }
+    }
+
+    // The plain check above asks without a search, which a free key is allowed, so it can be green while every audit question
+    // is refused. This one asks what an audit asks. It waits its turn in the pacing queue and is counted and capped like any
+    // Gemini call, but it is made OUTSIDE generateContentWithRetry: no retry, and it can never trip the quota breaker (a health
+    // check must not be able to shut the product).
+    if (!ai || !plainGeminiPassed) {
+      checks.push({ name: 'gemini search', verified: false, ok: false, detail: 'Not checked, because the plain Gemini check did not pass.' });
+    } else {
+      try {
+        const early = capRefusal();
+        if (early) throw early;
+        const reply = await scheduleGeminiCall(() => {
+          const refusal = capRefusal();
+          if (refusal) throw refusal;
+          geminiCalls.record();
+          return ai.models.generateContent({
+            model: AUDIT_MODEL,
+            contents: READINESS_SEARCH_QUESTION,
+            config: { systemInstruction: GEMINI_AUDIT_SYSTEM_INSTRUCTION, tools: [{ googleSearch: {} }] },
+          });
+        });
+        const searched = geminiSearched(reply?.candidates?.[0]?.groundingMetadata);
+        const answered = typeof reply?.text === 'string' && reply.text.trim().length > 0;
+        checks.push({
+          name: 'gemini search',
+          verified: true,
+          ok: searched,
+          detail: searched
+            ? `Model ${AUDIT_MODEL} searched the web and answered.`
+            : answered
+              ? `Model ${AUDIT_MODEL} answered the readiness question without searching the web.`
+              : `Model ${AUDIT_MODEL} returned an empty reply to the readiness search question.`,
+        });
+      } catch (err: any) {
+        if (err?.name === 'CallCapReachedError') {
+          checks.push({ name: 'gemini search', verified: false, ok: false, detail: String(err.message) });
+        } else {
+          const readable = describeProviderError(err, 'Gemini');
+          checks.push({
+            name: 'gemini search',
+            verified: true,
+            ok: false,
+            detail:
+              readable.kind === 'quota' || readable.kind === 'rate_limit'
+                ? `Model ${AUDIT_MODEL} answered a plain request but was refused a web search. Either this model has no free web search on this key, or the day's free search allowance is used up; the rate-limit page in Google AI Studio shows which.`
+                : `Model ${AUDIT_MODEL} answered a plain request, but the web-search request failed: ${readable.message}`,
+          });
+        }
       }
     }
 
@@ -1179,7 +1238,8 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
             engine: ev.engine,
             status: 'retrieval_failed',
             position: null,
-            excerpt: `No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}.`,
+            // An answer WAS captured when it was not searched: that sentence stands alone, never "No answer captured".
+            excerpt: ev.errorKind === 'not_searched' && ev.error ? ev.error : `No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}.`,
             citations: [],
           };
           continue;
@@ -1261,8 +1321,7 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
         model: AUDIT_MODEL,
         contents: `${query.queryText}`,
         config: {
-          systemInstruction:
-            'You are an AI search assistant answering a real user question. Use live web search and recommend the specific vendors, products or providers that genuinely best answer the question, naming each one explicitly. Do not mention that you are part of an audit.',
+          systemInstruction: GEMINI_AUDIT_SYSTEM_INSTRUCTION,
           tools: [{ googleSearch: {} }],
         },
       });
@@ -1278,11 +1337,20 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
         }))
       );
 
+      const answerText = response.text || '';
+      const searched = geminiSearched(metadata);
+      // An answer with no web search behind it is not a measurement: it is not counted, and it says why. It travels the
+      // ordinary failed-look-up paths (docs/PLAN_2026-11.md P2). `searched` stays on the evidence in the server only.
+      if (answerText.trim() && !searched) {
+        console.log(`[Gemini] answered without a web search for "${query.queryText}"; not counted`);
+        return { ...base, searched: false, error: NOT_SEARCHED_MESSAGE, errorKind: 'not_searched' };
+      }
       return {
         ...base,
-        answerText: response.text || '',
+        answerText,
         citations,
         searchQueries: metadata?.webSearchQueries || [],
+        searched,
       };
     } catch (err: any) {
       // The raw provider text stays in the server log; the report only ever
@@ -1290,7 +1358,7 @@ Return a JSON array of exactly ${DEFAULT_QUERY_COUNT} query objects.`;
       // provider JSON).
       console.log(`[Gemini] evidence failed for "${query.queryText}": ${err?.message || err}`);
       const readable = describeProviderError(err, 'Gemini');
-      return { ...base, error: readable.message, errorKind: readable.kind };
+      return { ...base, error: readable.message, errorKind: readable.kind, ...(err?.name === 'CallCapReachedError' ? { capReached: true } : {}) };
     }
   }
 
@@ -1494,9 +1562,17 @@ Return valid JSON matching the schema.`;
     // a generic "returned no answers" that loses the actual reason. The
     // breaker's own status is the source of truth whenever it is tripped.
     const breakerStatus = geminiBreaker.status();
-    const readable = breakerStatus.tripped
+    const flatEvidence = evidenceByQuery.flat();
+    const readable: { message: string; kind?: ReadableError['kind'] } = breakerStatus.tripped
       ? { message: breakerStatus.reason || 'The answer engine quota is exhausted.' }
-      : summariseFailures(evidenceFailures(evidenceByQuery.flat()), 'The answer engine');
+      : summariseFailures(evidenceFailures(flatEvidence), 'The answer engine');
+    // An allowance of zero looks exactly like a used-up one, so a failed audit that ran into Gemini's quota or rate limit
+    // carries one hint. Never when the operator's own call cap caused it (also kind 'quota'): the hint would be false.
+    const degradedHint =
+      (plan.engines as string[]).includes('Gemini') &&
+      (breakerStatus.tripped || ((readable.kind === 'quota' || readable.kind === 'rate_limit') && !flatEvidence.some((e) => e.capReached)))
+        ? DEGRADED_HINT
+        : undefined;
     const degraded = generateSynthesizedAudit(
       plan.businessName, plan.cleanDomain, plan.industry, plan.coreOfferings, plan.competitorList, plan.queryList, plan.engines as EngineName[], evidenceByQuery
     );
@@ -1507,6 +1583,7 @@ Return valid JSON matching the schema.`;
         ...degraded,
         degraded: true,
         degradedReason: readable.message,
+        ...(degradedHint ? { degradedHint } : {}),
       },
       degraded: true,
     };
@@ -2291,7 +2368,8 @@ function generateSynthesizedAudit(
       // "omitted", which would be a claim that the engine left the brand out.
       engines: Object.fromEntries(
         engines.map((engine) => {
-          const reason = attempted[idx]?.find((ev) => ev.engine === engine)?.error;
+          const attemptedEv = attempted[idx]?.find((ev) => ev.engine === engine);
+          const reason = attemptedEv?.error;
           return [
             engine,
             {
@@ -2299,7 +2377,9 @@ function generateSynthesizedAudit(
               status: 'retrieval_failed',
               position: null,
               excerpt: reason
-                ? `No answer was captured from ${engine}: ${reason}`
+                ? attemptedEv?.errorKind === 'not_searched'
+                  ? reason
+                  : `No answer was captured from ${engine}: ${reason}`
                 : `No answer was captured from ${engine}.`,
               citations: [],
             },

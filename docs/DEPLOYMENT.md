@@ -226,9 +226,12 @@ node scripts/smoke.mjs https://YOUR-URL --email you@example.com --code 7Kx9mQ2vL
 ```
 
 The first form checks what a stranger sees and that protected routes refuse a
-stranger. The second signs in and runs **deep readiness**, which makes **one real
-Gemini call** (cached for 5 minutes) - this is what tells you the key and the
-model id are actually good. Every line must say `pass`.
+stranger. The second signs in and runs **deep readiness**, which makes **two real
+Gemini calls** (cached for 5 minutes): a plain one, and one that searches the web the
+way an audit does (`readiness: gemini search`). Together they tell you the key, the
+model id and the model's web search are actually good. The second call waits its turn
+in the pacing queue like any Gemini call, so a readiness run takes several seconds
+longer than it used to (about 7 s with the default pacing). Every line must say `pass`.
 
 Then, by hand:
 

@@ -5,6 +5,22 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-11-15 - An answer without a web search is not counted (metricVersion 3); the default model waits for a measurement
+
+**Decision (executing `docs/PLAN_2026-11.md` P2, which the owner agreed on 2026-11-14):** a Gemini reply with text but no web search
+query and no grounding chunk is a failed look-up (`errorKind: 'not_searched'`), not a measurement. Reports are marked `metricVersion`
+3. **Version 2 reports are not marked as an earlier rule on the page** (`isEarlierMetricRule` and `metricVersionNote` are unchanged):
+no unsearched answer is known to have been counted in one, so a note would claim something unproven; P3's comparison treats a
+version 2 and a version 3 audit as not measured the same way. **The default model did not change:** the plan allows that only if the
+engine probe has measured `gemini-2.5-flash-lite` answering a searched call on the owner's key. The probe ran once on 2026-11-15
+(workflow run 43669524263) and printed `SKIP ... no key` for every provider because the repository secrets are not set
+(`docs/PROGRAM.md` O-8), so there is no measurement and `DEFAULT_GEMINI_MODEL` stays `gemini-3.6-flash`. The lever stays the
+owner's `GEMINI_MODEL` variable (O-7). One deliberate reading of the plan: where a not-searched question's cell is written in the
+report pipeline, the sentence is followed by the existing "This query was excluded from all metrics." (a true second sentence), and
+the "No answer captured from ..." wrapper is not used for this kind.
+
+---
+
 ## 2026-11-14 - Strategy: one true engine first, consultant-first, $0 kept; the owner agreed
 
 **Decision (owner side, Ricardo, 2026-11-14, in chat: "I agree with your recommendation"):** the six recommendations of

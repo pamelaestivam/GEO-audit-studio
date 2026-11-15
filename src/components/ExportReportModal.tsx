@@ -11,6 +11,7 @@ import {
   lowSampleReason,
   engineModelsLine,
   MEASUREMENT_DISCLOSURE,
+  MEASURED_THROUGH_API,
   visibilityBasis,
   citedOnlyLine,
   CITED_ONLY_EXPLAINER,
@@ -64,7 +65,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   // the audit completed, which engines answered, and how many answers the
   // percentages rest on. A pasted summary has no UI around it to carry that.
   const caveats: string[] = [];
-  if (!measured) caveats.push(`AUDIT INCOMPLETE - the figures below are NOT measurements. ${audit.degradedReason || ''}`.trim());
+  if (!measured) caveats.push(`AUDIT INCOMPLETE - the figures below are NOT measurements. ${audit.degradedReason || ''}${audit.degradedHint ? ` ${audit.degradedHint}` : ''}`.trim());
   if (measured && audit.narrativeAvailable === false) {
     caveats.push('Accuracy, omissions and remediation were NOT assessed (the analysis step failed).');
   }
@@ -84,7 +85,7 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   const handleCopyText = async () => {
     const summaryText = `GEO AI SEARCH AUDIT REPORT - ${audit.businessName}${audit.domain ? ` (${audit.domain})` : ''}
 Date: ${new Date(audit.createdAt).toLocaleDateString()}
-Engines measured: ${modelsLine ? `${modelsLine} (model ids requested)` : enginesLine}${basis ? `\n${basis}` : ''}${citedOnly ? `\n${citedOnly}. ${CITED_ONLY_EXPLAINER}` : ''}${versionNote ? `\n${versionNote}` : ''}${capturedLine ? `\n${capturedLine}` : ''}
+Engines measured: ${modelsLine ? `${modelsLine} (model ids requested). ${MEASURED_THROUGH_API}` : enginesLine}${basis ? `\n${basis}` : ''}${citedOnly ? `\n${citedOnly}. ${CITED_ONLY_EXPLAINER}` : ''}${versionNote ? `\n${versionNote}` : ''}${capturedLine ? `\n${capturedLine}` : ''}
 ${caveats.length ? `\nCAVEATS:\n${caveats.map((c) => `- ${c}`).join('\n')}\n` : ''}
 Visibility (answers naming the brand): ${formatScore(audit)}${measured ? '/100' : ''}${range ? ` (rough 95% range ${range})` : ''}
 Share of Voice (of all brand mentions): ${formatPercent(audit, audit.shareOfVoice)}
@@ -170,7 +171,7 @@ ${assessed ? `\nKEY REMEDIATION TASKS:\n${(audit.remediationPlan || []).map((r, 
               {citedOnly && <span className="block text-[10px] text-slate-400 mt-0.5">{citedOnly}. {CITED_ONLY_EXPLAINER}</span>}
               {versionNote && <span className="block text-[10px] text-amber-300/90 mt-0.5">{versionNote}</span>}
               {range && <span className="block text-[10px] text-slate-300 mt-1">Rough 95% range: {range}</span>}
-              {measured && modelsLine && <span className="block text-[10px] text-slate-400 mt-1">Models requested: {modelsLine}</span>}
+              {measured && modelsLine && <span className="block text-[10px] text-slate-400 mt-1">Models requested: {modelsLine}. {MEASURED_THROUGH_API}</span>}
               {measured && capturedLine && <span className="block text-[10px] text-slate-400 mt-1">{capturedLine}</span>}
             </div>
           </div>

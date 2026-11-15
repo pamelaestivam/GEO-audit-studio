@@ -8,8 +8,9 @@
  *
  * Without credentials it checks everything a stranger can see, including that
  * protected routes REFUSE a stranger. With credentials it signs in and also
- * checks the deep readiness endpoint (one real Gemini call - it spends a
- * request of quota, cached for 5 minutes server-side).
+ * checks the deep readiness endpoint (two real Gemini calls, one plain and one
+ * that searches the web as an audit does - each spends a request of quota, cached
+ * for 5 minutes server-side; it prints a `readiness: gemini search` line).
  *
  * Why this exists: every past deploy incident (API 404s, a crash on a missing
  * import extension, nested routes 404ing at the platform edge) passed

@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only' | 'unsearched_answer' | 'unsearched_second' | 'search_refused' | 'search_500';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -88,6 +88,22 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
         res.end(JSON.stringify({ error: { code: 429, message: 'Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 50, GenerateRequestsPerDayPerProjectPerModel-FreeTier', status: 'RESOURCE_EXHAUSTED' } }));
         return;
       }
+      // The search tool is the difference between an answer and a measurement: modes below change what a request that CARRIES it gets.
+      const hasSearchTool = body.includes('googleSearch');
+      // 'search_refused': the search is refused as a free key with no search allowance is (a 429 quota error); a plain request is answered.
+      if (mode === 'search_refused' && hasSearchTool) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 429, message: 'You exceeded your current quota, please check your plan and billing details.', status: 'RESOURCE_EXHAUSTED' } }));
+        return;
+      }
+      // 'search_500': only the search request fails, with a server error.
+      if (mode === 'search_500' && hasSearchTool) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: 500, message: 'internal SECRET_PAYLOAD_MARKER', status: 'INTERNAL' } }));
+        return;
+      }
+      // 'unsearched_answer': HTTP 200 with text and NO grounding even though the tool was sent; 'unsearched_second': the same for the second question only.
+      const answeredFromMemory = !wantsJson && (mode === 'unsearched_answer' || (mode === 'unsearched_second' && body.includes('poke house menu')));
       const isLookup = body.includes('Analyze the brand/business');
       const lookup = (domain: string) => JSON.stringify({ businessName: 'Acme Widgets', domain, industry: 'widgets', coreOfferings: 'widgets', targetAudience: 'buyers', competitors: [] });
       const text = wantsJson && isLookup && mode === 'lookup_placeholder'
@@ -155,7 +171,7 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
               content: { parts: [{ text }], role: 'model' },
               // Grounding only when the request carries the search tool, as the real API does: before this every 200 reply
               // carried it, so no check on "did a search run" could ever fail (docs/PLAN_2026-11.md P2).
-              ...(body.includes('googleSearch') ? { groundingMetadata: {
+              ...(hasSearchTool && !answeredFromMemory ? { groundingMetadata: {
                 groundingChunks: [
                   { web: { uri: 'https://yelp.com/biz/x', title: 'yelp.com' } },
                   ...(mode === 'cited_only' && !wantsJson ? [{ web: { uri: 'https://poke.house/menu', title: 'poke.house' } }] : []),
