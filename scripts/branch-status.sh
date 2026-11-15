@@ -19,11 +19,11 @@
 # request #N from owner/branch", or git's "Merge branch 'branch'"). Squash or rebase merges
 # leave no such commit, so they show as NOT merged / not stale; a fast-forward merge leaves
 # a branch with nothing ahead, shown as "nothing to merge". Do not use squash or rebase
-# here, or check the pull request by hand. Shallow clones cannot be judged and say so. The script cannot see pull
+# here, or check the pull request by hand. A shallow clone is deepened first (git fetch --unshallow); if that fails the line says the command to run. The script cannot see pull
 # requests or CI (no GitHub access from a script): if a PR is open or CI is red,
 # add that to the first line yourself.
 #
-# Overrides, for tests: STATUS_BASE (default origin/main).
+# Overrides, for tests: STATUS_BASE (default origin/main), STATUS_NO_DEEPEN=1 (do not unshallow).
 set -u
 
 base_ref="${STATUS_BASE:-origin/main}"
@@ -44,8 +44,15 @@ if ! git rev-parse --verify -q "$base_ref" >/dev/null; then
 fi
 
 if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-  echo "Branch: unknown | this is a shallow clone, so merges older than its history are invisible | status unknown"
-  exit 1
+  # Cloud sessions start from a shallow clone. Merges older than its history are invisible, so fetch
+  # the rest (bounded, no prompts) rather than answer "unknown". STATUS_NO_DEEPEN=1 turns this off (tests).
+  if [ "${STATUS_NO_DEEPEN:-0}" != "1" ]; then
+    GIT_TERMINAL_PROMPT=0 timeout 300 git fetch -q --unshallow "$remote" 2>/dev/null || true
+  fi
+  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    echo "Branch: unknown | this is a shallow clone and the history could not be fetched; run: git fetch --unshallow $remote | status unknown"
+    exit 1
+  fi
 fi
 
 # "<parent-of-a-merge> <merge-commit>" for every second-or-later parent of a merge on the base.
