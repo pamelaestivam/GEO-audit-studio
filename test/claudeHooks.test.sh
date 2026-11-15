@@ -14,15 +14,37 @@ guard() { node -e 'process.stdout.write(JSON.stringify({tool_name:"Bash",tool_in
 refused() { guard "$1"; rc=$?; if [ "$rc" = "2" ] && [ -s "$tmp/err" ]; then ok "refuses: $1"; else bad "should refuse: $1" "exit $rc"; fi; }
 allowed() { guard "$1"; rc=$?; if [ "$rc" = "0" ]; then ok "allows: $1"; else bad "should allow: $1" "exit $rc: $(cat "$tmp/err")"; fi; }
 
-# settings.json is valid and wires every hook to a file that exists
+# settings.json is valid, wires every hook to a file that exists with the right matcher, and the allow-list is EXACTLY this list
+# (adding any entry, such as Bash(*) or a git command with a file-writing option, must be a conscious change to this test)
 node -e '
-const s=JSON.parse(require("fs").readFileSync(process.argv[1]+"/.claude/settings.json","utf8"));
-const need=["PreToolUse","SessionStart","Stop"]; for (const k of need) if(!s.hooks?.[k]) { console.log("missing "+k); process.exit(1); }
-const cmds=JSON.stringify(s.hooks); for (const f of ["guard-git-add.mjs","session-start.sh","stop-branch-status.sh"]) if(!cmds.includes(f)||!require("fs").existsSync(process.argv[1]+"/.claude/hooks/"+f)) { console.log("not wired: "+f); process.exit(1); }
-if(!Array.isArray(s.permissions?.allow)||s.permissions.allow.some(x=>/\b(rm|push|add|commit|merge|reset|checkout)\b/.test(x))) { console.log("allow-list is not read-only"); process.exit(1); }
-' "$repo" && ok "settings.json parses, wires the three hooks, and the allow-list has no writing command" || bad "settings.json wiring"
+const fs=require("fs"); const root=process.argv[1];
+const s=JSON.parse(fs.readFileSync(root+"/.claude/settings.json","utf8"));
+const fail=(m)=>{console.log(m);process.exit(1)};
+if(s.hooks?.PreToolUse?.[0]?.matcher!=="Bash"||!JSON.stringify(s.hooks.PreToolUse).includes("guard-git-add.mjs")) fail("guard not wired to Bash");
+if(s.hooks?.SessionStart?.[0]?.matcher!=="startup"||!JSON.stringify(s.hooks.SessionStart).includes("session-start.sh")) fail("session-start not wired to startup only");
+if(!JSON.stringify(s.hooks?.Stop).includes("stop-branch-status.sh")) fail("stop hook not wired");
+for (const f of ["guard-git-add.mjs","guard-lib.mjs","session-start.sh","stop-branch-status.sh"]) if(!fs.existsSync(root+"/.claude/hooks/"+f)) fail("missing "+f);
+const want=["Bash(git status:*)","Bash(git rev-parse:*)","Bash(git remote get-url:*)","Bash(git ls-files:*)","Bash(git rev-list:*)","Bash(bash scripts/branch-status.sh)","Bash(npm run lint)","Bash(ls:*)","Bash(wc:*)","Bash(pwd)"];
+if(JSON.stringify(s.permissions?.allow)!==JSON.stringify(want)) fail("allow-list is not the reviewed list: "+JSON.stringify(s.permissions?.allow));
+' "$repo" && ok "settings.json wires the three hooks with the right matchers and the allow-list is exactly the reviewed one" || bad "settings.json wiring / allow-list"
+
+# the guard must run from any path: a space or a symlink once made it silently do nothing
+mkdir -p "$tmp/sp ace/.claude/hooks"; cp "$repo"/.claude/hooks/guard-*.mjs "$tmp/sp ace/.claude/hooks/"
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git add -A"}}' | node "$tmp/sp ace/.claude/hooks/guard-git-add.mjs" 2>/dev/null; [ "$?" = "2" ] && ok "the guard refuses from a path with a space" || bad "guard silent in a path with a space"
+ln -s "$tmp/sp ace/.claude" "$tmp/linked"
+printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git add -A"}}' | node "$tmp/linked/hooks/guard-git-add.mjs" 2>/dev/null; [ "$?" = "2" ] && ok "...and through a symlink" || bad "guard silent through a symlink"
 
 refused 'git add -A'
+refused 'git add --a'
+refused 'git add :/'
+refused 'git add --no-ignore-removal'
+refused 'git add *'
+refused '/usr/bin/git add -A'
+refused '(cd sub && git add -A)'
+refused 'git -C sub add -A>log'
+refused "$(printf 'git commit -m "it'"'"'s fine" && git add . && echo done')"
+refused "$(printf 'cat > f <<'"'"'EOF'"'"'\nhello\nEOF\ngit add -A')"
+refused 'GIT_TRACE=1 git add -A'
 refused 'git add --all'
 refused 'git add .'
 refused 'git add -Av'
@@ -39,6 +61,12 @@ allowed 'git commit --amend -m "x"'
 allowed 'git status'
 allowed 'npm test'
 allowed 'git add -p'
+allowed 'git commit -mupdate'
+allowed 'echo git add .'
+allowed '# git add -A'
+allowed 'git add src/a.ts && git commit -m "x"'
+allowed "$(printf 'cat > f <<'"'"'EOF'"'"'\ngit add -A\nEOF\ngit status')"
+allowed "$(printf 'git commit -m "$(cat <<'"'"'EOF'"'"'\nfix: say "hello" to it'"'"'s users\n\nCo-Authored-By: x\nEOF\n)"')"
 allowed "git commit -m \"Do not run git add -A or git commit -a here\""
 allowed "$(printf 'git commit -m "$(cat <<'"'"'EOF'"'"'\nnever git add -A\nEOF\n)"')"
 allowed 'echo "git add ." > notes.txt'
@@ -54,6 +82,7 @@ git -C "$tmp/p" checkout -q -b claude/x; git -C "$tmp/p" -c user.name=t -c user.
 out=$(CLAUDE_PROJECT_DIR="$tmp/p" bash "$repo/.claude/hooks/stop-branch-status.sh"); rc=$?
 [ "$rc" = "0" ] && ok "stop hook exits 0" || bad "stop hook exit $rc"
 printf '%s' "$out" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8")); process.exit(/Branch: claude\/x \| 1 commit\(s\) ahead of main/.test(j.systemMessage)&&/NOT merged/.test(j.systemMessage)?0:1)' && ok "...and the message carries the real branch line" || bad "stop hook message" "$out"
+printf '%s' "$out" | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8")); process.exit(JSON.stringify(Object.keys(j))==="[\"systemMessage\"]"?0:1)' && ok "...and it is only a message: it cannot block the stop" || bad "stop hook output must be only systemMessage"
 out=$(CLAUDE_PROJECT_DIR="$tmp/none" bash "$repo/.claude/hooks/stop-branch-status.sh"); [ "$?" = "0" ] && ok "stop hook in a directory with no script still exits 0" || bad "stop hook must never trap a session"
 
 # Session-start hook with stub npm and a stub test-database script
@@ -62,7 +91,6 @@ echo '{}' > "$tmp/s/package-lock.json"
 printf '#!/usr/bin/env bash\necho "$@" >> "%s/npm.calls"; mkdir -p node_modules\n' "$tmp" > "$tmp/bin/npm"; chmod +x "$tmp/bin/npm"
 printf '#!/usr/bin/env bash\necho postgresql://stub@127.0.0.1:1/x\n' > "$tmp/s/scripts/pg-test-cluster.sh"
 printf 'intro\n\n**First action for a cold session:** run the thing\nthen go on\n' > "$tmp/s/docs/PROGRAM.md"
-export PGSTUB=1
 start() { CLAUDE_PROJECT_DIR="$tmp/s" CLAUDE_ENV_FILE="$tmp/env" PATH="$tmp/bin:$PATH" bash "$repo/.claude/hooks/session-start.sh"; }
 out=$(start); rc=$?
 [ "$rc" = "0" ] && ok "start hook exits 0" || bad "start hook exit $rc"
@@ -75,8 +103,17 @@ printf '%s' "$out" | grep -q 'First action for a cold session' && ok "...prints 
 [ ! -s "$tmp/npm.calls" ] && ok "...does not run npm ci again while package-lock.json is unchanged" || bad "npm ci repeated"
 echo '{"changed":1}' > "$tmp/s/package-lock.json"; out=$(start)
 [ -s "$tmp/npm.calls" ] && ok "...runs it again when package-lock.json changes" || bad "npm ci not rerun after a lockfile change"
+# an existing node_modules with no stamp is stamped and left alone (npm ci deletes it before downloading)
+rm -f "$tmp/s/node_modules/.lockfile-sha"; : > "$tmp/npm.calls"; start >/dev/null
+[ ! -s "$tmp/npm.calls" ] && [ -f "$tmp/s/node_modules/.lockfile-sha" ] && ok "a working node_modules with no stamp is stamped, not reinstalled" || bad "no-stamp case ran npm ci"
+# a symlinked node_modules (a worktree sharing another checkout's) is never touched
+mkdir -p "$tmp/w/scripts" "$tmp/other_nm"; echo '{}' > "$tmp/w/package-lock.json"; printf old > "$tmp/other_nm/.lockfile-sha"; ln -s "$tmp/other_nm" "$tmp/w/node_modules"; : > "$tmp/npm.calls"
+CLAUDE_PROJECT_DIR="$tmp/w" PATH="$tmp/bin:$PATH" bash "$repo/.claude/hooks/session-start.sh" >/dev/null
+[ ! -s "$tmp/npm.calls" ] && ok "a symlinked node_modules is never reinstalled" || bad "npm ci ran on a symlinked node_modules"
+prev_stamp=$(cat "$tmp/s/node_modules/.lockfile-sha" 2>/dev/null)
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/npm"; echo '{"changed":2}' > "$tmp/s/package-lock.json"
 out=$(start); rc=$?
 [ "$rc" = "0" ] && printf '%s' "$out" | grep -q 'npm ci FAILED' && ok "a failing npm ci is reported in a sentence and does not block the session" || bad "failing npm ci" "rc=$rc $out"
+[ "$(cat "$tmp/s/node_modules/.lockfile-sha" 2>/dev/null)" = "$prev_stamp" ] && ok "...and the stamp is not written, so the next start retries" || bad "stamp written after a failed install"
 
 if [ "$failures" = "0" ]; then echo; echo "All Claude hook checks passed."; exit 0; else echo; echo "$failures check(s) failed."; exit 1; fi
