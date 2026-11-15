@@ -430,6 +430,13 @@
    "tier": "unit",
    "needsBuild": false,
    "what": "CI in parallel under the same required name: the gate job `test` needs every job and runs always; every tier and both server shards are run; limits, pins and setup."
+  },
+  {
+   "file": "test/properties.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Property-based tests for src/analysis.ts: its laws attacked with a seeded generator (the seed is printed on failure and replays it)."
   }
  ]
 }

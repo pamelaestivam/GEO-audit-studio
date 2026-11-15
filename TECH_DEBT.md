@@ -1225,6 +1225,10 @@ tracked symlink and every merge is reviewed.
 
 G1.6 split CI into parallel jobs and moved the Chromium install into the one job that needs it (browser), which saves the install in the other four. Caching the browser between runs needs `actions/cache`, a third-party action that this repository pins to a commit like every other; the commit id cannot be looked up from a session limited to this repository, and an unpinned tag would break the repository's own rule (`test/ciWorkflow.test.ts` fails on a tag-only `uses:`). Dependabot (`.github/dependabot.yml`) keeps pins current, so the way to add it is: someone with access looks up the commit of the current `actions/cache` release, adds the step to the browser job with that pin, and Dependabot maintains it. Cost of not doing it: about 25 seconds per run in the browser job.
 
+### 2.25 Brands tied at the same first mention are ranked by the order they were listed (low; found by the property tests, G2.7)
+
+`analyseAnswer` (`src/analysis.ts`) ranks brands by where their name first appears. When two brands' first mention starts at the SAME place (an overlapping pair such as "Cafe" and "Cafe Cafe", where one name contains the other), the sort is stable, so which of them gets rank 1 and which rank 2 depends on the order the brands were handed in. The client's rank and "named first" count can therefore change with the order of the brands list. `test/properties.test.ts` states this as a law with its exception (brand order changes nothing except the rank of tied brands) and documents the current behaviour; it was found by the generator on its first run (seed 133897118 reproduced it). Not fixed here: the change would move a headline number, and the pipeline's `dedupeMatchers` may already remove most overlaps (not checked). A fix needs the owner's decision on what a tie should mean (both rank 1? the longer name?) and a `metricVersion` bump.
+
 ## 3. Expansion — worth building next
 
 Roughly in order of value per unit of effort.
