@@ -1,5 +1,5 @@
 {
-  "comment": "The protections ledger (G2.8). Each guarantee the product makes, the one-line change to ONE file that breaks it, and the test file that must then FAIL. scripts/mutate.mjs applies each change in a temporary copy and runs only that test. A guarantee whose test still passes is undefended; a change that no longer applies means the ledger is stale. Add a row when a guarantee is added; never delete one to make the run green.",
+  "comment": "The protections ledger (G2.8). Each guarantee the product makes, the one-line change to ONE file that breaks it, and the test file that must then FAIL. scripts/mutate.mjs applies each change in a temporary copy and runs only that test. A guarantee whose test still passes is undefended; a change that no longer applies means the ledger is stale. Add a row when a guarantee is added; never delete one to make the run green. Each row breaks ONE narrow thing (a single line): a defended row proves that line is defended, not the whole guarantee. For example, paid-engines-off breaks the decision function, not the server call sites that consult it; session-signature breaks the signature compare, not expiry or the route checks; number-guard breaks one filter line. Add rows for the other sides as they are thought of.",
   "protections": [
     {
       "id": "paid-engines-off",

@@ -3,7 +3,7 @@
  * test catches the break is DEFENDED; one whose test still passes is UNDEFENDED; a change that no longer applies is STALE; a test that already
  * fails on the unbroken copy is an ERROR; the fixture itself is never modified; the real ledger is well formed.
  */
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 
@@ -14,22 +14,29 @@ const d = mkdtempSync(`${os.tmpdir()}/mut-fixture-`); mkdirSync(`${d}/src`); mkd
 writeFileSync(`${d}/src/a.ts`, 'export const guarded = true;\nexport const other = 1;\n');
 writeFileSync(`${d}/test/guards-a.test.sh`, '#!/usr/bin/env bash\ngrep -q "guarded = true" src/a.ts && echo "pass  a is guarded" || { echo "FAIL  a is not guarded"; exit 1; }\n');
 writeFileSync(`${d}/test/blind.test.sh`, '#!/usr/bin/env bash\necho "pass  looks at nothing that matters"\n');
+writeFileSync(`${d}/test/dies.test.sh`, '#!/usr/bin/env bash\ngrep -q "guarded = true" src/a.ts && echo "pass  fine" || exit 3\n');
 writeFileSync(`${d}/test/already-red.test.sh`, '#!/usr/bin/env bash\necho "FAIL  red already"; exit 1\n');
 const ledger = { protections: [
   { id: 'defended', guarantee: 'a is guarded', file: 'src/a.ts', find: 'guarded = true', replace: 'guarded = false', tests: ['test/guards-a.test.sh'] },
   { id: 'undefended', guarantee: 'other is one', file: 'src/a.ts', find: 'other = 1', replace: 'other = 2', tests: ['test/blind.test.sh'] },
   { id: 'stale', guarantee: 'gone', file: 'src/a.ts', find: 'this text is not in the file', replace: 'x', tests: ['test/blind.test.sh'] },
+  { id: 'dies-without-a-failed-check', guarantee: 'a', file: 'src/a.ts', find: 'guarded = true', replace: 'guarded = false', tests: ['test/dies.test.sh'] },
+  { id: 'escapes', guarantee: 'x', file: '../../etc/x', find: 'a', replace: 'b', tests: ['test/blind.test.sh'] },
   { id: 'red-already', guarantee: 'a', file: 'src/a.ts', find: 'guarded = true', replace: 'guarded = false', tests: ['test/already-red.test.sh'] },
 ] };
 writeFileSync(`${d}/ledger.json`, JSON.stringify(ledger));
 const run = (extra: string[] = []) => { const r = spawnSync('node', [`${process.cwd()}/scripts/mutate.mjs`, ...extra], { env: { ...process.env, MUTATE_ROOT: d, MUTATE_LEDGER: `${d}/ledger.json` }, encoding: 'utf8' }); return { code: r.status, out: `${r.stdout}${r.stderr}` }; };
 
+const tmpBefore = readdirSync(os.tmpdir()).filter((f) => f.startsWith('mutate-')).length;
 const all = run();
 check('a guarantee whose test fails when it is broken is DEFENDED, and the line names the test', /DEFENDED +defended:.*test\/guards-a\.test\.sh/.test(all.out), all.out);
 check('one whose test still passes is UNDEFENDED', /UNDEFENDED +undefended:/.test(all.out));
 check('a change that no longer applies is STALE', /STALE +stale:/.test(all.out));
 check('a test that already fails on the unbroken copy is an ERROR, not a pass for the guarantee', /ERROR +red-already:/.test(all.out));
-check('the run exits 1 when any row is not defended, and says how many', all.code === 1 && /4 guarantee\(s\): 1 defended, 3 not\./.test(all.out), all.out.slice(-200));
+check('a test that dies WITHOUT printing a failed check (a syntax error, a crash) is INCONCLUSIVE, never DEFENDED', /INCONCLUSIVE +dies-without-a-failed-check:/.test(all.out) && !/DEFENDED +dies-without/.test(all.out), all.out);
+check('a row that names a path outside the repository is refused, nothing written there', /ERROR +escapes: "..\/..\/etc\/x" is not a path inside/.test(all.out));
+check('the run exits 1 when any row is not defended, and says how many', all.code === 1 && /6 guarantee\(s\): 1 defended, 5 not\./.test(all.out), all.out.slice(-200));
+check('no temporary copy is left behind', readdirSync(os.tmpdir()).filter((f) => f.startsWith('mutate-')).length === tmpBefore);
 check('the fixture itself is never modified (the break was made in a copy)', readFileSync(`${d}/src/a.ts`, 'utf8') === 'export const guarded = true;\nexport const other = 1;\n');
 const one = run(['defended']);
 check('one id runs one row and exits 0 when it is defended', one.code === 0 && /1 guarantee\(s\): 1 defended, 0 not\./.test(one.out));
