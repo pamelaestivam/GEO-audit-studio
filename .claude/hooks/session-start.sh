@@ -9,14 +9,15 @@ cd "$root" 2>/dev/null || exit 0
 
 # Dependencies. npm ci deletes node_modules before it downloads, so it only runs when it is needed and safe:
 #  - never when node_modules is a symlink (a worktree sharing another checkout's), it would empty the other one;
-#  - never just because the stamp is missing: an existing node_modules is stamped as it is and left alone;
+#  - never just because the stamp is missing: an existing node_modules that looks installed (npm writes node_modules/.package-lock.json
+#    on success) is stamped and left alone; one that does not look installed (empty or half-deleted by a failed npm ci) is installed;
 #  - when package-lock.json changed since the stamp, or node_modules is missing, and then the stamp is written only after success.
 stamp="node_modules/.lockfile-sha"
 lock_sha=$(sha256sum package-lock.json 2>/dev/null | cut -d' ' -f1)
 if [ -f package-lock.json ]; then
   if [ -L node_modules ]; then
     echo "session-start: node_modules is a symlink; not touching it"
-  elif [ ! -d node_modules ] || { [ -f "$stamp" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sha" ]; }; then
+  elif [ ! -d node_modules ] || { [ -f "$stamp" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sha" ]; } || { [ ! -f "$stamp" ] && [ ! -f node_modules/.package-lock.json ]; }; then
     echo "session-start: installing dependencies (npm ci)"
     if npm ci >/tmp/session-start-npm.log 2>&1; then
       mkdir -p node_modules && printf '%s' "$lock_sha" > "$stamp"

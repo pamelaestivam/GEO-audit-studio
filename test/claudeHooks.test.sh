@@ -24,7 +24,7 @@ if(s.hooks?.PreToolUse?.[0]?.matcher!=="Bash"||!JSON.stringify(s.hooks.PreToolUs
 if(s.hooks?.SessionStart?.[0]?.matcher!=="startup"||!JSON.stringify(s.hooks.SessionStart).includes("session-start.sh")) fail("session-start not wired to startup only");
 if(!JSON.stringify(s.hooks?.Stop).includes("stop-branch-status.sh")) fail("stop hook not wired");
 for (const f of ["guard-git-add.mjs","guard-lib.mjs","session-start.sh","stop-branch-status.sh"]) if(!fs.existsSync(root+"/.claude/hooks/"+f)) fail("missing "+f);
-const want=["Bash(git status:*)","Bash(git rev-parse:*)","Bash(git remote get-url:*)","Bash(git ls-files:*)","Bash(git rev-list:*)","Bash(bash scripts/branch-status.sh)","Bash(npm run lint)","Bash(ls:*)","Bash(wc:*)","Bash(pwd)"];
+const want=["Bash(git status:*)","Bash(git rev-parse:*)","Bash(git remote get-url:*)","Bash(git ls-files:*)","Bash(bash scripts/branch-status.sh)","Bash(npm run lint)","Bash(ls:*)","Bash(wc:*)","Bash(pwd)"];
 if(JSON.stringify(s.permissions?.allow)!==JSON.stringify(want)) fail("allow-list is not the reviewed list: "+JSON.stringify(s.permissions?.allow));
 ' "$repo" && ok "settings.json wires the three hooks with the right matchers and the allow-list is exactly the reviewed one" || bad "settings.json wiring / allow-list"
 
@@ -35,6 +35,23 @@ ln -s "$tmp/sp ace/.claude" "$tmp/linked"
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git add -A"}}' | node "$tmp/linked/hooks/guard-git-add.mjs" 2>/dev/null; [ "$?" = "2" ] && ok "...and through a symlink" || bad "guard silent through a symlink"
 
 refused 'git add -A'
+refused 'sudo git add -A'
+refused 'env X=1 git add -A'
+refused 'timeout 10 git add .'
+refused 'xargs git add -A'
+refused 'cat <<<x; git add -A'
+refused 'git stage -A'
+refused 'git add .//'
+refused 'git add ./.'
+refused 'git add :/*'
+refused 'git add ":(top)"'
+refused 'git -C src add ..'
+refused 'git add --no-ignore-r'
+refused '(git add -A)'
+refused 'git status # real comment
+git add -A'
+allowed 'git status # git add -A'
+allowed 'echo x # ; git add -A'
 refused 'git add --a'
 refused 'git add :/'
 refused 'git add --no-ignore-removal'
@@ -88,7 +105,7 @@ out=$(CLAUDE_PROJECT_DIR="$tmp/none" bash "$repo/.claude/hooks/stop-branch-statu
 # Session-start hook with stub npm and a stub test-database script
 mkdir -p "$tmp/s/scripts" "$tmp/s/docs" "$tmp/bin"
 echo '{}' > "$tmp/s/package-lock.json"
-printf '#!/usr/bin/env bash\necho "$@" >> "%s/npm.calls"; mkdir -p node_modules\n' "$tmp" > "$tmp/bin/npm"; chmod +x "$tmp/bin/npm"
+printf '#!/usr/bin/env bash\necho "$@" >> "%s/npm.calls"; mkdir -p node_modules; touch node_modules/.package-lock.json\n' "$tmp" > "$tmp/bin/npm"; chmod +x "$tmp/bin/npm"
 printf '#!/usr/bin/env bash\necho postgresql://stub@127.0.0.1:1/x\n' > "$tmp/s/scripts/pg-test-cluster.sh"
 printf 'intro\n\n**First action for a cold session:** run the thing\nthen go on\n' > "$tmp/s/docs/PROGRAM.md"
 start() { CLAUDE_PROJECT_DIR="$tmp/s" CLAUDE_ENV_FILE="$tmp/env" PATH="$tmp/bin:$PATH" bash "$repo/.claude/hooks/session-start.sh"; }
@@ -106,6 +123,12 @@ echo '{"changed":1}' > "$tmp/s/package-lock.json"; out=$(start)
 # an existing node_modules with no stamp is stamped and left alone (npm ci deletes it before downloading)
 rm -f "$tmp/s/node_modules/.lockfile-sha"; : > "$tmp/npm.calls"; start >/dev/null
 [ ! -s "$tmp/npm.calls" ] && [ -f "$tmp/s/node_modules/.lockfile-sha" ] && ok "a working node_modules with no stamp is stamped, not reinstalled" || bad "no-stamp case ran npm ci"
+# a node_modules left EMPTY by a failed npm ci is not "installed": the next start installs again
+rm -rf "$tmp/s/node_modules"; mkdir -p "$tmp/s/node_modules"; printf '#!/usr/bin/env bash\necho "$@" >> "%s/npm.calls"; mkdir -p node_modules; touch node_modules/.package-lock.json\n' "$tmp" > "$tmp/bin/npm"; : > "$tmp/npm.calls"; start >/dev/null
+[ -s "$tmp/npm.calls" ] && ok "an empty node_modules with no stamp is installed, not stamped" || bad "empty node_modules was stamped as installed"
+printf x > /dev/null
+rm -f "$tmp/s/node_modules/.lockfile-sha"; : > "$tmp/npm.calls"; start >/dev/null
+[ ! -s "$tmp/npm.calls" ] && ok "a node_modules that looks installed with no stamp is left alone" || bad "installed tree reinstalled"
 # a symlinked node_modules (a worktree sharing another checkout's) is never touched
 mkdir -p "$tmp/w/scripts" "$tmp/other_nm"; echo '{}' > "$tmp/w/package-lock.json"; printf old > "$tmp/other_nm/.lockfile-sha"; ln -s "$tmp/other_nm" "$tmp/w/node_modules"; : > "$tmp/npm.calls"
 CLAUDE_PROJECT_DIR="$tmp/w" PATH="$tmp/bin:$PATH" bash "$repo/.claude/hooks/session-start.sh" >/dev/null

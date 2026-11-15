@@ -24,7 +24,8 @@ export function simpleCommands(cmd) {
     }
     if (c === '\\') { cur = (cur ?? '') + (s[i + 1] ?? ''); i++; continue; }
     if (c === '#' && cur === null) { while (i < s.length && s[i] !== '\n') i++; i--; continue; }
-    if (c === '<' && s[i + 1] === '<' && s[i + 2] !== '<') {
+    if (c === '<' && s[i + 1] === '<' && s[i + 2] === '<') { endCmd(); i += 2; continue; } // here-string, not a heredoc
+    if (c === '<' && s[i + 1] === '<') {
       const m = /^<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(s.slice(i));
       if (m) {
         const nl = s.indexOf('\n', i + m[0].length);
@@ -48,6 +49,7 @@ export function simpleCommands(cmd) {
   return cmds;
 }
 
+const WRAPPERS = new Set(['sudo', 'env', 'command', 'exec', 'time', 'nice', 'timeout', 'xargs', 'nohup']);
 const ARG_TAKING = 'mFCctSu'; // git commit short options that take a value (rest of the group, or the next word)
 
 function shortGroupHas(arg, letter) {
@@ -61,13 +63,20 @@ export function refusal(command) {
     let words = raw.slice();
     while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words.shift(); // VAR=x git ...
     if (!words.length) continue;
+    // wrapper programs that run the next command: sudo, env, command, exec, time, nice, timeout, xargs, nohup (and their options)
+    while (words.length && WRAPPERS.has(words[0].split('/').pop())) {
+      const w = words[0].split('/').pop(); words.shift();
+      while (words.length && (words[0].startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]) || (w === 'timeout' && /^[0-9.]+[smhd]?$/.test(words[0])))) words.shift();
+    }
+    if (!words.length) continue;
     const first = words[0].split('/').pop();
     if (first !== 'git') continue;
     let i = 1;
     while (i < words.length && words[i].startsWith('-')) i += words[i] === '-C' || words[i] === '-c' ? 2 : 1;
     const sub = words[i]; const args = words.slice(i + 1);
-    if (sub === 'add') {
-      const everything = args.some((a) => a === '.' || a === './' || a === ':/' || a === '*' || a === '--no-ignore-removal'
+    if (sub === 'add' || sub === 'stage') {
+      const everything = args.some((a) => /^(\.{1,2})(\/+(\.{1,2})?)*$/.test(a) || /^:(\/|\(top\))\*?$/.test(a) || a === '*'
+        || (a.startsWith('--no-ignore-') && a.length >= 13 && '--no-ignore-removal'.startsWith(a))
         || (a.startsWith('--') && a.length >= 3 && '--all'.startsWith(a)) || shortGroupHas(a, 'A'));
       if (everything) return 'Refused: `git add -A`, `--all`, `git add .`, `git add :/` and `git add *` stage files nobody chose (CLAUDE.md hard rule 8). Stage explicit paths: `git add path/one path/two`.';
     }
