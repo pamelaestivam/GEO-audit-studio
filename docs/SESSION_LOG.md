@@ -370,3 +370,15 @@ part of the agreement, and the strategy's status line points at what changed aft
 third-round fixes were checked against the code by the scorer but not sent to a fourth fresh review, so the plan tells its executor
 what to do when the code and the plan disagree; the stale lines in `docs/PROGRAM.md` are corrected by a dated note at the top, not
 where they sit.
+
+## 2026-11-15: implementing `docs/PLAN_2026-11.md` (P0, P1 first)
+
+**P0.** Untouched `main` (cd916dc): `npm run verify` exit 0, 2,295 checks passed, 0 failed, with PostgreSQL started by
+`scripts/pg-test-cluster.sh` and the browser suites run on a Chromium alias outside the repository (`PLAYWRIGHT_BROWSERS_PATH`
+pointing at links to the installed build 1243, I-27). Without the alias the run stops at `uiSmoke` ("Executable doesn't exist").
+
+**P1 (PR #60).** Built `scripts/engine-probe.mjs`, `.github/workflows/engine-probe.yml`, `test/engineProbe.test.ts`; wrote O-8. The
+fresh-context review (FIX BEFORE MERGE) found five real defects, all fixed with a check each: the key was scrubbed after the 500 and
+4,000 character cuts (a key straddling a cut left its first characters), a 200 reply that was not JSON printed as "web search ran:
+no", the closing line printed the planned call count as the made count, a candidate named twice ran twice, and a masked key echo was
+not scrubbed. Deliberate breaks: printing without scrub (2 checks fail), cutting before scrubbing (1 check fails).
