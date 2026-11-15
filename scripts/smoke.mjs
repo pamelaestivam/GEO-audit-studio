@@ -4,6 +4,7 @@
  *
  *   node scripts/smoke.mjs https://your-app.example.com
  *   node scripts/smoke.mjs https://your-app.example.com --email you@example.com --code YOUR_ACCESS_CODE
+ *   node scripts/smoke.mjs https://your-app.example.com --expect-commit <sha>   (fail unless the site runs that commit)
  *   node scripts/smoke.mjs https://your-app.example.com --warn-non-durable   (report memory-only storage as a warning)
  *
  * Without credentials it checks everything a stranger can see, including that
@@ -21,6 +22,7 @@
  */
 
 import { classifyReadinessCheck } from './readinessLine.mjs';
+import { commitVerdict } from './commitCheck.mjs';
 
 const args = process.argv.slice(2);
 const base = (args.find((a) => /^https?:\/\//.test(a)) || '').replace(/\/+$/, '');
@@ -33,6 +35,10 @@ const email = flag('email');
 // reported as a warning instead of a failure. It is still printed on every run, never hidden.
 const warnNonDurable = args.includes('--warn-non-durable');
 const code = flag('code');
+// `--expect-commit <sha>`: fail unless /api/health says the site runs that commit (the live check passes the head of main).
+const expectArg = args.find((a) => a === '--expect-commit' || a.startsWith('--expect-commit='));
+// The flag given with no value, or as --expect-commit=<sha>, still runs the check (a missing value is a FAIL, never a skipped check).
+const expectCommit = expectArg === undefined ? undefined : expectArg.includes('=') ? expectArg.slice(expectArg.indexOf('=') + 1) : (flag('expect-commit') && !flag('expect-commit').startsWith('--') ? flag('expect-commit') : '');
 
 if (!base) {
   console.error('Usage: node scripts/smoke.mjs <https://base-url> [--email you@example.com --code ACCESS_CODE]');
@@ -67,6 +73,11 @@ try {
   // --- the API answers, at every depth (the Vercel catch-all only matched one segment)
   const health = await get('/api/health');
   check('GET /api/health is 200 JSON', health.status === 200 && health.json?.status === 'ok', `status ${health.status}: ${health.text.slice(0, 120)}`);
+  if (expectCommit !== undefined) {
+    const v = commitVerdict(health.json?.commit, expectCommit);
+    check('the live site runs the expected commit', v.ok, v.sentence);
+    if (v.ok) console.log(`      ${v.sentence}`);
+  }
   const status = await get('/api/audit/status');
   check('GET /api/audit/status (a nested path) is 200 JSON', status.status === 200 && !!status.json?.engines, `status ${status.status}: ${status.text.slice(0, 120)}`);
   const unknown = await get('/api/definitely/not/a/route');

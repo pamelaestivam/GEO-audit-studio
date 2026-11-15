@@ -25,7 +25,7 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 | G1.4 Reviewers on a different model | **done** | #68, merge commit a29d152 (CI green on the head; a first run failed with EADDRINUSE in `engineProbe`, I-53; review SHIP; EVAL PM 87 SHIP) | `test/reviewAgents.test.sh`; the pinned model of each review seat is `opus`, the author's session model is `sonnet` |
 | G1.5 Test runner and shared harness | not started | | |
 | G1.6 CI in parallel under the name `test` | not started | | |
-| G1.7 Live check proves the live commit | not started | | |
+| G1.7 Live check proves the live commit | in review | #70 | `test/liveCommit.test.ts`: the pure rule and `scripts/smoke.mjs --expect-commit` as a real process against a stand-in site (match, behind, no commit reported, garbage reported, flag without a value, `=sha` form, flag absent; the flag must add exactly one counted failure) plus the workflow wiring; each deliberate break fails it |
 | G1.8 Dependabot for npm; build tools to `devDependencies` | in review (the Dependabot half is NOT effective until the owner does `docs/PROGRAM.md` O-9) | #69 | `test/dependencyLayout.test.sh`; full `npm run verify` 2,481 checks, 0 failed after a clean `npm ci`; production install check passes (part of the verify); the Vercel preview build is the check on the pull request |
 | G1.9 Model calendar | not started | | |
 | G2.1 to G2.8 | not started (G2.6 held by `docs/DECISIONS.md` 2026-11-14) | | |

@@ -58,6 +58,7 @@ jobs:
       # Optional: a sign-in for the live site. With both set, the signed-in checks run too, including the live
       # engine call and the 'recent trouble' check (failed audits and incidents of the last day). Without them
       # those checks are skipped, and the run says so as a warning instead of passing silently (docs/PROGRAM.md O-3).
+      DEPLOYED_SHA: ${{ github.event.deployment.sha }}
       SMOKE_EMAIL: ${{ secrets.LIVE_CHECK_EMAIL }}
       SMOKE_CODE: ${{ secrets.LIVE_CHECK_ACCESS_CODE }}
     steps:
@@ -80,9 +81,15 @@ jobs:
           else
             echo "::warning title=Signed-in checks skipped::The repository secrets LIVE_CHECK_EMAIL and LIVE_CHECK_ACCESS_CODE are not set, so the live engine call and the recent-trouble check (failed audits and incidents) did NOT run. See docs/PROGRAM.md O-3."
           fi
+          # The commit the live site must run. Triggered by a finished deployment: that deployment's own commit (main may
+          # already be a commit ahead while its deployment is still building, which is not a fault). Daily or by hand: the
+          # head of main, read from the remote now. If it cannot be read the value is empty and the smoke script FAILS with
+          # a sentence saying so, rather than the comparison being skipped.
+          head="${DEPLOYED_SHA:-$(git ls-remote origin refs/heads/main | awk '$2=="refs/heads/main"{print $1}')}"
+          expect=(--expect-commit "$head")
           for attempt in 1 2 3; do
             echo "::group::attempt $attempt against $LIVE_URL"
-            node scripts/smoke.mjs "$LIVE_URL" --warn-non-durable "${signin[@]}" 2>&1 | tee live.log
+            node scripts/smoke.mjs "$LIVE_URL" --warn-non-durable "${expect[@]}" "${signin[@]}" 2>&1 | tee live.log
             code=${PIPESTATUS[0]}
             echo "::endgroup::"
             [ "$code" = 0 ] && break
