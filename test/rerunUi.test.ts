@@ -95,7 +95,7 @@ async function main() {
       assert(`${label}: the button is a real tap target`, !!box && box.height >= 32 && box.width >= 60, JSON.stringify(box));
       if (phone) {
         const top = await strip.evaluate((el) => el.getBoundingClientRect().top);
-        assert('phone: after the re-run the strip is on the first screen, not left far below', top >= 0 && top < 844, String(top));
+        assert('phone: after the re-run the strip is on the first screen, below the sticky header and not hidden under it', top >= 200 && top < 844, String(top));
         const cardTop = await page.locator('text=Saved to your account').first().evaluate((el) => el.getBoundingClientRect().top);
         assert('phone: the new audit\'s card is in view', cardTop > -200 && cardTop < 844, String(cardTop));
       }

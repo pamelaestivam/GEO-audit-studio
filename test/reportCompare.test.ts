@@ -94,6 +94,22 @@ check('the constants are exact', [COMPARE_CAVEAT, NOT_MEASURED_LABEL, EARLIER_DE
   const c: any = compareReports(prev, next);
   check('a rival named only in a pair that failed in the other run is not newly named', [c.rivalsNew, c.sourcesAppeared, c.pairsCompared, c.notMeasured.length], [[], [], 1, 1]);
 }
+// ---- a rival that really is new is reported; the same rival in a pair that failed is not
+{
+  const prev = report({ [Q1]: { Gemini: { text: '* **Sweetfin**' } } });
+  const next = report({ [Q1]: { Gemini: { text: '* **Sweetfin** and * **Wild Tuna Co**' } } });
+  check('a vendor named now in a common pair and not before is a newly named rival', (compareReports(prev, next) as any).rivalsNew, ['Wild Tuna Co']);
+  const nextFailed = report({ [Q1]: { Gemini: { fail: true } } });
+  check('...and is NOT reported when that pair failed in the other run', (compareReports(prev, nextFailed) as any).rivalsNew, []);
+}
+// ---- a cell marked retrieval_failed is not measured even if its evidence has text
+{
+  const a = report({ [Q1]: { Gemini: { text: '* **Poke House**', domains: ['a.com'] } } });
+  const b = report({ [Q1]: { Gemini: { text: '* **Poke House**', domains: ['b.com'] } } });
+  b.queriesTested[0].engines.Gemini.status = 'retrieval_failed';
+  const c: any = compareReports(a, b);
+  check('a retrieval_failed cell with text in its evidence is still not measured, and adds no source', [c.pairsCompared, c.notMeasured.length, c.sourcesAppeared], [0, 1, []]);
+}
 // ---- identical, empty, one question
 {
   const r = report({ [Q1]: { Gemini: { text: '* **Poke House**', domains: ['a.com'] } } });

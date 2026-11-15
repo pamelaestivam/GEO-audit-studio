@@ -57,7 +57,7 @@ export const SincePreviousRun: React.FC<{ audit: AuditReport }> = ({ audit }) =>
   if (!previousId) return null;
 
   const shell = (children: React.ReactNode) => (
-    <section aria-label="Since the previous run" data-testid="since-previous" className="mb-6 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 text-xs text-slate-300 leading-relaxed">
+    <section aria-label="Since the previous run" data-testid="since-previous" className="scroll-mt-56 md:scroll-mt-24 mb-6 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 text-xs text-slate-300 leading-relaxed">
       <h3 className="flex items-center gap-2 text-sm font-bold text-slate-100 mb-2">
         <History className="h-4 w-4 text-indigo-400 shrink-0" /> Since the previous run
       </h3>
@@ -75,8 +75,8 @@ export const SincePreviousRun: React.FC<{ audit: AuditReport }> = ({ audit }) =>
       <>
         <p>{c.sentence}</p>
         <ul className="mt-2 space-y-1">
-          <li><span className="text-slate-400">Earlier ({new Date(previous.createdAt).toLocaleDateString()}):</span> {ownLine(previous)}.</li>
-          <li><span className="text-slate-400">This one ({new Date(audit.createdAt).toLocaleDateString()}):</span> {ownLine(audit)}.</li>
+          <li><span className="text-slate-400">Earlier ({new Date(previous.createdAt).toLocaleString()}):</span> {ownLine(previous)}.</li>
+          <li><span className="text-slate-400">This one ({new Date(audit.createdAt).toLocaleString()}):</span> {ownLine(audit)}.</li>
         </ul>
       </>
     );
@@ -103,7 +103,7 @@ export const SincePreviousRun: React.FC<{ audit: AuditReport }> = ({ audit }) =>
               ))}
             </ul>
           )}
-          <p className="mt-2">Sources that appeared: {c.sourcesAppeared.length ? listWithMore(c.sourcesAppeared) : 'none'}. Sources that went: {c.sourcesGone.length ? listWithMore(c.sourcesGone) : 'none'}.</p>
+          <p className="mt-2">Websites the engine cited that appeared: {c.sourcesAppeared.length ? listWithMore(c.sourcesAppeared) : 'none'}. Websites it cited before and no longer does: {c.sourcesGone.length ? listWithMore(c.sourcesGone) : 'none'}.</p>
           <p className="mt-1">Rivals newly named: {c.rivalsNew.length ? listWithMore(c.rivalsNew) : 'none'}.</p>
         </>
       )}

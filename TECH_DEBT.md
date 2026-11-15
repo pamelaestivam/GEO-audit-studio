@@ -809,6 +809,12 @@ specified as server-side wording and no new screen, and each needs its own desig
 - The hint names "this server" and "this key" (an operator's words) and the AI Studio address is plain text, not a link.
 - The "How this was measured" disclosure now says twice that the figures come through the engine's API (the older paragraph and the
   new P2 sentence).
+- **After a failed audit (a re-run included) the header selector and the sidebar counts still describe another audit** ("GEO Score: 0% (2 answers)"
+  beside the failed audit's dashes), so a person could read the counts as the failed audit's (found by the P3 tour).
+- **An Idempotency-Key is scoped to the owner, not to the route or the audit** (`findJobByKey(owner, key)`): reusing a key on `/api/audit/rerun` for a
+  different audit, or on `/api/audit/run`, replays the older job. The page makes a fresh random key per click, so this is not reachable from it; and a
+  retry that arrives after the audit was deleted answers 404 rather than the replay. "Rivals newly named" uses the same capitalised-phrase heuristic as
+  the audit's untracked rivals, so run-to-run noise can show a capitalised non-rival.
 - Not checked by the tour: the export's copied text, and "Add & Audit Query" after a failed audit.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
