@@ -38,7 +38,13 @@ const KEY_VARS = ['PROBE_GEMINI_API_KEY', 'PROBE_MISTRAL_API_KEY', 'PROBE_GROQ_A
 export function scrub(text, keys = KEY_VARS.map((k) => env[k]).filter(Boolean)) {
   let s = String(text ?? '');
   for (const k of keys) {
-    if (k && k.length >= 4) s = s.split(k).join('[key removed]');
+    if (!k || k.length < 4) continue;
+    s = s.split(k).join('[key removed]');
+    // A provider may echo a masked key ("gsk_abc...xyz"): the beginning and the end of a long key go too.
+    if (k.length >= 16) {
+      s = s.split(k.slice(0, 8)).join('[key removed]');
+      s = s.split(k.slice(-8)).join('[key removed]');
+    }
   }
   s = s.replace(/projects\/\d+/gi, 'projects/[number removed]');
   s = s.replace(/\d{10,}/g, '[number removed]');
@@ -59,7 +65,9 @@ function args(argv) {
   return a;
 }
 
+let callsMade = 0;
 async function post(url, headers, body) {
+  callsMade++;
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -96,22 +104,33 @@ function block(label, r, read) {
   out(`--- ${label}`);
   out(`HTTP status: ${r.status}`);
   if (!r.ok) {
-    out(`error body (first ${ERROR_CUT} characters): ${r.text.slice(0, ERROR_CUT)}`);
+    // Scrub the WHOLE text first and cut afterwards: a key straddling the cut would otherwise leave its beginning.
+    out(`error body (first ${ERROR_CUT} characters): ${scrub(r.text).slice(0, ERROR_CUT)}`);
     out('web search ran: unknown (no answer)');
     out('');
     return;
   }
-  const info = read(r.json);
+  const info = r.json && typeof r.json === 'object' ? read(r.json) : { searched: null, sources: 0, text: '' };
+  if (info.searched === null) {
+    // A reply we could not read is not a finding of "no search": say so and show what came back.
+    out('web search ran: unknown (the reply was not in the expected shape)');
+    out(`raw reply (first ${ERROR_CUT} characters): ${scrub(r.text).slice(0, ERROR_CUT)}`);
+    out(`fields: ${fieldNames(r.json)}`);
+    out('');
+    return;
+  }
   out(`web search ran: ${info.searched ? 'yes' : 'no'}`);
   out(`sources returned: ${info.sources}`);
   out(`fields: ${fieldNames(r.json)}`);
   const text = info.text || '';
-  out(`reply (${text.length} characters${text.length > REPLY_CUT ? `, cut at ${REPLY_CUT}` : ''}): ${text.slice(0, REPLY_CUT)}`);
+  const clean = scrub(text);
+  out(`reply (${clean.length} characters${clean.length > REPLY_CUT ? `, cut at ${REPLY_CUT}` : ''}): ${clean.slice(0, REPLY_CUT)}`);
   out('');
 }
 
 // ---------- Gemini ----------
 export function readGemini(j) {
+  if (!Array.isArray(j?.candidates) || j.candidates.length === 0) return { searched: null, sources: 0, text: '' };
   const cand = j?.candidates?.[0];
   const gm = cand?.groundingMetadata;
   const queries = Array.isArray(gm?.webSearchQueries) ? gm.webSearchQueries.length : 0;
@@ -148,7 +167,8 @@ async function probeGemini(n, key) {
 
 // ---------- Mistral ----------
 export function readMistral(j) {
-  const outputs = Array.isArray(j?.outputs) ? j.outputs : [];
+  if (!Array.isArray(j?.outputs)) return { searched: null, sources: 0, text: '' };
+  const outputs = j.outputs;
   let searched = outputs.some((o) => /tool\.execution|tool_execution/.test(String(o?.type)) && /search/.test(String(o?.name || '')));
   let sources = 0;
   let text = '';
@@ -181,6 +201,7 @@ async function probeMistral(n, key) {
 // ---------- Groq ----------
 export function readGroq(j) {
   const m = j?.choices?.[0]?.message;
+  if (!m || typeof m !== 'object') return { searched: null, sources: 0, text: '' };
   const executed = Array.isArray(m?.executed_tools) ? m.executed_tools : [];
   const annotations = Array.isArray(m?.annotations) ? m.annotations : [];
   let sources = annotations.length;
@@ -219,7 +240,7 @@ async function main() {
     out(`REFUSED: --questions must be a whole number from 1 to ${MAX_QUESTIONS} (got ${a.questions}). Nothing was called.`);
     process.exit(2);
   }
-  const wanted = a.candidates === 'all' ? Object.keys(CANDIDATES) : a.candidates.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const wanted = [...new Set(a.candidates === 'all' ? Object.keys(CANDIDATES) : a.candidates.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean))];
   const unknown = wanted.filter((w) => !CANDIDATES[w]);
   if (unknown.length || wanted.length === 0) {
     out(`REFUSED: unknown candidate(s) ${unknown.join(', ') || '(none given)'}; choose from ${Object.keys(CANDIDATES).join(', ')} or all. Nothing was called.`);
@@ -250,7 +271,7 @@ async function main() {
       out(`ERROR ${c.name}: the probe itself failed: ${e?.message || e}`);
     }
   }
-  out(`engine probe finished: ${planned} call(s) made.`);
+  out(`engine probe finished: ${callsMade} call(s) made (${planned} planned).`);
 }
 
 import { fileURLToPath } from 'node:url';

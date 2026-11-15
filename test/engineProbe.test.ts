@@ -136,7 +136,7 @@ async function main() {
     assert('a refused look-up shape prints its 400', /gemini-2\.5-flash-lite: \(c\)[^\n]*\nHTTP status: 400\nerror body/.test(r.output));
     assert('Mistral prints 3 sources from tool_reference chunks', /mistral-medium-latest: search call 1 of 2[^\n]*\nHTTP status: 200\nweb search ran: yes\nsources returned: 3/.test(r.output));
     assert('a 401 prints as a 401', /HTTP status: 401\nerror body/.test(r.output));
-    assert('the output ends by saying how many calls were made', /engine probe finished: 13 call\(s\) made/.test(r.output));
+    assert('the output ends by saying how many calls were made', /engine probe finished: 13 call\(s\) made \(13 planned\)/.test(r.output));
     assert('NO key, project number or long number appears anywhere in the output (the fake failures carried them)', leaks(r.output).length === 0 && !/\d{10,}/.test(r.output), leaks(r.output).join(' | '));
     assert('the scrub marker is present, so the failures did carry something to remove', /\[key removed\]/.test(r.output) && /\[number removed\]/.test(r.output));
   }
@@ -149,6 +149,32 @@ async function main() {
     const line = r.output.split('\n').find((l) => l.startsWith('reply (')) || '';
     assert('a 9,000 character reply is printed cut at 4,000 and says so', /cut at 4000/.test(line) && line.length < 4100, String(line.length));
     lg.close();
+  }
+
+  // ---- the cut must not leave the start of a key; a reply in the wrong shape is "unknown", not "no"
+  {
+    const ch: Hit[] = [];
+    const cg = await fakeProvider('gemini', ch, (_p, body) =>
+      body.tools ? { status: 400, text: 'x'.repeat(497) + GKEY + ' end' } : { status: 200, text: '<html>proxy page</html>' });
+    const r = await run({ PROBE_GEMINI_API_KEY: GKEY, PROBE_GEMINI_BASE_URL: cg.url }, ['--candidates', 'gemini', '--questions', '1']);
+    assert('a key straddling the 500 character cut leaves not even its first characters', !r.output.includes('AIz') && !r.output.includes(GKEY.slice(0, 8)), r.output.split('\n').filter((l) => l.includes('xxx')).map((l) => l.slice(-40)).join('|'));
+    assert('a 200 that is not JSON prints "unknown" with the raw reply, never "no"', /\(a\) plain call, no tools\nHTTP status: 200\nweb search ran: unknown[^\n]*\nraw reply[^\n]*proxy page/.test(r.output), r.output.slice(0, 600));
+    cg.close();
+    const eh: Hit[] = [];
+    const eg = await fakeProvider('gemini', eh, () => ({ status: 200, json: { promptFeedback: { blockReason: 'SAFETY' } } }));
+    const e = await run({ PROBE_GEMINI_API_KEY: GKEY, PROBE_GEMINI_BASE_URL: eg.url }, ['--candidates', 'gemini', '--questions', '1']);
+    assert('a 200 with no candidates is "unknown" too', /web search ran: unknown/.test(e.output) && !/web search ran: no/.test(e.output), e.output.slice(0, 500));
+    eg.close();
+    const mh: Hit[] = [];
+    const mg = await fakeProvider('mistral', mh, () => ({ status: 401, text: `Unauthorized key ${MKEY} masked ${MKEY.slice(0, 8)}...${MKEY.slice(-8)}` }));
+    const mr = await run({ PROBE_MISTRAL_API_KEY: MKEY, PROBE_MISTRAL_BASE_URL: mg.url }, ['--candidates', 'mistral', '--questions', '1']);
+    assert('a Mistral key echoed whole or masked is removed', !mr.output.includes(MKEY) && !mr.output.includes(MKEY.slice(0, 8)) && !mr.output.includes(MKEY.slice(-8)) && /\[key removed\]/.test(mr.output), mr.output);
+    mg.close();
+  }
+  {
+    const before = hits.length;
+    const r = await run(base, ['--candidates', 'groq,groq', '--questions', '1']);
+    assert('a candidate named twice runs once (2 calls at N=1)', hits.length - before === 2 && /2 call\(s\) planned/.test(r.output), r.output.slice(0, 200));
   }
 
   // ---- candidates filter, and a candidate without a key
