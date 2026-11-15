@@ -440,6 +440,7 @@ have to be rediscovered from scratch, not so it can be skipped.
   current `dist/`)
 - `bash test/branchStatus.test.sh` — the branch-status script against a throwaway
   repository (part of `npm test`)
+- `bash test/reviewAgents.test.sh` — the review agents pin a real model that is not the author's (part of `npm test`)
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
 `server.ts`) to redirect the SDK at a local fake server — a no-op unless

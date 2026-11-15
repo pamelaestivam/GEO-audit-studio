@@ -1209,7 +1209,7 @@ and labelled "Not measured". Showing a real figure needs a keyword data
 provider (Ahrefs, Semrush, Google Keyword Planner) — worth doing, since buyers
 expect it, but it must come from a source rather than a model.
 
-### 2.20 The git-add guard misses some spellings (low)
+### 2.22 The git-add guard misses some spellings (low)
 
 `.claude/hooks/guard-lib.mjs` (G1.2, `docs/ENGINEERING_BACKLOG.md`) is a guard against forgetting, not a security boundary. The
 fresh-context review left these known: a wrapper given an option with a separate value (`sudo -u root git add -A`,
@@ -1217,6 +1217,9 @@ fresh-context review left these known: a wrapper given an option with a separate
 `':(top,glob)**'`) are allowed, as are `bash -c "git add -A"`, aliases and `$(...)` inside a double-quoted string. Each is one more
 case in `test/claudeHooks.test.sh` if it ever happens; the pre-commit habit that really protects `main` is that CI fails on any
 tracked symlink and every merge is reviewed.
+### 2.21 The live-commit check has only been run against a stand-in (low)
+
+`scripts/smoke.mjs --expect-commit` (G1.7) is tested against a stand-in site and the workflow wiring is checked as text. It has not run against the real Vercel site, so two things are unconfirmed: that `/api/health` reports `VERCEL_GIT_COMMIT_SHA` in production (the daily check of 2026-11-14 printed no commit line), and that `github.event.deployment.sha` is set for the deployment-triggered run. If `/api/health` reports no commit the check FAILS with a sentence (Vercel's "Automatically expose System Environment Variables" setting must be on); if the deployment sha is empty the run quietly compares against the head of main instead, which can read as a false RED in the minutes after a merge (the same happens on a scheduled or manual run made while a just-merged commit is still deploying; the next deployment-triggered run closes it). A manual run with a non-production `url` input (a preview) is compared against the head of main too, so it fails unless that URL runs the head; it never touches the tracking issue. Read the first run's log and fix the cause (`docs/ENGINEERING_BACKLOG.md` G1.7).
 
 ## 3. Expansion — worth building next
 
