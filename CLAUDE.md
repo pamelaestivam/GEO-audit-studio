@@ -342,64 +342,64 @@ The test files, generated from `test/manifest.json` (`node scripts/gen-test-list
 test is in `docs/TEST_GUIDE.md`):
 
 <!-- tests:start -->
-- `test/testHarness.test.ts` (unit) — A guard on the tests themselves. An end-to-end test that checks its server came up and then does
-- `test/testIsolation.test.ts` (server, needs dist/) — A guard on the tests themselves: a test that starts the built server must not pick up the developer's DATABASE_URL.
-- `test/ports.test.ts` (unit) — Guards the ports the end-to-end suites use (see test/ports.ts for why): Node's `fetch` refuses a fixed list of "bad
+- `test/testHarness.test.ts` (unit) — A guard on the tests themselves.
+- `test/testIsolation.test.ts` (server, needs dist/) — A guard on the tests themselves
+- `test/ports.test.ts` (unit) — Guards the ports the end-to-end suites use (see test/ports.ts for why)
 - `test/analysis.test.ts` (unit) — Deterministic checks for the analysis layer.
-- `test/reportView.test.ts` (unit) — Pure checks for how headline numbers are presented. Run: npx tsx test/reportView.test.ts
-- `test/statusView.test.ts` (unit) — What the server's own status becomes on screen. Run with: npx tsx test/statusView.test.ts
-- `test/reportGuard.test.ts` (unit) — The machine checks on a finished report (src/reportGuard.ts): no figure in the model's
-- `test/spendGuard.test.ts` (unit) — The $0 guard (src/spendGuard.ts): paid engines are off unless allowed, the per-day call counter and
-- `test/rateLimit.test.ts` (unit) — Pure unit checks for the per-IP request limiter. Run: npx tsx test/rateLimit.test.ts
-- `test/auth.test.ts` (unit) — Pure checks for sign-in and sessions. Run: npx tsx test/auth.test.ts
-- `test/googleAuth.test.ts` (unit) — Pure checks for Sign in with Google (src/googleAuth.ts): the ID token is checked against keys we control, so every way
-- `test/store.test.ts` (postgres, needs dist/) — Contract checks for the durable store. The same suite runs against the
-- `test/postgresConfig.test.ts` (unit) — Pure checks for reading DATABASE_URL: no database is contacted. The address carries the password, so what these
+- `test/reportView.test.ts` (unit) — Pure checks for how headline numbers are presented.
+- `test/statusView.test.ts` (unit) — What the server's own status becomes on screen.
+- `test/reportGuard.test.ts` (unit) — The machine checks on a finished report (src/reportGuard.ts)
+- `test/spendGuard.test.ts` (unit) — The $0 guard (src/spendGuard.ts)
+- `test/rateLimit.test.ts` (unit) — Pure unit checks for the per-IP request limiter.
+- `test/auth.test.ts` (unit) — Pure checks for sign-in and sessions.
+- `test/googleAuth.test.ts` (unit) — Pure checks for Sign in with Google (src/googleAuth.ts)
+- `test/store.test.ts` (postgres, needs dist/) — Contract checks for the durable store.
+- `test/postgresConfig.test.ts` (unit) — Pure checks for reading DATABASE_URL
 - `test/queries.test.ts` (unit) — The standard queries are the literal questions asked of the answer engines.
-- `test/providers.test.ts` (unit) — The ChatGPT / Perplexity / Claude adapters, against response bodies shaped as
-- `test/engineProbe.test.ts` (server, needs dist/) — The engine probe (scripts/engine-probe.mjs, docs/PLAN_2026-11.md P1), run as a real child process against local fakes of the
-- `test/backup.test.ts` (server, needs dist/) — scripts/backup.mjs makes a restorable copy of a database that a server still
+- `test/providers.test.ts` (unit) — The ChatGPT / Perplexity / Claude adapters, against response bodies shaped as each vendor's published API documents them (fetch is stubbed
+- `test/engineProbe.test.ts` (server, needs dist/) — The engine probe (scripts/engine-probe.mjs, docs/PLAN_2026-11.md P1), run as a real child process against local fakes of the three providers.
+- `test/backup.test.ts` (server, needs dist/) — scripts/backup.mjs makes a restorable copy of a database that a server still has open in WAL mode - and a plain file copy of the same database does not.
 - `test/apiClient.test.ts` (unit) — Checks for the network-resilience wrapper (`src/apiClient.ts`).
-- `test/auditClient.test.ts` (unit) — The page's side of running an audit (`src/auditClient.ts`), against a fake global `fetch`:
+- `test/auditClient.test.ts` (unit) — The page's side of running an audit (`src/auditClient.ts`), against a fake global `fetch`
 - `test/idempotency.test.ts` (unit) — Checks for the retry-safety store (`src/idempotency.ts`).
-- `test/quotaBreaker.test.ts` (unit) — Checks for the quota circuit breaker (src/quotaBreaker.ts) and the cooldown
-- `test/quotaBreakerE2E.test.ts` (server, needs dist/) — End-to-end proof that the circuit breaker stops the amplification that
-- `test/quotaEfficiencyE2E.test.ts` (server, needs dist/) — Proves the actual call budget of a real audit against a *succeeding* fake
-- `test/searchedAnswer.test.ts` (unit) — The searched-or-not rule (src/searchedAnswer.ts) and the sentences that go with it (src/errors.ts). Pure: no server, no model.
-- `test/unsearchedE2E.test.ts` (server, needs dist/) — End to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P2):
-- `test/reportCompare.test.ts` (unit) — compareReports (src/reportCompare.ts, docs/PLAN_2026-11.md P3), pure: every reason two audits are not comparable, empty and
-- `test/rerunE2E.test.ts` (server, needs dist/) — Run an audit again, end to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P3):
-- `test/retrySpendE2E.test.ts` (server, needs dist/) — End-to-end proof that a retried request costs what one request costs, and
-- `test/mvpHardeningE2E.test.ts` (server, needs dist/) — End-to-end proof, against the real built server (dist/server.cjs) and a fake
-- `test/diagnostics.test.ts` (server, needs dist/) — The failure diagnostics themselves are tested, because a diagnostic nobody checks can quietly stop working just when
-- `test/narrativeAttributionE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini: what the report
-- `test/reportGuardE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini: a figure the narrative model
-- `test/auditGoldenE2E.test.ts` (server, needs dist/) — A golden-report test for the audit pipeline, at the boundary: the real built server, a fake Gemini,
-- `test/auditSteps.test.ts` (unit) — Pure checks for the step helpers (`src/auditSteps.ts`): the plan, which answers a set of steps produced, and the
-- `test/recentTrouble.test.ts` (unit) — Pure checks for the "recent trouble" sentence and verdict the deep readiness check reports
-- `test/readinessLine.test.ts` (unit) — How the smoke script reads each entry of the deep readiness answer (scripts/readinessLine.mjs): measured and ok is
-- `test/citedOnlyUi.test.ts` (unit) — The executive summary card, rendered to markup: decision A's sub-line, explainer and old-rule note are actually on
-- `test/auditStepsE2E.test.ts` (server, needs dist/) — End to end, against the real built server, a fake Gemini that counts real HTTP hits, and the real SQLite file:
-- `test/auditClientDriverE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini that counts real HTTP hits: an audit the PAGE
-- `test/auditResumeE2E.test.ts` (server, needs dist/) — End to end: an audit that was running when the server died is RESUMED on a durable store, from the step it was
+- `test/quotaBreaker.test.ts` (unit) — Checks for the quota circuit breaker (src/quotaBreaker.ts) and the cooldown math behind it (src/errors.ts).
+- `test/quotaBreakerE2E.test.ts` (server, needs dist/) — End-to-end proof that the circuit breaker stops the amplification that caused repeated "quota exhausted" failures to keep recurring.
+- `test/quotaEfficiencyE2E.test.ts` (server, needs dist/) — Proves the actual call budget of a real audit against a *succeeding* fake Gemini endpoint - not the always-429 fake server used by quotaBreakerE2E.test.ts.
+- `test/searchedAnswer.test.ts` (unit) — The searched-or-not rule (src/searchedAnswer.ts) and the sentences that go with it (src/errors.ts).
+- `test/unsearchedE2E.test.ts` (server, needs dist/) — End to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P2)
+- `test/reportCompare.test.ts` (unit) — compareReports (src/reportCompare.ts, docs/PLAN_2026-11.md P3), pure
+- `test/rerunE2E.test.ts` (server, needs dist/) — Run an audit again, end to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P3)
+- `test/retrySpendE2E.test.ts` (server, needs dist/) — End-to-end proof that a retried request costs what one request costs, and that a transient per-minute rate limit no longer destroys an audit.
+- `test/mvpHardeningE2E.test.ts` (server, needs dist/) — End-to-end proof, against the real built server (dist/server.cjs) and a fake Gemini endpoint, of the MVP-hardening fixes.
+- `test/diagnostics.test.ts` (server, needs dist/) — The failure diagnostics themselves are tested, because a diagnostic nobody checks can quietly stop working just when it is needed (TECH_DEBT 2.14)
+- `test/narrativeAttributionE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini
+- `test/reportGuardE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini
+- `test/auditGoldenE2E.test.ts` (server, needs dist/) — A golden-report test for the audit pipeline, at the boundary
+- `test/auditSteps.test.ts` (unit) — Pure checks for the step helpers (`src/auditSteps.ts`)
+- `test/recentTrouble.test.ts` (unit) — Pure checks for the "recent trouble" sentence and verdict the deep readiness check reports (`src/recentTrouble.ts`)
+- `test/readinessLine.test.ts` (unit) — How the smoke script reads each entry of the deep readiness answer (scripts/readinessLine.mjs)
+- `test/citedOnlyUi.test.ts` (unit) — The executive summary card, rendered to markup
+- `test/auditStepsE2E.test.ts` (server, needs dist/) — End to end, against the real built server, a fake Gemini that counts real HTTP hits, and the real SQLite file
+- `test/auditClientDriverE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini that counts real HTTP hits
+- `test/auditResumeE2E.test.ts` (server, needs dist/) — End to end: an audit that was running when the server died is RESUMED on a durable store, from the step it was on, and every repeated paid call is counted and recorded (docs/PLAN_STEP_E.md, slice S5).
 - `test/postgresE2E.test.ts` (postgres, needs dist/) — End to end: the real built server on a real PostgreSQL database, the way two Vercel instances would share one.
-- `test/spendGuardE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini: the $0 guard.
-- `test/foundationE2E.test.ts` (server, needs dist/) — End-to-end proof of the foundation: real sign-in enforced on every spending
-- `test/googleAuthE2E.test.ts` (server, needs dist/) — End to end: Sign in with Google against the real built server, with a fake Google (a local keys server and tokens
-- `test/uiSmoke.test.ts` (browser, needs dist/) — Drives the real built app in a real browser (Chromium via Playwright) against
-- `test/rerunUi.test.ts` (browser, needs dist/) — "Run again" and "Since the previous run" in a real browser, desktop and phone, on the real built server with a fake Gemini that
-- `test/googleLoginUi.test.ts` (browser, needs dist/) — The login page with Google, in a real browser (Chromium via Playwright) against the real built server. Google's own
-- `test/lookupAndBlankDomainE2E.test.ts` (browser, needs dist/) — In the real browser against the real server: what Auto-Detect hands the form,
-- `test/discardedClaimsUi.test.ts` (browser, needs dist/) — In a real browser: when the analysis reports inaccuracy claims that cannot be
-- `test/vercelEsmImports.test.ts` (server, needs dist/) — Regression test for the actual production bug this proves it would have
-- `test/vercelServerless.test.ts` (server, needs dist/) — Proof that the Vercel serverless entry point (api/index.ts) actually
-- `test/liveCommit.test.ts` (server, needs dist/) — "Which commit is live?" (item G1.7 of docs/ENGINEERING_BACKLOG.md): scripts/smoke.mjs --expect-commit against a stand-in site
-- `test/modelCalendar.test.ts` (unit) — The model calendar (item G1.9 of docs/ENGINEERING_BACKLOG.md): the RULE is tested here with fixed dates, and the DATA is tested for
-- `test/contract.test.ts` (server, needs dist/) — Contract tests: boot the real built server and assert the guarantees the
-- `test/branchStatus.test.sh` (unit) — !/usr/bin/env bash
-- `test/shipSkill.test.sh` (unit) — !/usr/bin/env bash
-- `test/reviewAgents.test.sh` (unit) — !/usr/bin/env bash
-- `test/dependencyLayout.test.sh` (unit, needs dist/) — !/usr/bin/env bash
+- `test/spendGuardE2E.test.ts` (server, needs dist/) — End to end, against the real built server and a fake Gemini
+- `test/foundationE2E.test.ts` (server, needs dist/) — End-to-end proof of the foundation
+- `test/googleAuthE2E.test.ts` (server, needs dist/) — End to end: Sign in with Google against the real built server, with a fake Google (a local keys server and tokens signed with its key).
+- `test/uiSmoke.test.ts` (browser, needs dist/) — Drives the real built app in a real browser (Chromium via Playwright) against the real built server and a fake Gemini at the far end - the way a person uses it.
+- `test/rerunUi.test.ts` (browser, needs dist/) — "Run again" and "Since the previous run" in a real browser, desktop and phone, on the real built server with a fake Gemini that changes its answer between the two runs (docs/PLAN_2026-11.md P3).
+- `test/googleLoginUi.test.ts` (browser, needs dist/) — The login page with Google, in a real browser (Chromium via Playwright) against the real built server.
+- `test/lookupAndBlankDomainE2E.test.ts` (browser, needs dist/) — In the real browser against the real server
+- `test/discardedClaimsUi.test.ts` (browser, needs dist/) — In a real browser: when the analysis reports inaccuracy claims that cannot be tied to a captured answer, the Inaccuracies tab must not show the green "No inaccuracies flagged" panel as if nothing had...
+- `test/vercelEsmImports.test.ts` (server, needs dist/) — Regression test for the actual production bug this proves it would have caught
+- `test/vercelServerless.test.ts` (server, needs dist/) — Proof that the Vercel serverless entry point (api/index.ts) actually answers requests, and that the ordinary Render/local path is unchanged.
+- `test/liveCommit.test.ts` (server, needs dist/) — "Which commit is live?" (item G1.7 of docs/ENGINEERING_BACKLOG.md)
+- `test/modelCalendar.test.ts` (unit) — The model calendar (item G1.9 of docs/ENGINEERING_BACKLOG.md)
+- `test/contract.test.ts` (server, needs dist/) — Contract tests: boot the real built server and assert the guarantees the product makes to a user.
+- `test/branchStatus.test.sh` (unit) — Exercises scripts/branch-status.sh in a THROWAWAY repository (a bare "origin" and...
+- `test/shipSkill.test.sh` (unit) — The ship skill (.claude/skills/ship/SKILL.md) is only useful if it stays true
+- `test/reviewAgents.test.sh` (unit) — The owner's rule (docs/OWNER_DIRECTIVES.md D-11)
+- `test/dependencyLayout.test.sh` (unit, needs dist/) — Guards two facts of the dependency layout (item G1.8 of docs/ENGINEERING_BACKLOG.md)
 - `test/manifest.test.ts` (unit) — The manifest lists every test file; the runner (real child processes against fake tests): failures, early-exit FAIL lines, skips, tiers, --changed; CLAUDE.md list is up to date.
 <!-- tests:end -->
 

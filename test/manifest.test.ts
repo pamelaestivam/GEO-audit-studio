@@ -24,16 +24,15 @@ const claude = readFileSync('CLAUDE.md', 'utf8');
 check('the list in CLAUDE.md is the one generated from the manifest', claude.includes(`<!-- tests:start -->\n${testList()}\n<!-- tests:end -->`), 'run: node scripts/gen-test-list.mjs --write');
 
 // ---- --changed
-const sample = [
-  { file: 'test/a.test.ts', tier: 'unit' }, { file: 'test/b.test.ts', tier: 'server' },
-];
-const dir0 = mkdtempSync(`${os.tmpdir()}/sel-`);
 const picked = (changed: string[]) => selectChanged(manifest, changed).map((t: any) => t.file);
 check('--changed: a changed test file selects itself', picked(['test/auth.test.ts']).join() === 'test/auth.test.ts');
 check('--changed: a changed src module selects the tests that import it', picked(['src/rateLimit.ts']).includes('test/rateLimit.test.ts'));
 check('--changed: the server, config or the runner select everything', picked(['server.ts']).length === manifest.length && picked(['package.json']).length === manifest.length && picked(['scripts/run-tests.mjs']).length === manifest.length);
-check('--changed: a docs-only change selects nothing', picked(['docs/PROGRAM.md']).length === 0);
-void sample; void dir0;
+check('--changed: a docs-only change selects nothing', picked(['docs/PROGRAM.md', 'CLAUDE.md']).length === 0);
+const needsDist = manifest.filter((t: any) => t.needsBuild).map((t: any) => t.file).sort().join();
+check('--changed: a src file that no test imports (the pipeline, the page) selects every test that needs the build', ['src/auditPipeline.ts', 'src/App.tsx', 'index.html', 'test/golden/x.json'].every((p) => picked([p]).slice().sort().join() === needsDist || (picked([p]).length >= manifest.filter((t: any) => t.needsBuild).length)));
+check('--changed: something that maps to nothing and is not documentation runs everything, never "nothing"', picked(['mystery/thing.bin']).length === manifest.length);
+check('--changed: a fixture file does not drag in unrelated tests by name', picked(['test/fixtures/x.json']).length <= manifest.length && picked(['test/fixtures/x.json']).every((f: string) => manifest.find((t: any) => t.file === f)?.needsBuild));
 
 // ---- the runner against fake tests, as a real process
 function fakeRoot(tests: Record<string, { tier: string; body: string }>) {
@@ -42,8 +41,8 @@ function fakeRoot(tests: Record<string, { tier: string; body: string }>) {
   writeFileSync(`${d}/test/manifest.json`, JSON.stringify({ tests: entries }));
   return d;
 }
-function run(d: string, extra: string[] = []) {
-  const r = spawnSync('node', [`${process.cwd()}/scripts/run-tests.mjs`, ...extra], { env: { ...process.env, RUN_TESTS_ROOT: d, GITHUB_STEP_SUMMARY: '' }, encoding: 'utf8' });
+function run(d: string, extra: string[] = [], env: Record<string, string> = {}) {
+  const r = spawnSync('node', [`${process.cwd()}/scripts/run-tests.mjs`, ...extra], { env: { ...process.env, RUN_TESTS_ROOT: d, GITHUB_STEP_SUMMARY: '', CI: '', ...env }, encoding: 'utf8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 const fake = fakeRoot({
@@ -72,6 +71,16 @@ check('naming a file that is not in the manifest is refused', run(fake, ['test/n
 check('--list prints the selection and runs nothing', /unit +test\/good\.test\.sh/.test(run(fake, ['--list']).out) && !/pass/.test(run(fake, ['--list']).out));
 const green = run(fakeRoot({ 'ok.test.sh': { tier: 'unit', body: 'echo "pass  fine"' } }));
 check('an all-green run exits 0 and does not build when nothing needs it', green.code === 0 && !/Building once/.test(green.out));
+
+const nogit = run(fake, ['--changed', 'nosuchbase']);
+check('--changed with a git that cannot answer is an error with a sentence, not "nothing to test"', nogit.code === 2 && /could not ask git/.test(nogit.out), nogit.out.slice(0, 300));
+check('--tier with no value is refused, not ignored', run(fake, ['--tier']).code === 2 && run(fake, ['--tier', '--list']).code === 2);
+const ciSkip = run(fake, ['test/skip.test.sh'], { CI: 'true' });
+check('in CI a skipped file is a failure (a missing database must not pass)', ciSkip.code === 1 && /FAIL +server +test\/skip\.test\.sh/.test(ciSkip.out), ciSkip.out.slice(0, 300));
+check('outside CI the same skip is only a skip', run(fake, ['test/skip.test.sh']).code === 0);
+const hung = fakeRoot({ 'hang.test.sh': { tier: 'unit', body: 'sleep 40 &\nwait' } });
+const t1 = Date.now(); const hr = run(hung, [], { RUN_TESTS_TIMEOUT_MS: '1500' });
+check('a hung file is stopped at the limit and its whole process group with it (not after its child finishes)', hr.code === 1 && /stopped this file after 2 seconds/.test(hr.out) && Date.now() - t1 < 15000, `${Date.now() - t1} ms: ${hr.out.slice(0, 200)}`);
 
 console.log(failures === 0 ? '\nAll manifest and runner checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
