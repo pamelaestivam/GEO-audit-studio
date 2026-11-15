@@ -405,6 +405,7 @@ test is in `docs/TEST_GUIDE.md`):
 - `test/ciWorkflow.test.ts` (unit) — CI in parallel under the same required name: the gate job `test` needs every job and runs always; every tier and both server shards are run; limits, pins and setup.
 - `test/mutate.test.ts` (unit) — The protections ledger runner against a fixture repository: defended, undefended, stale, already-red, the fixture never modified; the real ledger is well formed.
 - `test/properties.test.ts` (unit) — Property-based tests for src/analysis.ts: its laws attacked with a seeded generator (the seed is printed on failure and replays it).
+- `test/tscRatchet.test.ts` (unit) — The compiler ratchet: the pure rules and the real script against this repository (the stored baseline matches the compiler today).
 <!-- tests:end -->
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in

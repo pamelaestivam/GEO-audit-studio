@@ -444,6 +444,13 @@
    "tier": "unit",
    "needsBuild": false,
    "what": "Property-based tests for src/analysis.ts: its laws attacked with a seeded generator (the seed is printed on failure and replays it)."
+  },
+  {
+   "file": "test/tscRatchet.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The compiler ratchet: the pure rules and the real script against this repository (the stored baseline matches the compiler today)."
   }
  ]
 }

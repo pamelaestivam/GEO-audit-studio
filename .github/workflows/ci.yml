@@ -44,6 +44,8 @@ jobs:
       - uses: ./.github/actions/setup
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
+      # The compiler ratchet (G2.4): the stricter flags' error counts are stored and may only go down.
+      - run: node scripts/tsc-ratchet.mjs
       - run: node scripts/run-tests.mjs --tier unit
         env:
           CI: 'true'
