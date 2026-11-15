@@ -802,6 +802,8 @@ specified as server-side wording and no new screen, and each needs its own desig
 - **Phone, after a failed audit the page keeps the scroll position of the Run button**, so the "Audit incomplete" banner with the reason
   (and the new hint) is above the visible screen behind a sticky header about 220px tall. `CLAUDE.md` asks that the result of a tap is
   brought into view; for a finished audit it is not.
+  *Note 2026-11-15 (P3):* for a **re-run** this is fixed (the outcome is scrolled to with a margin that clears the sticky header; `test/rerunUi.test.ts`). The ordinary
+  "Run New Audit" flow still keeps the old scroll position, so this bullet stays open for it.
 - **A not-counted question is labelled "No data" in the matrix row and its modal**, with only the sentence in italic quotes below it
   saying why (the sentence is the app's, not an engine quote, yet it is shown in quotation marks). "Not counted" appears only in the card
   and the modal text.

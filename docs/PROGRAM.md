@@ -6,11 +6,19 @@ words mean exactly: **done** (merged and verified, with how), **in progress**,
 `docs/OWNER_DIRECTIVES.md`; the design is `docs/RELIABILITY.md`; the reasons are
 `docs/DECISIONS.md`; the history is `docs/SESSION_LOG.md`.
 
-Last updated: 2026-11-14.
+Last updated: 2026-11-15.
 
-**Read `docs/STRATEGY_2026-11-14.md` before choosing work (2026-11-14):** the default Gemini model probably has no free web
-search any more, so real audits are probably refused. The work is specified in `docs/PLAN_2026-11.md`, in this order: P1 (row 14,
-the probe that measures it), P2 (row 13, the fix), P3 (row 15). The owner's part is O-7 now and O-8 once P1 is merged.
+**State on 2026-11-15 (read this first):** `docs/PLAN_2026-11.md` P0 to P3 are all built and merged: P1 the engine probe (PR #60), P2 an
+unsearched answer is not counted, the readiness check asks what an audit asks, a quota-failed audit carries a hint (PR #61, `metricVersion`
+3), P3 Run again and "Since the previous run" (PR #62). **Nothing a real engine returns has been measured yet**: the probe ran twice
+(runs 43669524263 and 43673980851) and printed SKIP for every provider because the repository secrets are not set. **The default model
+was therefore NOT changed** (`gemini-3.6-flash`, which Google lists as having no free search); the owner's lever is `GEMINI_MODEL` (O-7).
+**What waits on the owner:** O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
+and O-6 (Google sign-in) are unchanged. **Next for the assistant, once O-8 is done:** start the `engine-probe` workflow, write the real
+results into `docs/INSIGHTS.md` (MEASURED) and the ledger below, save one scrubbed real reply per provider under `test/fixtures/real/`, then
+decide the default model (`docs/PLAN_2026-11.md` P2 item 4, which was deliberately left) and write the plan for a second engine
+(`docs/PLAN_2026-11.md` "Not in this plan"). Without keys there is nothing further in the plan to build; the engineering backlog
+(`docs/ENGINEERING_BACKLOG.md`) is the other queue and needs its own session.
 
 **Stale lines below, corrected here rather than rewritten (2026-11-14):** the live check of 2026-11-14 (run 43603783051) reports
 sign-in set, an engine key set and durable storage. So "Storage on Vercel is process memory" (section 1), "What is left is the
@@ -26,7 +34,7 @@ authorised the repair and it was done (set the URL back, fetch, reset `main` to
 than looking for another way round. History: `docs/SESSION_LOG.md`; lesson: I-13.
 
 **First action for a cold session:** run `npm ci && npm run verify` (it should report
-0 failures), then execute `docs/PLAN_2026-11.md` from the first package that is not merged (as of 2026-11-14: P1).
+0 failures), then continue from the state paragraph above (as of 2026-11-15 every package of `docs/PLAN_2026-11.md` is merged).
 The owner actions in section 3 run in parallel and block only the rows that name them;
 never wait on them to do the others.
 
@@ -61,9 +69,9 @@ tell the owner or a client that it is dependable.
 | 10 | Real-engine verification: one real audit read by a person against the raw answers; record fixtures from it | blocked | owner actions O-1 and O-2 |
 | 11 | Branch protection and auto-delete of merged branches | blocked | owner action O-5 |
 | 12 | Sign in with Google (`TECH_DEBT.md` 1.5): "Continue with Google" first, access code second, only invited addresses | partly | BUILT 2026-11-09 (`src/googleAuth.ts`; unit, built-server and browser checks use a fake Google; the protections were each broken in turn and a check failed; independent security and UX reviews done). Waits on the owner's Google Cloud client id and the invited list (O-6); not yet tried with a real Google account or Google's real button |
-| 13 | Gemini free web search: the default model `gemini-3.6-flash` is listed by Google as having none on the free tier; make the failure visible and move to a model that has it | **partly: the code half is built (2026-11-15, P2: an unsearched answer is not counted, the readiness check asks what an audit asks, a quota-failed audit carries a hint; `metricVersion` 3); the default model is NOT changed because the probe has no measurement yet (O-8); the owner's lever stays `GEMINI_MODEL` (O-7)** (`docs/PLAN_2026-11.md` P2; row 7's S6 and S7 are held until real audits exist, `docs/DECISIONS.md` 2026-11-14) | found 2026-11-14 (`docs/STRATEGY_2026-11-14.md` section 1, `TECH_DEBT.md` 2.19, I-36, I-37). Owner: O-7 (look at the limits, set `GEMINI_MODEL`, run one audit). Assistant: `docs/PLAN_2026-11.md` P2 (a searched-or-not flag on each Gemini answer, a readiness call that searches, a hint on a quota-failed audit; the quota sentence itself stays, see `TECH_DEBT.md` 2.19). NOT measured: what the owner's key returns |
-| 14 | The engine probe: real replies from real engines, read from a workflow log (`docs/PLAN_2026-11.md` P1) | **built and merged** (PR #60, 4b17f3e); first run printed SKIP for every provider (run 43669524263, I-42) | owner action O-8: add `PROBE_GEMINI_API_KEY` (and optionally Mistral and Groq keys), then ask the assistant to start the workflow |
-| 15 | Run an audit again and show what changed (`docs/PLAN_2026-11.md` P3) | built 2026-11-15 (PR for P3, see section 4 ledger once merged) | nothing |
+| 13 | Gemini free web search: the default model `gemini-3.6-flash` is listed by Google as having none on the free tier; make the failure visible and move to a model that has it | **partly: the code half is built and merged (PR #61) (2026-11-15, P2: an unsearched answer is not counted, the readiness check asks what an audit asks, a quota-failed audit carries a hint; `metricVersion` 3); the default model is NOT changed because the probe has no measurement yet (O-8); the owner's lever stays `GEMINI_MODEL` (O-7)** (`docs/PLAN_2026-11.md` P2; row 7's S6 and S7 are held until real audits exist, `docs/DECISIONS.md` 2026-11-14) | found 2026-11-14 (`docs/STRATEGY_2026-11-14.md` section 1, `TECH_DEBT.md` 2.19, I-36, I-37). Owner: O-7 (look at the limits, set `GEMINI_MODEL`, run one audit). Assistant: `docs/PLAN_2026-11.md` P2 (a searched-or-not flag on each Gemini answer, a readiness call that searches, a hint on a quota-failed audit; the quota sentence itself stays, see `TECH_DEBT.md` 2.19). NOT measured: what the owner's key returns |
+| 14 | The engine probe: real replies from real engines, read from a workflow log (`docs/PLAN_2026-11.md` P1) | **built and merged** (PR #60, 4b17f3e); the first two runs (43669524263, 43673980851) printed SKIP for every provider (I-42) | owner action O-8: add `PROBE_GEMINI_API_KEY` (and optionally Mistral and Groq keys), then ask the assistant to start the workflow |
+| 15 | Run an audit again and show what changed (`docs/PLAN_2026-11.md` P3) | **done**: merged PR #62 (af73e71), 2026-11-15; CI green (run on head de37da1, PR #62 checks), EVAL PM SHIP 93 (recorded in the PR description), review findings fixed; 2,457 checks in the full verify; proved on the built server with a fake Gemini and in Chromium desktop and phone. NOT verified: real engines, a live URL | nothing |
 | 16 | A second searching engine; the written analysis off Gemini (strategy steps 4 and 5) | blocked | what the probe (row 14) measures on free keys |
 | 17 | Engineering backlog: tool chain, architecture, coding (`docs/ENGINEERING_BACKLOG.md`, three groups) | next, in its own session after rows 13 to 15 | the owner starting that session; two items in it wait on the owner by name (the session's own settings, and slice S6) |
 
@@ -218,6 +226,10 @@ Why it matters: P2's choice of model (`docs/PLAN_2026-11.md` P2 item 4) is made 
 | Free Gemini web search on the default model `gemini-3.6-flash` | **READ: "Not available" on the free tier; not measured on the owner's key** | Google's pricing page, fetched 2026-11-14 (I-36); owner action O-7 |
 | Live site: engine key, sign-in, durable storage | MEASURED | `live-check` run https://github.com/pamelaestivam/GEO-audit-studio/actions/runs/43603783051 (2026-11-14): all three pass; the signed-in checks were skipped (no secrets). Which store kind it reported was not printed |
 | A real audit on the live site returns a measured answer | **not verified** | nobody has reported one; see row 13 |
+| Run again and "Since the previous run" | verified against a fake engine only | `test/rerunE2E.test.ts`, `test/rerunUi.test.ts`, `test/reportCompare.test.ts`; four deliberate breaks each failed checks (PR #62); not tried on the live site |
+| An answer without a web search is not counted; readiness asks with search | verified against a fake engine only | `test/unsearchedE2E.test.ts`, `test/searchedAnswer.test.ts`, five deliberate breaks (PR #61); how often real Gemini answers without searching is UNKNOWN |
+| Engine probe workflow | verified to run, no real result | runs 43669524263 and 43673980851: SKIP for every provider (no secrets); the script is proved against fakes by `test/engineProbe.test.ts` |
+| Live check after the last merge | MEASURED | run 43673983040 (manual start, 2026-11-15, after PR #62 merged): passed (frontend, backend not downloadable, health, status, an engine configured, sign-in configured, storage durable, strangers refused); the signed-in checks (including the new `readiness: gemini search` line) were skipped, no secrets (O-3 step 4) |
 | Docker image on a real host | **not verified** | no daemon in the sandbox |
 | Rulesets on this plan | **not verified** | AGENT unsure |
 
