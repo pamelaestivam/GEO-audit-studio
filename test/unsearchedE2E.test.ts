@@ -8,6 +8,9 @@
  *   - the operator's own daily cap carries no hint;
  *   - the readiness check asks what an audit asks: both ok = 2 calls; a refused search = plain ok, search not ok, and the breaker is NOT tripped
  *     (an audit right after still reaches the fake); a 500 on the search only; an unsearched reply; no key; cached = 0 more calls.
+ * One line is unreachable here: the 'not searched' exemption in the per-engine cell of /api/audit/evaluate-query only runs when some other
+ * engine has a usable answer (a paid engine, switched off by default), so with Gemini alone the request takes the 502 branch first. It is
+ * correct by reading and recorded in TECH_DEBT.md 2.19 (found by the independent review).
  * Needs a current dist/. Run: npx tsx test/unsearchedE2E.test.ts
  */
 import { spawn, type ChildProcess } from 'child_process';

@@ -382,3 +382,7 @@ fresh-context review (FIX BEFORE MERGE) found five real defects, all fixed with 
 4,000 character cuts (a key straddling a cut left its first characters), a 200 reply that was not JSON printed as "web search ran:
 no", the closing line printed the planned call count as the made count, a candidate named twice ran twice, and a masked key echo was
 not scrubbed. Deliberate breaks: printing without scrub (2 checks fail), cutting before scrubbing (1 check fails).
+
+**P1 merged** as PR #60, merge commit 4b17f3e (CI green, EVAL PM SHIP 93). The workflow was started once on `main`: run 43669524263, outcome SKIP for every provider (no secrets), recorded as I-42.
+
+**P2 (PR #61).** The fake Gemini change (grounding only when the request carries the search tool) went in as its own commit; the whole suite stayed green on it alone (2,322 checks). Then the rule, the readiness search call, the hint, the wording, tests and records. Full verify: 2,372 checks, 0 failed. Five deliberate breaks each failed checks (I-43 records that the first break was not faithful). The fresh-context review: OK TO MERGE with two findings: the `evaluate-query` cell exemption is unreachable with Gemini alone (recorded in TECH_DEBT 2.19) and the hint was decided from all engines' failures (now Gemini's only). The default model was not changed (no probe measurement).

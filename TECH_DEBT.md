@@ -790,9 +790,26 @@ with only a hint beside it (`degradedHint`), because telling an allowance of zer
 spend. **Also open:** (a) how often real Gemini answers without searching is UNKNOWN until the engine probe has run with a key
 (`docs/PROGRAM.md` O-8; it prints "web search ran: yes or no" for every call): if it is common the rule is revisited with the owner;
 (b) the suites with their own fake Gemini (`mvpHardeningE2E`, `quotaEfficiencyE2E`, `retrySpendE2E`) always send grounding, so they do not
-exercise the new rule; (c) the default model is unchanged (no probe measurement yet); if it moves to `gemini-2.5-flash-lite`, the
+exercise the new rule; (c) the 'not searched' exemption in the per-engine cell of `/api/audit/evaluate-query` (server.ts, the first of the four "No answer captured" wraps) has no test: it runs only when another engine has a usable answer, and with Gemini alone the request answers 502 first; (d) the default model is unchanged (no probe measurement yet); if it moves to `gemini-2.5-flash-lite`, the
 look-ups that send a search together with a structured reply (`/api/audit/parse-url`, `/api/audit/generate-queries`) may be refused by
 that model (unknown; probe shape (c) measures it), and the follow-up is to redesign them, not to patch around them.
+
+### 2.20 What the UX tour of P2 found and left (2026-11-15; low to medium, found by `ux-tourist` on desktop and phone)
+
+All of these are how the page already treats EVERY failed look-up; the not-searched kind inherits them. Left on purpose because P2 is
+specified as server-side wording and no new screen, and each needs its own design pass:
+
+- **Phone, after a failed audit the page keeps the scroll position of the Run button**, so the "Audit incomplete" banner with the reason
+  (and the new hint) is above the visible screen behind a sticky header about 220px tall. `CLAUDE.md` asks that the result of a tap is
+  brought into view; for a finished audit it is not.
+- **A not-counted question is labelled "No data" in the matrix row and its modal**, with only the sentence in italic quotes below it
+  saying why (the sentence is the app's, not an engine quote, yet it is shown in quotation marks). "Not counted" appears only in the card
+  and the modal text.
+- **The card says "1 of 2 attempted answers failed and is not counted"** for an answer that did not fail but had no search behind it.
+- The hint names "this server" and "this key" (an operator's words) and the AI Studio address is plain text, not a link.
+- The "How this was measured" disclosure now says twice that the figures come through the engine's API (the older paragraph and the
+  new P2 sentence).
+- Not checked by the tour: the export's copied text, and "Add & Audit Query" after a failed audit.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
 

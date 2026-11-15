@@ -1568,9 +1568,12 @@ Return valid JSON matching the schema.`;
       : summariseFailures(evidenceFailures(flatEvidence), 'The answer engine');
     // An allowance of zero looks exactly like a used-up one, so a failed audit that ran into Gemini's quota or rate limit
     // carries one hint. Never when the operator's own call cap caused it (also kind 'quota'): the hint would be false.
+    // Decided on Gemini's own failures only: another engine's quota says nothing about Gemini's search allowance.
+    const geminiEvidence = flatEvidence.filter((e) => e.engine === 'Gemini');
+    const geminiKind = summariseFailures(evidenceFailures(geminiEvidence), 'Gemini').kind;
     const degradedHint =
       (plan.engines as string[]).includes('Gemini') &&
-      (breakerStatus.tripped || ((readable.kind === 'quota' || readable.kind === 'rate_limit') && !flatEvidence.some((e) => e.capReached)))
+      (breakerStatus.tripped || ((geminiKind === 'quota' || geminiKind === 'rate_limit') && !geminiEvidence.some((e) => e.capReached)))
         ? DEGRADED_HINT
         : undefined;
     const degraded = generateSynthesizedAudit(
