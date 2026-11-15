@@ -430,6 +430,13 @@
    "tier": "unit",
    "needsBuild": false,
    "what": "CI in parallel under the same required name: the gate job `test` needs every job and runs always; every tier and both server shards are run; limits, pins and setup."
+  },
+  {
+   "file": "test/mutate.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The protections ledger runner against a fixture repository: defended, undefended, stale, already-red, the fixture never modified; the real ledger is well formed."
   }
  ]
 }

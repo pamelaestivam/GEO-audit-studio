@@ -1,0 +1,59 @@
+name: Protections ledger
+
+# Weekly: does a test still fail when each guarantee the product makes is broken on purpose? (test/protections.json, scripts/mutate.mjs; item
+# G2.8 of docs/ENGINEERING_BACKLOG.md). It works in temporary copies of the repository and never changes it. Like live-check.yml and
+# model-calendar.yml, a failure is never only a red run nobody opens: it opens ONE tracking issue, comments on it while a guarantee is
+# undefended or its row is stale, and closes it when every row is defended. No secrets and no money. GitHub pauses scheduled workflows after
+# 60 days without repository activity; start it by hand (Actions tab, "Run workflow") to restart the clock.
+on:
+  schedule:
+    - cron: '17 5 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
+      - uses: ./.github/actions/setup
+      - name: Break each guarantee in a copy and run its test
+        id: ledger
+        run: |
+          set +e
+          node scripts/mutate.mjs > ledger.log 2>&1
+          code=$?
+          cat ledger.log
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          { echo "## Protections ledger"; echo '```'; cat ledger.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+      - name: Open, update or close the one tracking issue
+        if: always()
+        run: |
+          set -e
+          code="${{ steps.ledger.outputs.code || 1 }}"   # a step that never ran counts as a failure
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh label create protections --color D93F0B --description "Opened by the protections workflow" 2>/dev/null || true
+          number=$(gh issue list --state open --label protections --limit 1 --json number --jq '.[0].number')
+          if [ "$code" = "0" ]; then
+            if [ -n "$number" ]; then gh issue close "$number" --comment "Every guarantee in the ledger is defended again. Run: $run_url"; fi
+            exit 0
+          fi
+          {
+            echo "A guarantee the product makes has no test that fails when it is broken, or a row of the ledger is stale (checked $(date -u +%Y-%m-%d)). Run: $run_url"
+            echo
+            echo '```'
+            grep -E '^(UNDEFENDED|STALE|ERROR)' ledger.log || cat ledger.log
+            echo '```'
+            echo
+            echo "What to do: UNDEFENDED means add or strengthen a test for that guarantee (the row names the file and the test); STALE means the code the row breaks has changed, so update the row in \`test/protections.json\`; ERROR means a named test already fails on the unbroken copy. This issue is reused: later weeks comment here, and a run with every row defended closes it."
+          } > body.md
+          if [ -n "$number" ]; then gh issue comment "$number" --body-file body.md
+          else gh issue create --title "Protections ledger: a guarantee is undefended or a row is stale" --label protections --body-file body.md; fi
+          exit 1
