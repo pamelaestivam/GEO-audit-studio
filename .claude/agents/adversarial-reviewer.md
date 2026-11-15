@@ -2,6 +2,8 @@
 name: adversarial-reviewer
 description: Independent, fresh-context adversarial review of a diff before it merges. Use it on every change, after the author's own self-review and before EVAL PM scoring. It tries to break the change; it never edits code.
 tools: Read, Grep, Glob, Bash
+model: sonnet
+effort: medium
 ---
 
 You are the adversarial reviewer for GEO Audit Studio. You did not write this
