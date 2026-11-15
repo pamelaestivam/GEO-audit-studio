@@ -50,7 +50,8 @@ function smoke(base: string, extra: string[]) {
 }
 // The rest of smoke.mjs fails against a stand-in, so the exit code cannot show the commit check: compare the count of FAIL lines
 // with and without the flag instead (the commit check must add exactly one, or none when it passes).
-const failCount = (out: string) => out.split('\n').filter((l) => l.startsWith('FAIL')).length;
+// the script's own COUNTED failures (its closing line), not just printed FAIL lines
+const failCount = (out: string) => { const m = /(\d+) check\(s\) failed\./.exec(out); return m ? Number(m[1]) : /Smoke test passed/.test(out) ? 0 : NaN; };
 for (const [label, reported, expected, wantPass, sentence] of [
   ['the site runs the expected commit', A, A, true, /./],
   ['the site is behind main', A, B, false, /not the expected bbbbbbb/],
@@ -69,6 +70,14 @@ for (const [label, reported, expected, wantPass, sentence] of [
 }
 {
   const s = await site(A);
+  const eq = await smoke(s.base, [`--expect-commit=${A.slice(0, 7)}`]);
+  const none = await smoke(s.base, []);
+  s.close();
+  const eqLine = eq.out.split('\n').find((l) => l.includes('the live site runs the expected commit')) || '';
+  check('the --expect-commit=<sha> form runs the check, and it passes for the right commit', eqLine.startsWith('pass') && failCount(eq.out) === failCount(none.out), eq.out.slice(0, 400));
+}
+{
+  const s = await site(A);
   const r = await smoke(s.base, []);
   s.close();
   check('without --expect-commit nothing is compared (no commit line at all)', !r.out.includes('the live site runs the expected commit'));
@@ -78,6 +87,7 @@ for (const [label, reported, expected, wantPass, sentence] of [
 const wf = readFileSync('.github/workflows/live-check.yml', 'utf8');
 check('live-check.yml passes --expect-commit to the smoke script', /--expect-commit "\$head"/.test(wf) && /smoke\.mjs "\$LIVE_URL"[^\n]*"\$\{expect\[@\]\}"/.test(wf));
 check('...from the finished deployment (the env line is set from the event), else the head of main read from the remote', /DEPLOYED_SHA: \$\{\{ github\.event\.deployment\.sha \}\}/.test(wf) && /DEPLOYED_SHA:-\$\(git ls-remote origin refs\/heads\/main/.test(wf));
+check('...the head is read by exact ref name (a branch named like a suffix cannot add a second line)', /awk '\$2=="refs\/heads\/main"\{print \$1\}'/.test(wf));
 check('...and an unreadable head fails the check instead of skipping it (the flag is always passed)', /expect=\(--expect-commit "\$head"\)/.test(wf) && !/if \[ -n "\$head" \]/.test(wf));
 
 console.log(failures === 0 ? '\nAll live-commit checks passed.' : `\n${failures} check(s) failed.`);
