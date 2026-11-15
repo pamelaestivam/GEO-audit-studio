@@ -1209,6 +1209,15 @@ and labelled "Not measured". Showing a real figure needs a keyword data
 provider (Ahrefs, Semrush, Google Keyword Planner) — worth doing, since buyers
 expect it, but it must come from a source rather than a model.
 
+### 2.20 The git-add guard misses some spellings (low)
+
+`.claude/hooks/guard-lib.mjs` (G1.2, `docs/ENGINEERING_BACKLOG.md`) is a guard against forgetting, not a security boundary. The
+fresh-context review left these known: a wrapper given an option with a separate value (`sudo -u root git add -A`,
+`timeout -s KILL 10 git add -A`, `xargs -n 1 git add -A`, `env -u X git add .`) and some everything-pathspecs (`'**'`, `./*`,
+`':(top,glob)**'`) are allowed, as are `bash -c "git add -A"`, aliases and `$(...)` inside a double-quoted string. Each is one more
+case in `test/claudeHooks.test.sh` if it ever happens; the pre-commit habit that really protects `main` is that CI fails on any
+tracked symlink and every merge is reviewed.
+
 ## 3. Expansion — worth building next
 
 Roughly in order of value per unit of effort.
