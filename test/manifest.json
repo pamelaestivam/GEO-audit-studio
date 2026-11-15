@@ -1,0 +1,428 @@
+{
+ "comment": "Every test file, its tier and what it needs. scripts/run-tests.mjs reads this; npm test runs it. Add a new test here (test/manifest.test.ts fails when a test file is missing from it).",
+ "tests": [
+  {
+   "file": "test/testHarness.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "A guard on the tests themselves."
+  },
+  {
+   "file": "test/testIsolation.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "A guard on the tests themselves"
+  },
+  {
+   "file": "test/ports.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Guards the ports the end-to-end suites use (see test/ports.ts for why)"
+  },
+  {
+   "file": "test/analysis.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Deterministic checks for the analysis layer."
+  },
+  {
+   "file": "test/reportView.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure checks for how headline numbers are presented."
+  },
+  {
+   "file": "test/statusView.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "What the server's own status becomes on screen."
+  },
+  {
+   "file": "test/reportGuard.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The machine checks on a finished report (src/reportGuard.ts)"
+  },
+  {
+   "file": "test/spendGuard.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The $0 guard (src/spendGuard.ts)"
+  },
+  {
+   "file": "test/rateLimit.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure unit checks for the per-IP request limiter."
+  },
+  {
+   "file": "test/auth.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure checks for sign-in and sessions."
+  },
+  {
+   "file": "test/googleAuth.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure checks for Sign in with Google (src/googleAuth.ts)"
+  },
+  {
+   "file": "test/store.test.ts",
+   "runner": "tsx",
+   "tier": "postgres",
+   "needsBuild": true,
+   "what": "Contract checks for the durable store."
+  },
+  {
+   "file": "test/postgresConfig.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure checks for reading DATABASE_URL"
+  },
+  {
+   "file": "test/queries.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The standard queries are the literal questions asked of the answer engines."
+  },
+  {
+   "file": "test/providers.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The ChatGPT / Perplexity / Claude adapters, against response bodies shaped as each vendor's published API documents them (fetch is stubbed"
+  },
+  {
+   "file": "test/engineProbe.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "The engine probe (scripts/engine-probe.mjs, docs/PLAN_2026-11.md P1), run as a real child process against local fakes of the three providers."
+  },
+  {
+   "file": "test/backup.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "scripts/backup.mjs makes a restorable copy of a database that a server still has open in WAL mode - and a plain file copy of the same database does not."
+  },
+  {
+   "file": "test/apiClient.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Checks for the network-resilience wrapper (`src/apiClient.ts`)."
+  },
+  {
+   "file": "test/auditClient.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The page's side of running an audit (`src/auditClient.ts`), against a fake global `fetch`"
+  },
+  {
+   "file": "test/idempotency.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Checks for the retry-safety store (`src/idempotency.ts`)."
+  },
+  {
+   "file": "test/quotaBreaker.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Checks for the quota circuit breaker (src/quotaBreaker.ts) and the cooldown math behind it (src/errors.ts)."
+  },
+  {
+   "file": "test/quotaBreakerE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End-to-end proof that the circuit breaker stops the amplification that caused repeated \"quota exhausted\" failures to keep recurring."
+  },
+  {
+   "file": "test/quotaEfficiencyE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "Proves the actual call budget of a real audit against a *succeeding* fake Gemini endpoint - not the always-429 fake server used by quotaBreakerE2E.test.ts."
+  },
+  {
+   "file": "test/searchedAnswer.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The searched-or-not rule (src/searchedAnswer.ts) and the sentences that go with it (src/errors.ts)."
+  },
+  {
+   "file": "test/unsearchedE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P2)"
+  },
+  {
+   "file": "test/reportCompare.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "compareReports (src/reportCompare.ts, docs/PLAN_2026-11.md P3), pure"
+  },
+  {
+   "file": "test/rerunE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "Run an audit again, end to end, on the real built server and a fake Gemini that counts hits (docs/PLAN_2026-11.md P3)"
+  },
+  {
+   "file": "test/retrySpendE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End-to-end proof that a retried request costs what one request costs, and that a transient per-minute rate limit no longer destroys an audit."
+  },
+  {
+   "file": "test/mvpHardeningE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End-to-end proof, against the real built server (dist/server.cjs) and a fake Gemini endpoint, of the MVP-hardening fixes."
+  },
+  {
+   "file": "test/diagnostics.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "The failure diagnostics themselves are tested, because a diagnostic nobody checks can quietly stop working just when it is needed (TECH_DEBT 2.14)"
+  },
+  {
+   "file": "test/narrativeAttributionE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end, against the real built server and a fake Gemini"
+  },
+  {
+   "file": "test/reportGuardE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end, against the real built server and a fake Gemini"
+  },
+  {
+   "file": "test/auditGoldenE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "A golden-report test for the audit pipeline, at the boundary"
+  },
+  {
+   "file": "test/auditSteps.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure checks for the step helpers (`src/auditSteps.ts`)"
+  },
+  {
+   "file": "test/recentTrouble.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Pure checks for the \"recent trouble\" sentence and verdict the deep readiness check reports (`src/recentTrouble.ts`)"
+  },
+  {
+   "file": "test/readinessLine.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "How the smoke script reads each entry of the deep readiness answer (scripts/readinessLine.mjs)"
+  },
+  {
+   "file": "test/citedOnlyUi.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The executive summary card, rendered to markup"
+  },
+  {
+   "file": "test/auditStepsE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end, against the real built server, a fake Gemini that counts real HTTP hits, and the real SQLite file"
+  },
+  {
+   "file": "test/auditClientDriverE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end, against the real built server and a fake Gemini that counts real HTTP hits"
+  },
+  {
+   "file": "test/auditResumeE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end: an audit that was running when the server died is RESUMED on a durable store, from the step it was on, and every repeated paid call is counted and recorded (docs/PLAN_STEP_E.md, slice S5)."
+  },
+  {
+   "file": "test/postgresE2E.test.ts",
+   "runner": "tsx",
+   "tier": "postgres",
+   "needsBuild": true,
+   "what": "End to end: the real built server on a real PostgreSQL database, the way two Vercel instances would share one."
+  },
+  {
+   "file": "test/spendGuardE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end, against the real built server and a fake Gemini"
+  },
+  {
+   "file": "test/foundationE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End-to-end proof of the foundation"
+  },
+  {
+   "file": "test/googleAuthE2E.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "End to end: Sign in with Google against the real built server, with a fake Google (a local keys server and tokens signed with its key)."
+  },
+  {
+   "file": "test/uiSmoke.test.ts",
+   "runner": "tsx",
+   "tier": "browser",
+   "needsBuild": true,
+   "what": "Drives the real built app in a real browser (Chromium via Playwright) against the real built server and a fake Gemini at the far end - the way a person uses it."
+  },
+  {
+   "file": "test/rerunUi.test.ts",
+   "runner": "tsx",
+   "tier": "browser",
+   "needsBuild": true,
+   "what": "\"Run again\" and \"Since the previous run\" in a real browser, desktop and phone, on the real built server with a fake Gemini that changes its answer between the two runs (docs/PLAN_2026-11.md P3)."
+  },
+  {
+   "file": "test/googleLoginUi.test.ts",
+   "runner": "tsx",
+   "tier": "browser",
+   "needsBuild": true,
+   "what": "The login page with Google, in a real browser (Chromium via Playwright) against the real built server."
+  },
+  {
+   "file": "test/lookupAndBlankDomainE2E.test.ts",
+   "runner": "tsx",
+   "tier": "browser",
+   "needsBuild": true,
+   "what": "In the real browser against the real server"
+  },
+  {
+   "file": "test/discardedClaimsUi.test.ts",
+   "runner": "tsx",
+   "tier": "browser",
+   "needsBuild": true,
+   "what": "In a real browser: when the analysis reports inaccuracy claims that cannot be tied to a captured answer, the Inaccuracies tab must not show the green \"No inaccuracies flagged\" panel as if nothing had..."
+  },
+  {
+   "file": "test/vercelEsmImports.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "Regression test for the actual production bug this proves it would have caught"
+  },
+  {
+   "file": "test/vercelServerless.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "Proof that the Vercel serverless entry point (api/index.ts) actually answers requests, and that the ordinary Render/local path is unchanged."
+  },
+  {
+   "file": "test/liveCommit.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "\"Which commit is live?\" (item G1.7 of docs/ENGINEERING_BACKLOG.md)"
+  },
+  {
+   "file": "test/modelCalendar.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The model calendar (item G1.9 of docs/ENGINEERING_BACKLOG.md)"
+  },
+  {
+   "file": "test/contract.test.ts",
+   "runner": "tsx",
+   "tier": "server",
+   "needsBuild": true,
+   "what": "Contract tests: boot the real built server and assert the guarantees the product makes to a user."
+  },
+  {
+   "file": "test/branchStatus.test.sh",
+   "runner": "bash",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Exercises scripts/branch-status.sh in a THROWAWAY repository (a bare \"origin\" and..."
+  },
+  {
+   "file": "test/shipSkill.test.sh",
+   "runner": "bash",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The ship skill (.claude/skills/ship/SKILL.md) is only useful if it stays true"
+  },
+  {
+   "file": "test/reviewAgents.test.sh",
+   "runner": "bash",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The owner's rule (docs/OWNER_DIRECTIVES.md D-11)"
+  },
+  {
+   "file": "test/dependencyLayout.test.sh",
+   "runner": "bash",
+   "tier": "unit",
+   "needsBuild": true,
+   "what": "Guards two facts of the dependency layout (item G1.8 of docs/ENGINEERING_BACKLOG.md)",
+   "env": {
+    "REQUIRE_BUILD": "1"
+   }
+  },
+  {
+   "file": "test/manifest.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The manifest lists every test file; the runner (real child processes against fake tests): failures, early-exit FAIL lines, skips, tiers, --changed; CLAUDE.md list is up to date."
+  },
+  {
+   "file": "test/claudeHooks.test.sh",
+   "runner": "bash",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Proves the session hooks in .claude/: the guard against git add -A, the stop hook, the session-start hook, the allow-list."
+  }
+ ]
+}
