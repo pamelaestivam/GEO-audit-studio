@@ -401,6 +401,7 @@ test is in `docs/TEST_GUIDE.md`):
 - `test/reviewAgents.test.sh` (unit) — The owner's rule (docs/OWNER_DIRECTIVES.md D-11)
 - `test/dependencyLayout.test.sh` (unit, needs dist/) — Guards two facts of the dependency layout (item G1.8 of docs/ENGINEERING_BACKLOG.md)
 - `test/manifest.test.ts` (unit) — The manifest lists every test file; the runner (real child processes against fake tests): failures, early-exit FAIL lines, skips, tiers, --changed; CLAUDE.md list is up to date.
+- `test/claudeHooks.test.sh` (unit) — Proves the session hooks in .claude/: the guard against git add -A, the stop hook, the session-start hook, the allow-list.
 <!-- tests:end -->
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in

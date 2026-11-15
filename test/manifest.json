@@ -416,6 +416,13 @@
    "tier": "unit",
    "needsBuild": false,
    "what": "The manifest lists every test file; the runner (real child processes against fake tests): failures, early-exit FAIL lines, skips, tiers, --changed; CLAUDE.md list is up to date."
+  },
+  {
+   "file": "test/claudeHooks.test.sh",
+   "runner": "bash",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "Proves the session hooks in .claude/: the guard against git add -A, the stop hook, the session-start hook, the allow-list."
   }
  ]
 }
