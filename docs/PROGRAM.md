@@ -177,6 +177,23 @@ request, which older models are believed to refuse; unverified, and they probabl
 Typing the details yourself always works. If you would rather wait for a measurement first, skip step 2 until the probe has run (O-8,
 written when `docs/PLAN_2026-11.md` P1 is merged).
 
+**O-8. Give the engine probe its keys, then ask the assistant to run it (about 10 minutes).** *Why only you:* a session cannot create
+repository secrets, and creating a key needs your own login at each provider. The probe (`scripts/engine-probe.mjs`, workflow
+`engine-probe`) asks real engines a few harmless questions ("What are the best poke restaurants in Austin, Texas?") and prints what came
+back, so we learn whether free web search really works for each. Each run makes at most 20 free calls. **The workflow log is public** (the
+repository is public): it shows the questions and the engines' answers, never a key (the script removes keys and project numbers before
+printing, and a test proves it). Labels below are unverified (the assistant cannot open these sites).
+1. Gemini (the one that matters most): open `https://aistudio.google.com/apikey` and use the same free key that is on Vercel, or create
+   one in a project with **no billing account**. Copy it.
+2. On GitHub open the repository, **Settings**, **Secrets and variables**, **Actions**, **New repository secret**. Name:
+   `PROBE_GEMINI_API_KEY`. Value: the key. **Add secret**.
+3. Optional, same screen: a free Mistral key (`https://console.mistral.ai`, create an API key) as `PROBE_MISTRAL_API_KEY`, and a free Groq
+   key (`https://console.groq.com/keys`) as `PROBE_GROQ_API_KEY`. **If either site asks for a card, stop and tell the assistant**
+   (the directive is $0).
+4. Tell the assistant "the probe keys are in". It starts the workflow (or you can: **Actions**, **Engine probe**, **Run workflow**) and
+   writes the results into `docs/INSIGHTS.md`. Until then every run prints SKIP lines, which is a valid result.
+Why it matters: P2's choice of model (`docs/PLAN_2026-11.md` P2 item 4) is made only on this measurement.
+
 ## 4. Verification ledger (what has actually been checked, and what has not)
 
 | Claim | Status | How / date |

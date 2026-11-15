@@ -1,0 +1,44 @@
+name: Engine probe
+
+# What do real answer engines actually return? Nothing a real engine returns has been checked in this repository
+# (docs/PROGRAM.md row 10). The assistant's workspace cannot reach most provider hosts, but a runner here can, and the
+# assistant can start this workflow and read its log. By hand only: never on a push, a pull request or a schedule, so
+# it can never spend anything by itself. Each run makes at most 20 calls on free keys (scripts/engine-probe.mjs refuses
+# a bigger run). THE LOG IS PUBLIC: the script removes every key and any project number from what it prints, and no
+# artifact is uploaded. Owner steps: docs/PROGRAM.md O-8. A candidate with no secret prints a SKIP line.
+on:
+  workflow_dispatch:
+    inputs:
+      questions:
+        description: 'Questions per search test (1 to 3)'
+        required: false
+        default: '2'
+      candidates:
+        description: 'all, or a comma list of gemini, mistral, groq'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROBE_GEMINI_API_KEY: ${{ secrets.PROBE_GEMINI_API_KEY }}
+      PROBE_MISTRAL_API_KEY: ${{ secrets.PROBE_MISTRAL_API_KEY }}
+      PROBE_GROQ_API_KEY: ${{ secrets.PROBE_GROQ_API_KEY }}
+      PROBE_QUESTIONS: ${{ inputs.questions }}
+      PROBE_CANDIDATES: ${{ inputs.candidates }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # same pin as the confidenceHigh repository
+        with:
+          node-version-file: .nvmrc
+      - name: Ask the engines
+        run: node scripts/engine-probe.mjs --questions "${PROBE_QUESTIONS:-2}" --candidates "${PROBE_CANDIDATES:-all}"
