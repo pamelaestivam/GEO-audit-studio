@@ -13,7 +13,7 @@ unsearched answer is not counted, the readiness check asks what an audit asks, a
 3), P3 Run again and "Since the previous run" (PR #62). **Nothing a real engine returns has been measured yet**: the probe ran twice
 (runs 43669524263 and 43673980851) and printed SKIP for every provider because the repository secrets are not set. **The default model
 was therefore NOT changed** (`gemini-3.6-flash`, which Google lists as having no free search); the owner's lever is `GEMINI_MODEL` (O-7).
-**What waits on the owner:** O-9 (turn on Dependabot alerts and security updates, 2 minutes), O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
+**What waits on the owner:** O-10 (OpenAI default model ends 2026-12-11; no audit is affected while paid engines are off), O-9 (turn on Dependabot alerts and security updates, 2 minutes), O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
 and O-6 (Google sign-in) are unchanged. **Next for the assistant, once O-8 is done:** start the `engine-probe` workflow, write the real
 results into `docs/INSIGHTS.md` (MEASURED) and the ledger below, save one scrubbed real reply per provider under `test/fixtures/real/`, then
 decide the default model (`docs/PLAN_2026-11.md` P2 item 4, which was deliberately left) and write the plan for a second engine
@@ -204,6 +204,8 @@ Why it matters: P2's choice of model (`docs/PLAN_2026-11.md` P2 item 4) is made 
 
 
 **O-9. Turn on Dependabot alerts and security updates (about 2 minutes; assistant cannot: a configuration file cannot switch it on, and the repository reports "Dependabot alerts are disabled").** *Why:* `.github/dependabot.yml` now has an npm entry for security updates, but until these two settings are on it opens nothing, and an advisory is again seen only when CI goes red (I-22). 1. Open https://github.com/pamelaestivam/GEO-audit-studio/settings/security_analysis. 2. Next to "Dependabot alerts" press Enable. 3. Next to "Dependabot security updates" press Enable. 4. Tell the assistant "O-9 done"; the assistant cannot read this setting back through its tools, so it will say it is unverified until the first Dependabot pull request or alert appears.
+
+**O-10. Decide what to do about the ChatGPT default model `gpt-5`, which OpenAI lists as deprecated with shutdown on 2026-12-11 (read 2026-11-15; `src/modelCalendar.ts`).** *Why it waits on you:* the engine is paid and switched off ($0 directive), so no audit is affected today; a replacement id changes what a paid audit would cost and measure, which is your call. 1. Do nothing now if you will not turn on paid engines before 2026-12-11: the weekly model-calendar check will say so each Monday until the id is changed. 2. Or tell the assistant "change the OpenAI default"; it will read OpenAI's page again, pick the replacement the page names (it listed `gpt-6.1-sol`; whether that id works with the Responses API search tool was NOT checked), change `src/providers.ts` and the calendar together, and ask you before anything is spent.
 ## 4. Verification ledger (what has actually been checked, and what has not)
 
 | Claim | Status | How / date |

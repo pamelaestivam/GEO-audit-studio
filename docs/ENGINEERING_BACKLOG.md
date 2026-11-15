@@ -27,7 +27,7 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 | G1.6 CI in parallel under the name `test` | not started | | |
 | G1.7 Live check proves the live commit | not started | | |
 | G1.8 Dependabot for npm; build tools to `devDependencies` | in review (the Dependabot half is NOT effective until the owner does `docs/PROGRAM.md` O-9) | #69 | `test/dependencyLayout.test.sh`; full `npm run verify` 2,481 checks, 0 failed after a clean `npm ci`; production install check passes (part of the verify); the Vercel preview build is the check on the pull request |
-| G1.9 Model calendar | not started | | |
+| G1.9 Model calendar | in review | #71 | `test/modelCalendar.test.ts` (the rule on fixed dates at the 30 and 90 day edges; the data agrees with the ids `src/providers.ts` sends); `scripts/model-calendar-check.ts` against today finds one thing due: the ChatGPT default `gpt-5` ends 2026-12-11 (O-10). The real-date check runs weekly in `model-calendar.yml`, deliberately NOT in `npm test` (a vendor date would turn every pull request red) |
 | G2.1 to G2.8 | not started (G2.6 held by `docs/DECISIONS.md` 2026-11-14) | | |
 | G3 | not built; no design notes asked for | | |
 
