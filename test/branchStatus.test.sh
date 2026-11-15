@@ -164,6 +164,27 @@ check "the fixture is a shallow clone of a branch that still exists" "$(git -C "
 out=$(cd "$tmp/shallow2" && bash "$script" 2>/dev/null)
 check "a merge older than the shallow history is found once the history is fetched" "$out" "MERGED (merge commit"
 
+# A second run on the same single-branch clone follows the remote: a merge and a deletion made between the runs are seen.
+git clone -q --depth 1 --branch claude/old "file://$tmp/origin.git" "$tmp/again" 2>/dev/null
+(cd "$tmp/again" && bash "$script" >/dev/null 2>&1)
+g checkout -q main; g checkout -q -b claude/later; g commit -q --allow-empty -m "later work"; g push -q origin claude/later 2>/dev/null
+g checkout -q main; g merge -q --no-ff -m "Merge pull request #4 from owner/claude/later" claude/later; g push -q origin main 2>/dev/null
+git -C "$tmp/origin.git" branch -q -D claude/old
+out=$(cd "$tmp/again" && bash "$script" 2>/dev/null)
+check "a later run sees a branch merged after the first run" "$out" "claude/later"
+absent "...and no longer lists a branch deleted on the remote" "$out" "claude/old,"
+absent "...(by name, alone either)" "$(printf '%s' "$out" | grep '^Stale:' | sed 's/claude\/later//')" "claude/old"
+
+# A remote that HANGS costs one timeout, not two (the deepening is skipped once the first fetch has failed).
+git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/hang" 2>/dev/null
+git -C "$tmp/hang" remote set-url origin "ssh://example.invalid/x.git"
+printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$tmp/hang.sh"; chmod +x "$tmp/hang.sh"
+t0=$(date +%s)
+out=$(cd "$tmp/hang" && GIT_SSH_COMMAND="$tmp/hang.sh" STATUS_FETCH_TIMEOUT=3 STATUS_DEEPEN_TIMEOUT=20 bash "$script" 2>/dev/null)
+el=$(( $(date +%s) - t0 ))
+if [ "$el" -lt 10 ]; then echo "pass  a hanging remote costs one bounded wait, not two (${el}s)"; else echo "FAIL  hanging remote took ${el}s"; failures=$((failures + 1)); fi
+check "...and the line still names the command" "$out" "run: git fetch --unshallow origin"
+
 # A remote that fails is not tried twice: the first fetch failing skips the deepening and the line still names the command.
 git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/shallow4" 2>/dev/null
 git -C "$tmp/shallow4" remote set-url origin "$tmp/does-not-exist.git"

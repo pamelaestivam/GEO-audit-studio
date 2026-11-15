@@ -23,7 +23,7 @@
 # requests or CI (no GitHub access from a script): if a PR is open or CI is red,
 # add that to the first line yourself.
 #
-# Overrides, for tests: STATUS_BASE (default origin/main), STATUS_NO_DEEPEN=1 (do not unshallow).
+# Overrides, for tests: STATUS_BASE (default origin/main), STATUS_NO_DEEPEN=1 (do not unshallow), STATUS_FETCH_TIMEOUT and STATUS_DEEPEN_TIMEOUT (seconds).
 set -u
 
 base_ref="${STATUS_BASE:-origin/main}"
@@ -33,7 +33,7 @@ base_branch="${base_ref#*/}"
 fetch_note=""
 # --prune only removes remote-tracking refs for branches deleted on the remote (so the Stale
 # line clears once "Automatically delete head branches" is on). No prompts, bounded time.
-if ! GIT_TERMINAL_PROMPT=0 timeout 60 git fetch -q --prune "$remote" 2>/dev/null; then
+if ! GIT_TERMINAL_PROMPT=0 timeout "${STATUS_FETCH_TIMEOUT:-60}" git fetch -q --prune "$remote" "+refs/heads/*:refs/remotes/$remote/*" 2>/dev/null; then
   echo "warning: could not fetch $remote; the status below may be stale" >&2
   fetch_note=" | (fetch failed: may be stale)"
 fi
@@ -45,7 +45,7 @@ fi
 if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
   deepen_err=""
   if [ "${STATUS_NO_DEEPEN:-0}" != "1" ] && [ -z "$fetch_note" ]; then
-    deepen_err=$(GIT_TERMINAL_PROMPT=0 timeout 300 git fetch -q --unshallow "$remote" "+refs/heads/*:refs/remotes/$remote/*" 2>&1 >/dev/null | head -n 2 | tr '\n' ' ')
+    deepen_err=$(GIT_TERMINAL_PROMPT=0 timeout "${STATUS_DEEPEN_TIMEOUT:-300}" git fetch -q --unshallow "$remote" "+refs/heads/*:refs/remotes/$remote/*" 2>&1 >/dev/null | head -n 2 | tr '\n' ' ')
   fi
   if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
     echo "Branch: unknown | this is a shallow clone and the history could not be fetched${deepen_err:+ ($deepen_err)}; run: git fetch --unshallow $remote | status unknown"
