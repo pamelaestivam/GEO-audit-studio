@@ -81,17 +81,12 @@ jobs:
           else
             echo "::warning title=Signed-in checks skipped::The repository secrets LIVE_CHECK_EMAIL and LIVE_CHECK_ACCESS_CODE are not set, so the live engine call and the recent-trouble check (failed audits and incidents) did NOT run. See docs/PROGRAM.md O-3."
           fi
-          # The commit the live site must run: the head of main, read from the repository now (not from this workflow's own
-          # trigger, which can be older). If it cannot be read the check says so instead of skipping the comparison.
-          expect=()
-          # Triggered by a finished deployment: that deployment's own commit (main may already be a commit ahead while its
-          # deployment is still building, which is not a fault). Daily or by hand: the head of main.
-          head="${DEPLOYED_SHA:-$(git ls-remote origin refs/heads/main | cut -f1)}"
-          if [ -n "$head" ]; then
-            expect=(--expect-commit "$head")
-          else
-            echo "::warning title=Live commit not compared::The head of main could not be read, so the check did not prove which commit is live."
-          fi
+          # The commit the live site must run. Triggered by a finished deployment: that deployment's own commit (main may
+          # already be a commit ahead while its deployment is still building, which is not a fault). Daily or by hand: the
+          # head of main, read from the remote now. If it cannot be read the value is empty and the smoke script FAILS with
+          # a sentence saying so, rather than the comparison being skipped.
+          head="${DEPLOYED_SHA:-$(git ls-remote origin refs/heads/main | awk '$2=="refs/heads/main"{print $1}')}"
+          expect=(--expect-commit "$head")
           for attempt in 1 2 3; do
             echo "::group::attempt $attempt against $LIVE_URL"
             node scripts/smoke.mjs "$LIVE_URL" --warn-non-durable "${expect[@]}" "${signin[@]}" 2>&1 | tee live.log

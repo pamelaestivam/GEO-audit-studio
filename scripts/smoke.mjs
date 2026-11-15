@@ -36,7 +36,9 @@ const email = flag('email');
 const warnNonDurable = args.includes('--warn-non-durable');
 const code = flag('code');
 // `--expect-commit <sha>`: fail unless /api/health says the site runs that commit (the live check passes the head of main).
-const expectCommit = flag('expect-commit');
+const expectArg = args.find((a) => a === '--expect-commit' || a.startsWith('--expect-commit='));
+// The flag given with no value, or as --expect-commit=<sha>, still runs the check (a missing value is a FAIL, never a skipped check).
+const expectCommit = expectArg === undefined ? undefined : expectArg.includes('=') ? expectArg.slice(expectArg.indexOf('=') + 1) : (flag('expect-commit') && !flag('expect-commit').startsWith('--') ? flag('expect-commit') : '');
 
 if (!base) {
   console.error('Usage: node scripts/smoke.mjs <https://base-url> [--email you@example.com --code ACCESS_CODE]');

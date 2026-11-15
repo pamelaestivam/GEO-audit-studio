@@ -26,6 +26,10 @@ const none = commitVerdict(undefined, A);
 check('a site that reports no commit is a failure, said as "could not be compared", never a match', !none.ok && /could not be compared/.test(none.sentence), none.sentence);
 check('an expected value that is not a commit id is refused with a sentence', !commitVerdict(A, 'main').ok && /not a commit id/.test(commitVerdict(A, 'main').sentence));
 check('a too-short id is refused (a 3-character prefix would match almost anything)', !commitVerdict(A, 'aaa').ok);
+check('a REPORTED commit that is not a commit id never matches (one character, a number, an array, garbage after a sha)', ['a', 'ab', 'abc', 123, [A.slice(0, 7)], A + 'extra', true].every((r) => !commitVerdict(r as any, A).ok));
+check('...and the sentence says the site reported something that is not a commit id', /not a commit id/.test(commitVerdict('a', A).sentence));
+check('no expected commit at all says so in a sentence', /No expected commit/.test(commitVerdict(A, '').sentence) && /No expected commit/.test(commitVerdict(A, undefined).sentence));
+check('the sentence for a different commit does not claim the site is behind (it cannot know the order)', /cannot tell which/.test(behind.sentence) && !/is not running the latest/.test(behind.sentence));
 
 // ---- the script, as a real process, against a stand-in site
 const ports = new PortRange(4600, 300);
@@ -44,18 +48,24 @@ function smoke(base: string, extra: string[]) {
     child.on('exit', (code) => resolve({ code, out }));
   });
 }
-for (const [label, reported, expected, wantPass] of [
-  ['the site runs the expected commit', A, A, true],
-  ['the site is behind main', A, B, false],
-  ['the site reports no commit', undefined, A, false],
+// The rest of smoke.mjs fails against a stand-in, so the exit code cannot show the commit check: compare the count of FAIL lines
+// with and without the flag instead (the commit check must add exactly one, or none when it passes).
+const failCount = (out: string) => out.split('\n').filter((l) => l.startsWith('FAIL')).length;
+for (const [label, reported, expected, wantPass, sentence] of [
+  ['the site runs the expected commit', A, A, true, /./],
+  ['the site is behind main', A, B, false, /not the expected bbbbbbb/],
+  ['the site reports no commit', undefined, A, false, /does not say which commit/],
+  ['the site reports garbage as its commit', 'a', A, false, /not a commit id/],
+  ['--expect-commit has no value', A, '', false, /No expected commit/],
 ] as const) {
   const s = await site(reported);
-  const r = await smoke(s.base, ['--expect-commit', expected]);
+  const withFlag = await smoke(s.base, expected === '' ? ['--expect-commit'] : ['--expect-commit', expected]);
+  const without = await smoke(s.base, []);
   s.close();
-  const line = r.out.split('\n').find((l) => l.includes('the live site runs the expected commit')) || '';
-  check(`${label}: the commit line is ${wantPass ? 'pass' : 'FAIL'}`, line.startsWith(wantPass ? 'pass' : 'FAIL'), r.out.slice(0, 600));
-  if (!wantPass) check(`${label}: the failing line carries the sentence`, /could not be compared|not running the latest/.test(r.out), r.out.slice(0, 600));
-  if (!wantPass) check(`${label}: the smoke run exits non-zero`, r.code !== 0);
+  const line = withFlag.out.split('\n').find((l) => l.includes('the live site runs the expected commit')) || '';
+  check(`${label}: the commit line is ${wantPass ? 'pass' : 'FAIL'}`, line.startsWith(wantPass ? 'pass' : 'FAIL'), withFlag.out.slice(0, 600));
+  check(`${label}: the flag adds ${wantPass ? 'no failure' : 'exactly one failure'} to the run`, failCount(withFlag.out) - failCount(without.out) === (wantPass ? 0 : 1), `${failCount(withFlag.out)} vs ${failCount(without.out)}`);
+  if (!wantPass) check(`${label}: the failing line carries its own sentence`, sentence.test(withFlag.out), withFlag.out.slice(0, 600));
 }
 {
   const s = await site(A);
@@ -67,7 +77,8 @@ for (const [label, reported, expected, wantPass] of [
 // ---- the workflow passes it
 const wf = readFileSync('.github/workflows/live-check.yml', 'utf8');
 check('live-check.yml passes --expect-commit to the smoke script', /--expect-commit "\$head"/.test(wf) && /smoke\.mjs "\$LIVE_URL"[^\n]*"\$\{expect\[@\]\}"/.test(wf));
-check('...from the finished deployment, else the head of main read from the remote', /DEPLOYED_SHA:-\$\(git ls-remote origin refs\/heads\/main/.test(wf));
+check('...from the finished deployment (the env line is set from the event), else the head of main read from the remote', /DEPLOYED_SHA: \$\{\{ github\.event\.deployment\.sha \}\}/.test(wf) && /DEPLOYED_SHA:-\$\(git ls-remote origin refs\/heads\/main/.test(wf));
+check('...and an unreadable head fails the check instead of skipping it (the flag is always passed)', /expect=\(--expect-commit "\$head"\)/.test(wf) && !/if \[ -n "\$head" \]/.test(wf));
 
 console.log(failures === 0 ? '\nAll live-commit checks passed.' : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
