@@ -13,7 +13,7 @@ unsearched answer is not counted, the readiness check asks what an audit asks, a
 3), P3 Run again and "Since the previous run" (PR #62). **Nothing a real engine returns has been measured yet**: the probe ran twice
 (runs 43669524263 and 43673980851) and printed SKIP for every provider because the repository secrets are not set. **The default model
 was therefore NOT changed** (`gemini-3.6-flash`, which Google lists as having no free search); the owner's lever is `GEMINI_MODEL` (O-7).
-**What waits on the owner:** O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
+**What waits on the owner:** O-9 (turn on Dependabot alerts and security updates, 2 minutes), O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
 and O-6 (Google sign-in) are unchanged. **Next for the assistant, once O-8 is done:** start the `engine-probe` workflow, write the real
 results into `docs/INSIGHTS.md` (MEASURED) and the ledger below, save one scrubbed real reply per provider under `test/fixtures/real/`, then
 decide the default model (`docs/PLAN_2026-11.md` P2 item 4, which was deliberately left) and write the plan for a second engine
@@ -73,7 +73,7 @@ tell the owner or a client that it is dependable.
 | 14 | The engine probe: real replies from real engines, read from a workflow log (`docs/PLAN_2026-11.md` P1) | **built and merged** (PR #60, 4b17f3e); the first two runs (43669524263, 43673980851) printed SKIP for every provider (I-42) | owner action O-8: add `PROBE_GEMINI_API_KEY` (and optionally Mistral and Groq keys), then ask the assistant to start the workflow |
 | 15 | Run an audit again and show what changed (`docs/PLAN_2026-11.md` P3) | **done**: merged PR #62 (af73e71), 2026-11-15; CI green (run on head de37da1, PR #62 checks), EVAL PM SHIP 93 (recorded in the PR description), review findings fixed; 2,457 checks in the full verify; proved on the built server with a fake Gemini and in Chromium desktop and phone. NOT verified: real engines, a live URL | nothing |
 | 16 | A second searching engine; the written analysis off Gemini (strategy steps 4 and 5) | blocked | what the probe (row 14) measures on free keys |
-| 17 | Engineering backlog: tool chain, architecture, coding (`docs/ENGINEERING_BACKLOG.md`, three groups) | **in progress** (session of 2026-11-15; rows 13 to 15 were merged first). The per-item state is the table at the top of `docs/ENGINEERING_BACKLOG.md`; G1.1 merged (#65, 61fd357); G1.3 (the `ship` skill) merged (#67, 2a1a589); G1.4 (reviewers on another model) is in pull request #68 | the owner: G1.2 (the session's own settings) merges only on their yes in conversation; G2.6 (slice S6) is held |
+| 17 | Engineering backlog: tool chain, architecture, coding (`docs/ENGINEERING_BACKLOG.md`, three groups) | **in progress** (session of 2026-11-15; rows 13 to 15 were merged first). The per-item state is the table at the top of `docs/ENGINEERING_BACKLOG.md`; G1.1 merged (#65, 61fd357); G1.3 (the `ship` skill) merged (#67, 2a1a589); G1.4 (reviewers on another model) merged (#68, a29d152); G1.8 is in pull request #69 (the Dependabot half waits on O-9) | the owner: G1.2 (the session's own settings) merges only on their yes in conversation; G2.6 (slice S6) is held |
 
 **Stale remote branches:** merged branches are not deleted automatically (the session
 cannot delete them). `bash scripts/branch-status.sh` lists them; turning on GitHub's
@@ -202,6 +202,8 @@ printing, and a test proves it). Labels below are unverified (the assistant cann
    writes the results into `docs/INSIGHTS.md`. Until then every run prints SKIP lines, which is a valid result.
 Why it matters: P2's choice of model (`docs/PLAN_2026-11.md` P2 item 4) is made only on this measurement.
 
+
+**O-9. Turn on Dependabot alerts and security updates (about 2 minutes; assistant cannot: a configuration file cannot switch it on, and the repository reports "Dependabot alerts are disabled").** *Why:* `.github/dependabot.yml` now has an npm entry for security updates, but until these two settings are on it opens nothing, and an advisory is again seen only when CI goes red (I-22). 1. Open https://github.com/pamelaestivam/GEO-audit-studio/settings/security_analysis. 2. Next to "Dependabot alerts" press Enable. 3. Next to "Dependabot security updates" press Enable. 4. Tell the assistant "O-9 done"; the assistant cannot read this setting back through its tools, so it will say it is unverified until the first Dependabot pull request or alert appears.
 ## 4. Verification ledger (what has actually been checked, and what has not)
 
 | Claim | Status | How / date |
