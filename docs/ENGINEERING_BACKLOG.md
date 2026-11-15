@@ -25,7 +25,7 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 | G1.4 Reviewers on a different model | in review | #68 | `test/reviewAgents.test.sh`; the pinned model of each review seat is `opus`, the author's session model is `sonnet` |
 | G1.5 Test runner and shared harness | not started | | |
 | G1.6 CI in parallel under the name `test` | not started | | |
-| G1.7 Live check proves the live commit | not started | | |
+| G1.7 Live check proves the live commit | in review | #70 | `test/liveCommit.test.ts`: the pure rule and `scripts/smoke.mjs --expect-commit` as a real process against a stand-in site (match, behind, no commit reported, flag absent) plus the workflow wiring; three deliberate breaks fail it |
 | G1.8 Dependabot for npm; build tools to `devDependencies` | not started | | |
 | G1.9 Model calendar | not started | | |
 | G2.1 to G2.8 | not started (G2.6 held by `docs/DECISIONS.md` 2026-11-14) | | |

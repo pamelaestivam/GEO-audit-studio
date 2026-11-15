@@ -1209,6 +1209,10 @@ and labelled "Not measured". Showing a real figure needs a keyword data
 provider (Ahrefs, Semrush, Google Keyword Planner) — worth doing, since buyers
 expect it, but it must come from a source rather than a model.
 
+### 2.21 The live-commit check has only been run against a stand-in (low)
+
+`scripts/smoke.mjs --expect-commit` (G1.7) is tested against a stand-in site and the workflow wiring is checked as text. It has not run against the real Vercel site, so two things are unconfirmed: that `/api/health` reports `VERCEL_GIT_COMMIT_SHA` in production (the daily check of 2026-11-14 printed no commit line), and that `github.event.deployment.sha` is set for the deployment-triggered run. If either is wrong the check FAILS with a sentence rather than passing; read the first run's log and fix the cause (`docs/ENGINEERING_BACKLOG.md` G1.7).
+
 ## 3. Expansion — worth building next
 
 Roughly in order of value per unit of effort.
