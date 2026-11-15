@@ -41,7 +41,7 @@ wait again. Not green means not merged.
 
 1. Run the `adversarial-reviewer` agent (`.claude/agents/`), briefed read-only: it may experiment only in a `git init` inside `mktemp -d`,
    never in the shared repository (hard rule 9). Give it the pull request number, the branch, and the claim of what behaviour must not move.
-2. Its model should differ from the author's (item G1.4 of `docs/ENGINEERING_BACKLOG.md`). The agent definitions pin a model; if the author is on that same model, override it for that call with the Agent tool's `model` parameter and say so in the pull request.
+2. Every agent runs on Sonnet (the owner's rule, `docs/OWNER_DIRECTIVES.md` D-11): the agent files pin it, and you never pass another `model` when starting an agent unless the owner said so in the conversation.
 3. After EVERY agent run (reviewer, `eval-pm`, `ux-tourist`): `git remote get-url origin` must be the github.com URL and `git log origin/main..main` must be empty (hard rule 9).
 4. A review that was cut short (a limit, a cap, an interruption) is restarted from the start, never accepted as final (hard rule 5).
 5. Fix every CONFIRMED finding with a check that failed before the fix; say why for any you reject. Re-run the suite and CI after the fixes.

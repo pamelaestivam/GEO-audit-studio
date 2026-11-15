@@ -233,18 +233,13 @@ touching anything, so you know whether a failure is yours.
 7. PR using the template, CI green, merge, delete the branch, confirm `main`.
 8. Update `TECH_DEBT.md` / `docs/DECISIONS.md` / docs in the same change.
 
-**Reviewers run on a different model from the author.** A review that is the author's own model re-reading its own work shares its blind
-spots (`docs/INSIGHTS.md` I-6). The pairing is written down here and set in the agents' definitions (`model:` in `.claude/agents/`):
-
-| Seat | Model pinned in its definition | Author models it is independent of |
-|---|---|---|
-| `adversarial-reviewer` | `opus` | sessions authored on Sonnet (37 of the last 60 commits on `main` on 2026-11-15 carry Sonnet 5.5 trailers; 8 carry Fable 5.2) |
-| `eval-pm` | `opus` | sessions authored on Sonnet |
-| `ux-tourist` | `sonnet` (it drives a browser and reports; it does not judge the code) | not a review seat |
-
-**The rule in one line:** the reviewer's model must differ from every model named in the pull request's `Co-Authored-By` trailers; if the trailers cannot be read, override to a model different from your own and say which in the review section. For a Fable author use `opus`. If a session is itself authored on Opus, that session must override the model when it starts the reviewer (the Agent tool's `model`
-parameter, `sonnet`), and say so in the pull request's review section. `test/reviewAgents.test.sh` fails when either review seat has no
-pinned model, pins `inherit` or the author's model, or an unknown name. Whether a reviewer on another model finds more is not measured (I-50); the claim is only that it is not the same reader.
+**Every agent runs on Sonnet** (the owner's rule, `docs/OWNER_DIRECTIVES.md` D-11, 2026-11-15). `adversarial-reviewer`, `eval-pm` and
+`ux-tourist` pin `model: sonnet` in `.claude/agents/`, and a session never passes another `model` when it starts an agent. This replaces
+the short-lived rule of the same day that reviewers must differ from the author's model (PR #68): independence now comes from the fresh
+context, the read-only brief, the deliberate-break checks and the EVAL PM score, not from a different model. That costs something
+the earlier rule was meant to buy: a reviewer on the author's own model shares its blind spots (`docs/INSIGHTS.md` I-6; the one measurement
+we have, I-50, is that the Opus reviews of 2026-11-15 found real defects in every pull request, and that nobody measured whether Sonnet would
+have). `test/reviewAgents.test.sh` fails when either review seat does not pin `sonnet`.
 
 **The `ux-tourist` agent** drives the built app in a browser and reports what
 looks untrue, inert or malformed. Use it after any UI-visible change; it found

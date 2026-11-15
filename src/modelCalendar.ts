@@ -27,6 +27,8 @@ export interface ModelCalendarEntry {
   freeSearch: 'yes' | 'no' | 'not applicable' | 'unverified';
   /** Anything the reader could not confirm. Never left out to look cleaner. */
   unverified: string;
+  /** False when the engine is switched off by the owner's decision (no paid engines, 2026-11-15): an end date is then a note, not an alarm. */
+  inUse: boolean;
 }
 
 export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
@@ -39,6 +41,7 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
     endDate: null,
     freeSearch: 'no',
     unverified: 'A "500 RPD free" figure on the same pricing page belongs to Gemini 2.5 Flash, not to this model, and is not used; the account-level quota is visible only in the owner\'s Google console.',
+    inUse: true,
   },
   {
     engine: 'Claude',
@@ -49,6 +52,7 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
     endDate: null,
     freeSearch: 'not applicable',
     unverified: 'The "not sooner than" date is a tentative earliest retirement, not a published end date; it is not used as one.',
+    inUse: false,
   },
   {
     engine: 'ChatGPT',
@@ -59,6 +63,7 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
     endDate: '2026-12-11',
     freeSearch: 'not applicable',
     unverified: 'Whether `gpt-6.1-sol` is the right replacement id for the Responses API with the web_search tool, and what it costs, was not checked. The engine is paid and switched off unless ALLOW_PAID_ENGINES=1 (docs/OWNER_DIRECTIVES.md, $0 spend), so no audit is affected until it is switched on.',
+    inUse: false,
   },
   {
     engine: 'Perplexity',
@@ -69,6 +74,7 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
     endDate: '2026-09-27',
     freeSearch: 'not applicable',
     unverified: 'The end date is the end of SUPPORT for the chat-completions endpoint, not a shutdown: requests keep working as rewritten Agent API requests. Whether the reply shape and citations the adapter reads (src/providers.ts) are unchanged by the rewriting was not checked, and the engine is paid and off ($0 directive), so no audit is affected.',
+    inUse: false,
   },
 ];
 
@@ -84,6 +90,14 @@ const parse = (d: string): number => {
 };
 export const isCalendarDate = (d: string): boolean => Number.isFinite(parse(d));
 
+/**
+ * Notes about engines that are switched off: their end dates are real but nobody is affected until the engine is switched on. Same sentences
+ * as `checkCalendar` would give, returned separately so they never fail the weekly check.
+ */
+export function calendarNotes(calendar: readonly ModelCalendarEntry[], today: string): string[] {
+  return checkCalendar(calendar.filter((e) => !e.inUse).map((e) => ({ ...e, inUse: true, confirmedOn: today })), today).map((p) => `${p} (this engine is switched off, so nothing is affected today)`);
+}
+
 /** One sentence per problem; an empty list means nothing is due. `today` is YYYY-MM-DD (the caller supplies it, never the clock). */
 export function checkCalendar(calendar: readonly ModelCalendarEntry[], today: string): string[] {
   const problems: string[] = [];
@@ -96,11 +110,12 @@ export function checkCalendar(calendar: readonly ModelCalendarEntry[], today: st
     else {
       const age = Math.floor((now - conf) / DAY);
       if (age < 0) problems.push(`${who}: confirmed on ${e.confirmedOn}, which is in the future.`);
-      else if (age > MAX_CONFIRMATION_AGE_DAYS) problems.push(`${who} was last confirmed ${age} days ago (${e.confirmedOn}; the limit is ${MAX_CONFIRMATION_AGE_DAYS}). Re-read ${e.page}, then update the entry in src/modelCalendar.ts with the date and what the page says.`);
+      else if (age > MAX_CONFIRMATION_AGE_DAYS && e.inUse) problems.push(`${who} was last confirmed ${age} days ago (${e.confirmedOn}; the limit is ${MAX_CONFIRMATION_AGE_DAYS}). Re-read ${e.page}, then update the entry in src/modelCalendar.ts with the date and what the page says.`);
     }
     if (e.endDate !== null) {
       const end = parse(e.endDate);
       if (!Number.isFinite(end)) { problems.push(`${who}: the end date "${e.endDate}" is not a real YYYY-MM-DD date.`); continue; }
+      if (!e.inUse) continue; // a switched-off engine: the end date is a note (calendarNotes), never an alarm
       const left = Math.floor((end - now) / DAY);
       if (left < 0) problems.push(`${who} reached its published end date ${e.endDate} ${-left} days ago. Read ${e.page}, choose a replacement, and change the default in src/providers.ts.`);
       else if (left < END_DATE_WARNING_DAYS) problems.push(`${who} ends on ${e.endDate}, ${left} days from now (the warning is ${END_DATE_WARNING_DAYS} days). Read ${e.page}, choose a replacement, and change the default in src/providers.ts before then.`);
