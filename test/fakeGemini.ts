@@ -153,13 +153,15 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
           candidates: [
             {
               content: { parts: [{ text }], role: 'model' },
-              groundingMetadata: {
+              // Grounding only when the request carries the search tool, as the real API does: before this every 200 reply
+              // carried it, so no check on "did a search run" could ever fail (docs/PLAN_2026-11.md P2).
+              ...(body.includes('googleSearch') ? { groundingMetadata: {
                 groundingChunks: [
                   { web: { uri: 'https://yelp.com/biz/x', title: 'yelp.com' } },
                   ...(mode === 'cited_only' && !wantsJson ? [{ web: { uri: 'https://poke.house/menu', title: 'poke.house' } }] : []),
                 ],
                 webSearchQueries: ['poke austin'],
-              },
+              } } : {}),
               finishReason: 'STOP',
             },
           ],
