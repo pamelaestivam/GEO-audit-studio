@@ -6,6 +6,7 @@
 //   node scripts/run-tests.mjs --tier unit,server   only those tiers (unit | server | browser | postgres)
 //   node scripts/run-tests.mjs --changed [base]     only tests that touch what the diff touches (see below; a fast check, never a
 //                                              substitute for the full run, which CI does)
+//   node scripts/run-tests.mjs --shard 1/2     every 2nd file of the selection, starting at the 1st (CI splits the server tier this way)
 //   node scripts/run-tests.mjs --list          print the selection and exit
 //   node scripts/run-tests.mjs --no-build      do not build first (dist/ must be current)
 //   node scripts/run-tests.mjs --jobs N        parallel unit files (default: CPU count, at most 8)
@@ -56,6 +57,11 @@ if (flag('changed')) {
   console.log(`--changed against ${base}: ${names.size} changed path(s) -> ${selected.length} test file(s). (An approximation: CI runs everything.)`);
 }
 
+if (flag('shard')) {
+  const m = /^(\d+)\/(\d+)$/.exec(opt('shard') || '');
+  if (!m || Number(m[1]) < 1 || Number(m[1]) > Number(m[2])) { console.error('--shard needs i/n with 1 <= i <= n, for example --shard 1/2.'); process.exit(2); }
+  selected = selected.filter((_, i) => i % Number(m[2]) === Number(m[1]) - 1);
+}
 if (flag('list')) { for (const t of selected) console.log(`${t.tier.padEnd(8)} ${t.file}`); console.log(`${selected.length} file(s)`); process.exit(0); }
 if (selected.length === 0) { console.log('No test file selected.'); process.exit(0); }
 
