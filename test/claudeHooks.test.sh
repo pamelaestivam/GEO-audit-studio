@@ -35,6 +35,14 @@ ln -s "$tmp/sp ace/.claude" "$tmp/linked"
 printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git add -A"}}' | node "$tmp/linked/hooks/guard-git-add.mjs" 2>/dev/null; [ "$?" = "2" ] && ok "...and through a symlink" || bad "guard silent through a symlink"
 
 refused 'git add -A'
+refused 'git add -u'
+refused 'git add --update'
+refused 'git commit .'
+refused 'git commit -m a -- .'
+allowed 'git commit -m "-and fix"'
+allowed 'git commit -m "-a thing"'
+allowed 'git commit -m .'
+allowed 'git commit -F msg.txt'
 refused 'sudo git add -A'
 refused 'env X=1 git add -A'
 refused 'timeout 10 git add .'

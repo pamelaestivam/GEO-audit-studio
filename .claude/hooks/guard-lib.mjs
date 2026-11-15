@@ -73,15 +73,17 @@ export function refusal(command) {
     if (first !== 'git') continue;
     let i = 1;
     while (i < words.length && words[i].startsWith('-')) i += words[i] === '-C' || words[i] === '-c' ? 2 : 1;
-    const sub = words[i]; const args = words.slice(i + 1);
+    const sub = words[i]; const rawArgs = words.slice(i + 1);
+    // drop the VALUE of an option that takes one as a separate word (-m "-a thing" is a message, not a flag)
+    const args = []; for (let k = 0; k < rawArgs.length; k++) { if (/^(-[mFCc]|--message|--file|--reuse-message|--reedit-message)$/.test(rawArgs[k])) { k++; continue; } args.push(rawArgs[k]); }
     if (sub === 'add' || sub === 'stage') {
       const everything = args.some((a) => /^(\.{1,2})(\/+(\.{1,2})?)*$/.test(a) || /^:(\/|\(top\))\*?$/.test(a) || a === '*'
         || (a.startsWith('--no-ignore-') && a.length >= 13 && '--no-ignore-removal'.startsWith(a))
-        || (a.startsWith('--') && a.length >= 3 && '--all'.startsWith(a)) || shortGroupHas(a, 'A'));
+        || (a.startsWith('--') && a.length >= 3 && '--all'.startsWith(a)) || a === '--update' || shortGroupHas(a, 'A') || shortGroupHas(a, 'u'));
       if (everything) return 'Refused: `git add -A`, `--all`, `git add .`, `git add :/` and `git add *` stage files nobody chose (CLAUDE.md hard rule 8). Stage explicit paths: `git add path/one path/two`.';
     }
     if (sub === 'commit') {
-      if (args.some((a) => a === '--all' || shortGroupHas(a, 'a'))) {
+      if (args.some((a) => a === '--all' || shortGroupHas(a, 'a') || /^(\.{1,2})(\/+(\.{1,2})?)*$/.test(a) || a === ':/')) {
         return 'Refused: `git commit -a` (and `-am`) commits every tracked change nobody chose (CLAUDE.md hard rule 8). Stage explicit paths with `git add`, then `git commit -m`.';
       }
     }
