@@ -21,7 +21,7 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 |---|---|---|---|
 | G1.1 Branch status in a shallow clone | in review | #65 | `test/branchStatus.test.sh` shallow cases; fails when the deepening is switched off; run on the real shallow clone of this session |
 | G1.2 Hard rules as machinery (`.claude/settings.json`) | not started | | |
-| G1.3 `ship` skill | not started | | |
+| G1.3 `ship` skill | in review | #67 | `test/shipSkill.test.sh`: front matter, every gate named in order, the real files and scripts it points at exist |
 | G1.4 Reviewers on a different model | not started | | |
 | G1.5 Test runner and shared harness | not started | | |
 | G1.6 CI in parallel under the name `test` | not started | | |
