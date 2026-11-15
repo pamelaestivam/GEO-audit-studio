@@ -19,8 +19,8 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 
 | Item | State | Pull request | Proof |
 |---|---|---|---|
-| G1.1 Branch status in a shallow clone | in review | #65 | `test/branchStatus.test.sh` shallow cases; fails when the deepening is switched off; run on the real shallow clone of this session |
-| G1.2 Hard rules as machinery (`.claude/settings.json`) | not started | | |
+| G1.1 Branch status in a shallow clone | **done** | #65, merge commit 61fd357 | `test/branchStatus.test.sh` shallow cases (deepening off: 7 checks fail); fresh-context review SHIP after two fix rounds; CI green; EVAL PM 87 SHIP |
+| G1.2 Hard rules as machinery (`.claude/settings.json`) | **waiting on the owner's yes** | #66 (unmerged on purpose) | `test/claudeHooks.test.sh`: each hook run as a real process; guard broken (4 fail), stop hook broken (1), start hook broken (3) |
 | G1.3 `ship` skill | not started | | |
 | G1.4 Reviewers on a different model | not started | | |
 | G1.5 Test runner and shared harness | not started | | |
