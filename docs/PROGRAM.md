@@ -13,7 +13,7 @@ unsearched answer is not counted, the readiness check asks what an audit asks, a
 3), P3 Run again and "Since the previous run" (PR #62). **Nothing a real engine returns has been measured yet**: the probe ran twice
 (runs 43669524263 and 43673980851) and printed SKIP for every provider because the repository secrets are not set. **The default model
 was therefore NOT changed** (`gemini-3.6-flash`, which Google lists as having no free search); the owner's lever is `GEMINI_MODEL` (O-7).
-**What waits on the owner:** O-9 (two switches on GitHub's security page; the assistant tried and is not allowed to flip them), O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
+**What waits on the owner:** O-8 (probe keys), then O-7 (model), then one real audit on the live site; O-3 step 4 (the daily check's sign-in)
 and O-6 (Google sign-in) are unchanged. **Next for the assistant, once O-8 is done:** start the `engine-probe` workflow, write the real
 results into `docs/INSIGHTS.md` (MEASURED) and the ledger below, save one scrubbed real reply per provider under `test/fixtures/real/`, then
 decide the default model (`docs/PLAN_2026-11.md` P2 item 4, which was deliberately left) and write the plan for a second engine
