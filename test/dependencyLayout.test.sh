@@ -29,5 +29,6 @@ const bad=[...new Set(names)].filter(n=>!deps.has(n)&&n!=="vite");
 if (bad.length) { console.log("the built server loads a package that is not a production dependency: "+bad.join(", ")); process.exit(1); }
 if (!names.includes("express")) { console.log("scan found no express: the scan itself is broken"); process.exit(1); }
 ' "$repo" && ok "the built server bundle loads only production dependencies (plus vite on the dev-only branch)" || bad "the built server loads a non-production package"
-else echo "skip  dist/server.cjs is not built: run npm run build first (npm test builds before this test)"; fi
+elif [ "${REQUIRE_BUILD:-0}" = "1" ]; then bad "dist/server.cjs is not built (REQUIRE_BUILD=1)"
+else echo "SKIP ... NOT RUN  dist/server.cjs is not built: run npm run build first (npm test builds before this test)"; fi
 [ "$failures" = "0" ] && { echo; echo "All dependency-layout checks passed."; exit 0; } || { echo; echo "$failures check(s) failed."; exit 1; }
