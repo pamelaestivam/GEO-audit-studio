@@ -238,11 +238,11 @@ spots (`docs/INSIGHTS.md` I-6). The pairing is written down here and set in the 
 
 | Seat | Model pinned in its definition | Author models it is independent of |
 |---|---|---|
-| `adversarial-reviewer` | `opus` | sessions authored on Sonnet (the default session model of 2026-11) |
+| `adversarial-reviewer` | `opus` | sessions authored on Sonnet (37 of the last 60 commits on `main` on 2026-11-15 carry Sonnet 5.5 trailers; 8 carry Fable 5.2) |
 | `eval-pm` | `opus` | sessions authored on Sonnet |
 | `ux-tourist` | `sonnet` (it drives a browser and reports; it does not judge the code) | not a review seat |
 
-If a session is itself authored on Opus, that session must override the model when it starts the reviewer (the Agent tool's `model`
+**The rule in one line:** the reviewer's model must differ from every model named in the pull request's `Co-Authored-By` trailers; if the trailers cannot be read (several sessions touched the branch), override to a model different from your own and say which in the review section. For a Fable author use `opus`. If a session is itself authored on Opus, that session must override the model when it starts the reviewer (the Agent tool's `model`
 parameter, `sonnet`), and say so in the pull request's review section. `test/reviewAgents.test.sh` fails when either review seat has no
 pinned model. Whether a reviewer on another model finds more is not measured (I-50); the claim is only that it is not the same reader.
 
