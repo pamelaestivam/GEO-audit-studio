@@ -5,6 +5,14 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
+## 2026-11-15 - The review seats run on `opus`, not the author's model
+
+**Decision (assistant, executing item G1.4 of `docs/ENGINEERING_BACKLOG.md`, which the owner authorised):** `adversarial-reviewer` and
+`eval-pm` are pinned to `opus`; the rule for other authors is in `docs/ENGINEERING_STANDARDS.md` section 10; `test/reviewAgents.test.sh`
+enforces that a pin exists and is not the author's. **Rejected alternative:** the pin to `sonnet` of PR #64 (2026-11-15), chosen so the
+gate runs the same way every time: it is the author's own model in most sessions, so a review is the author re-reading itself (I-6),
+and sameness of the reviewer was bought at the price of independence. **Not measured:** that another model finds more (I-50).
+
 ## 2026-11-15 - An answer without a web search is not counted (metricVersion 3); the default model waits for a measurement
 
 **Decision (executing `docs/PLAN_2026-11.md` P2, which the owner agreed on 2026-11-14):** a Gemini reply with text but no web search
