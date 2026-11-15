@@ -6,10 +6,10 @@ apply to all of it: $0 spend, nothing a person sees changes, Sonnet for every ag
 
 ## G1.5b. One shared test harness
 
-**Problem.** 45 of the 61 test files define their own `check()`, and 11 more their own `assert`, `pass` or `fail` (56 files in all; counted 2026-11-15). A fix to how a failure is
+**Problem.** 45 of the 56 TypeScript test files define their own `check()`, and the other 11 their own `assert`, `pass` or `fail`, so all 56 carry a private helper (counted 2026-11-15; the shell tests are not counted). A fix to how a failure is
 reported, or the early-exit trap of I-31 (a test that prints FAIL and exits 0), has to be made 56 times; `test/testHarness.test.ts` only scans for the trap.
 **Options.** (a) Do nothing: the runner (`scripts/run-tests.mjs`) already counts a printed FAIL line as a failure. (b) A codemod that rewrites all 45 files at once.
-(c) `test/harness.ts` exporting `check`, `assert`, `section`, `finish()`; new files use it, old files migrate in batches of about ten (56 files, so six batches), each batch proved by the
+(c) `test/harness.ts` exporting `check`, `assert`, `section`, `finish()`; new files use it, old files migrate in batches of about ten (56 TypeScript files, so six batches), each batch proved by the
 unchanged pass counts in the runner's table. **Chosen:** (c). **Not handled:** tests that print their own summary format (a few do); they keep it until migrated.
 **Blast radius.** A wrong harness makes tests pass that should fail: `finish()` must exit non-zero when any check failed, proved by a harness test that fails a check on purpose;
 each batch must show the same check count before and after.
@@ -43,8 +43,8 @@ a README that says it is empty until the probe has a key; a contract test that r
 
 ## G2.4. Check shapes at every trust boundary, then a stricter compiler
 
-**Problem.** `tsconfig.json` is not strict and about 140 `any` sit in `server.ts` and `src/`; provider replies, request bodies and JSON read back from the store are trusted by cast.
-**Options.** (a) Do nothing. (b) Turn on `strict` at once (measured 2026-11-15 over everything `tsconfig.json` covers, tests included: 97 errors with `strictNullChecks` alone, 1,869 with `noImplicitAny`; one enormous change). (c) Hand-written guards at each boundary, then `strictNullChecks`, then `noImplicitAny`, with a ratchet:
+**Problem.** `tsconfig.json` is not strict and well over a hundred `any` sit in `server.ts` and `src/` (the count depends on how it is counted: 135 to 163); provider replies, request bodies and JSON read back from the store are trusted by cast.
+**Options.** (a) Do nothing. (b) Turn on `strict` at once (measured 2026-11-15 over everything `tsconfig.json` covers, tests included, with `npx tsc --noEmit --strictNullChecks` and `npx tsc --noEmit --noImplicitAny`: 97 and 1,869 errors; one enormous change). (c) Hand-written guards at each boundary, then `strictNullChecks`, then `noImplicitAny`, with a ratchet:
 a file holds the compiler's error count and CI fails when it rises. **Chosen:** (c), no schema library (a production dependency needs the owner's yes). The ratchet comes FIRST (it makes every later step safe; its stored baseline is one number per flag set, starting at those two counts, and CI fails when a number rises), then the guards, then the flags one at a time. **Not handled:** `any` inside tests. **Blast radius.** A wrong guard rejects a real reply as malformed:
 each guard is tested on the real shapes the existing suites use, and a rejection is a failed look-up with a sentence, never a crash.
 
