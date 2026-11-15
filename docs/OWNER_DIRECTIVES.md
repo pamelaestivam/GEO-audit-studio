@@ -125,6 +125,26 @@ The owner asked for explanations of terms they did not know ("what do you mean?"
 "I don't fully understand"). Explain a term the first time it appears in a
 message to the owner, in one sentence, without jargon.
 
+## D-10. Asking the owner for anything: plain words, and always a recommendation
+
+> "If you need anything from me, you must be descriptive, not assume I will look at other files or understand jargon.
+> And always give a recommendation. Take as a rule, record." (owner, 2026-11-15)
+
+Meaning, for every message that asks the owner to do or decide something: (1) say in everyday words what the thing is and why it
+matters, without file names, ticket numbers or technical terms (if a term is unavoidable, explain it in one sentence the first
+time); (2) say what happens if the owner does nothing; (3) give numbered, click-by-click steps when there is something to do;
+(4) **always end with a recommendation** ("I recommend yes, because ..."). A reference to another file is never a substitute for
+saying it. This sits on top of D-8 (try it yourself first) and D-9 (explain terms).
+
+## D-11. The model is Sonnet, for every session and every agent
+
+> "You should have pulled that Sonnet is the model to be used. If not, add as a rule to the repo." (owner, 2026-11-15)
+
+Meaning: sessions run on Sonnet, and every agent the assistant starts (reviewer, EVAL PM, UX tourist, web-fetch, any other) runs on
+Sonnet: the agent files pin `model: sonnet`, and a session never passes a different `model` to an agent. Another model is used only
+when the owner says so in the conversation. (On 2026-11-15 one session ran its reviewers on Opus to make them differ from the author;
+that went against this rule and is reversed: `docs/DECISIONS.md` 2026-11-15, second entry.)
+
 ## Earlier standing rules that still apply
 
 `CLAUDE.md` holds the rules from earlier rounds (review then merge, EVAL PM before

@@ -3,7 +3,7 @@
  * agreeing with src/providers.ts. Whether today's date finds something due is NOT a merge-blocking test (it would turn every pull
  * request red the day a vendor publishes a date): scripts/model-calendar-check.ts does that, weekly, in .github/workflows/model-calendar.yml.
  */
-import { MODEL_CALENDAR, checkCalendar, isCalendarDate, type ModelCalendarEntry } from '../src/modelCalendar.ts';
+import { MODEL_CALENDAR, calendarNotes, checkCalendar, isCalendarDate, type ModelCalendarEntry } from '../src/modelCalendar.ts';
 import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_PERPLEXITY_MODEL } from '../src/providers.ts';
 
 let failures = 0;
@@ -11,7 +11,7 @@ function check(name: string, ok: boolean, detail = '') {
   if (!ok) failures++;
   console.log(`${ok ? 'pass' : 'FAIL'}  ${name}${!ok && detail ? `\n        ${detail}` : ''}`);
 }
-const e = (over: Partial<ModelCalendarEntry> = {}): ModelCalendarEntry => ({ engine: 'Gemini', modelId: 'm-1', page: 'https://example.test/p', confirmedOn: '2026-11-01', confirmed: 'x', endDate: null, freeSearch: 'no', unverified: 'none', ...over });
+const e = (over: Partial<ModelCalendarEntry> = {}): ModelCalendarEntry => ({ engine: 'Gemini', modelId: 'm-1', page: 'https://example.test/p', confirmedOn: '2026-11-01', confirmed: 'x', endDate: null, freeSearch: 'no', unverified: 'none', inUse: true, ...over });
 
 // the rule, on fixed dates
 check('a recent confirmation and no end date: nothing is due', checkCalendar([e()], '2026-11-15').length === 0);
@@ -30,6 +30,14 @@ check('a confirmation in the future is reported, not trusted', checkCalendar([e(
 check('a date that does not exist (Feb 30, a non-leap Feb 29) is refused, not shifted', checkCalendar([e({ endDate: '2026-02-30' })], '2026-11-15').length === 1 && checkCalendar([e({ endDate: '2027-02-29' })], '2026-11-15').length === 1 && checkCalendar([e({ endDate: '2028-02-29' })], '2026-11-15').length === 0);
 check('a malformed confirmation date does not hide an imminent end date', checkCalendar([e({ confirmedOn: 'bad', endDate: '2026-11-16' })], '2026-11-15').length === 2);
 check('a malformed date is a sentence, not an exception', checkCalendar([e({ confirmedOn: 'last week' })], '2026-11-15').length === 1 && checkCalendar([e()], 'today').length === 1);
+
+// an engine the owner switched off: its end date is a note, never an alarm; a stale confirmation still counts
+const off = e({ inUse: false, endDate: '2026-11-10' });
+check('an end date on a switched-off engine is not a problem', checkCalendar([off], '2026-11-15').length === 0);
+check('...it is a note that says nothing is affected', calendarNotes([off], '2026-11-15').length === 1 && /switched off/.test(calendarNotes([off], '2026-11-15')[0]));
+check('...and a note for an engine that IS in use is not given (it is a problem instead)', calendarNotes([e({ endDate: '2026-11-10' })], '2026-11-15').length === 0);
+check('...but an old confirmation on a switched-off engine is still a problem', checkCalendar([e({ inUse: false, confirmedOn: '2026-01-01' })], '2026-11-15').length === 1);
+check('only Gemini is in use (no paid engines: the owner, 2026-11-15)', MODEL_CALENDAR.filter((m) => m.inUse).map((m) => m.engine).join() === 'Gemini');
 
 // the data agrees with the code that sends the ids
 const byEngine = Object.fromEntries(MODEL_CALENDAR.map((m) => [m.engine, m.modelId]));

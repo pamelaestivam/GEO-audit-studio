@@ -68,6 +68,13 @@ unreported. They apply here with the same force.
     ask the owner to authorise the exact commands, as happened the same day and worked
     at once (`docs/INSIGHTS.md` I-14).
 
+11. **Asking the owner: plain words and a recommendation, always** (`docs/OWNER_DIRECTIVES.md` D-10). Say what it is and why it
+    matters in everyday words (no file names, ticket numbers or jargon; explain a term once if you must use it), what happens if they
+    do nothing, numbered steps if there is something to do, and end with "I recommend ...". Try to do it yourself first (D-8).
+12. **The model is Sonnet, for the session and for every agent** (`docs/OWNER_DIRECTIVES.md` D-11). Agent files pin `model: sonnet`;
+    never pass another `model` when starting an agent unless the owner said so in the conversation. `test/reviewAgents.test.sh` checks
+    the two review seats.
+
 ## Working dynamic with the owner (read this first in a new session)
 
 This project is built through repeated rounds of: ship something, the owner
@@ -440,7 +447,7 @@ have to be rediscovered from scratch, not so it can be skipped.
   current `dist/`)
 - `bash test/branchStatus.test.sh` — the branch-status script against a throwaway
   repository (part of `npm test`)
-- `bash test/reviewAgents.test.sh` — the review agents pin a real model that is not the author's (part of `npm test`)
+- `bash test/reviewAgents.test.sh` — the two review agents pin `model: sonnet`, the owner's rule D-11 (part of `npm test`)
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
 `server.ts`) to redirect the SDK at a local fake server — a no-op unless
