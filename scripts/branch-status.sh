@@ -19,11 +19,11 @@
 # request #N from owner/branch", or git's "Merge branch 'branch'"). Squash or rebase merges
 # leave no such commit, so they show as NOT merged / not stale; a fast-forward merge leaves
 # a branch with nothing ahead, shown as "nothing to merge". Do not use squash or rebase
-# here, or check the pull request by hand. Shallow clones cannot be judged and say so. The script cannot see pull
+# here, or check the pull request by hand. A shallow clone is deepened first (git fetch --unshallow); if that fails the line says the command to run. The script cannot see pull
 # requests or CI (no GitHub access from a script): if a PR is open or CI is red,
 # add that to the first line yourself.
 #
-# Overrides, for tests: STATUS_BASE (default origin/main).
+# Overrides, for tests: STATUS_BASE (default origin/main), STATUS_NO_DEEPEN=1 (do not unshallow), STATUS_FETCH_TIMEOUT and STATUS_DEEPEN_TIMEOUT (seconds).
 set -u
 
 base_ref="${STATUS_BASE:-origin/main}"
@@ -33,18 +33,28 @@ base_branch="${base_ref#*/}"
 fetch_note=""
 # --prune only removes remote-tracking refs for branches deleted on the remote (so the Stale
 # line clears once "Automatically delete head branches" is on). No prompts, bounded time.
-if ! GIT_TERMINAL_PROMPT=0 timeout 60 git fetch -q --prune "$remote" 2>/dev/null; then
+if ! GIT_TERMINAL_PROMPT=0 timeout "${STATUS_FETCH_TIMEOUT:-60}" git fetch -q --prune "$remote" "+refs/heads/*:refs/remotes/$remote/*" 2>/dev/null; then
   echo "warning: could not fetch $remote; the status below may be stale" >&2
   fetch_note=" | (fetch failed: may be stale)"
 fi
 
-if ! git rev-parse --verify -q "$base_ref" >/dev/null; then
-  echo "Branch: unknown | cannot read $base_ref (is the remote reachable, and is 'origin' a real GitHub URL?) | status unknown"
-  exit 1
+# Cloud sessions start in a shallow, single-branch clone. Merges older than its history are invisible and
+# other remote branches are unknown, so deepen first (bounded, no prompts) and fetch every branch in the same
+# call, rather than answer "unknown" or silently list no stale branches. It is skipped when the fetch above
+# already failed (a hung remote must not cost two timeouts), and STATUS_NO_DEEPEN=1 turns it off (tests).
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  deepen_err=""
+  if [ "${STATUS_NO_DEEPEN:-0}" != "1" ] && [ -z "$fetch_note" ]; then
+    deepen_err=$(GIT_TERMINAL_PROMPT=0 timeout "${STATUS_DEEPEN_TIMEOUT:-300}" git fetch -q --unshallow "$remote" "+refs/heads/*:refs/remotes/$remote/*" 2>&1 >/dev/null | head -n 2 | tr '\n' ' ')
+  fi
+  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    echo "Branch: unknown | this is a shallow clone and the history could not be fetched${deepen_err:+ ($deepen_err)}; run: git fetch --unshallow $remote | status unknown"
+    exit 1
+  fi
 fi
 
-if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-  echo "Branch: unknown | this is a shallow clone, so merges older than its history are invisible | status unknown"
+if ! git rev-parse --verify -q "$base_ref" >/dev/null; then
+  echo "Branch: unknown | cannot read $base_ref (is the remote reachable, and is 'origin' a real GitHub URL?) | status unknown"
   exit 1
 fi
 

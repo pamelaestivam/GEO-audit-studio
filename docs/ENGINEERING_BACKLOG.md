@@ -12,6 +12,25 @@ the product does next, so it is worth doing. Group 2 is taken an item at a time,
 when product work needs it. Group 3 is options: nothing in it starts before real
 audits exist, and each needs the owner's yes.
 
+## State of every item (kept current by each pull request; 2026-11-15 session)
+
+Status words: **done** (merged, with the pull request and how it was proved), **in review** (pull request open), **waiting on the owner**,
+**not started**, **held**. A row is closed only against evidence.
+
+| Item | State | Pull request | Proof |
+|---|---|---|---|
+| G1.1 Branch status in a shallow clone | in review | #65 | `test/branchStatus.test.sh` shallow cases; fails when the deepening is switched off; run on the real shallow clone of this session |
+| G1.2 Hard rules as machinery (`.claude/settings.json`) | not started | | |
+| G1.3 `ship` skill | not started | | |
+| G1.4 Reviewers on a different model | not started | | |
+| G1.5 Test runner and shared harness | not started | | |
+| G1.6 CI in parallel under the name `test` | not started | | |
+| G1.7 Live check proves the live commit | not started | | |
+| G1.8 Dependabot for npm; build tools to `devDependencies` | not started | | |
+| G1.9 Model calendar | not started | | |
+| G2.1 to G2.8 | not started (G2.6 held by `docs/DECISIONS.md` 2026-11-14) | | |
+| G3 | not built; no design notes asked for | | |
+
 ## What the review found (all READ in the repository, 2026-11-14)
 
 | Finding | Evidence |
