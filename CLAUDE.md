@@ -403,6 +403,7 @@ test is in `docs/TEST_GUIDE.md`):
 - `test/manifest.test.ts` (unit) — The manifest lists every test file; the runner (real child processes against fake tests): failures, early-exit FAIL lines, skips, tiers, --changed; CLAUDE.md list is up to date.
 - `test/claudeHooks.test.sh` (unit) — Proves the session hooks in .claude/: the guard against git add -A, the stop hook, the session-start hook, the allow-list.
 - `test/ciWorkflow.test.ts` (unit) — CI in parallel under the same required name: the gate job `test` needs every job and runs always; every tier and both server shards are run; limits, pins and setup.
+- `test/mutate.test.ts` (unit) — The protections ledger runner against a fixture repository: defended, undefended, stale, already-red, the fixture never modified; the real ledger is well formed.
 <!-- tests:end -->
 
 The E2E suites use `GEMINI_BASE_URL` (read in `getGeminiClient` in
