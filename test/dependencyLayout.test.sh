@@ -15,13 +15,19 @@ const dev=p.devDependencies; for (const m of ["vite","@vitejs/plugin-react","@ta
 ' "$repo" && ok "dependencies are exactly the server's run-time packages; build tools are devDependencies" || bad "dependency layout"
 y="$repo/.github/dependabot.yml"
 grep -q 'package-ecosystem: npm' "$y" && ok "dependabot watches npm" || bad "dependabot does not watch npm"
-awk '/package-ecosystem: npm/{f=1} f&&/interval: weekly/{w=1} f&&/applies-to: security-updates/{s=1} f&&/patterns:/{g=1} END{exit !(w&&s&&g)}' "$y" && ok "...weekly, security updates, grouped" || bad "...weekly / security / grouped missing"
+awk '/package-ecosystem: /{f=($0 ~ /npm/)} f&&/interval: weekly/{w=1} f&&/applies-to: security-updates/{s=1} f&&/patterns:/{g=1} END{exit !(w&&s&&g)}' "$y" && ok "...weekly, security updates, grouped" || bad "...weekly / security / grouped missing"
+grep -q 'open-pull-requests-limit: 0' "$y" && ok "...routine version bumps are off" || bad "open-pull-requests-limit: 0 is missing"
 grep -q 'package-ecosystem: github-actions' "$y" && ok "...and still watches GitHub Actions" || bad "github-actions entry lost"
-# every package the server bundle imports at run time is a production dependency
-node -e '
-const fs=require("fs"); const p=require(process.argv[1]+"/package.json"); const deps=new Set(Object.keys(p.dependencies));
-const src=fs.readFileSync(process.argv[1]+"/server.ts","utf8")+fs.readdirSync(process.argv[1]+"/src").filter(f=>f.endsWith(".ts")).map(f=>fs.readFileSync(process.argv[1]+"/src/"+f,"utf8")).join("\n");
-const bad=[...src.matchAll(/^import[^\n]*from\s+["\x27]([^./"\x27][^"\x27]*)["\x27]/gm)].map(m=>m[1]).filter(n=>!n.startsWith("node:")&&!["fs","path","crypto","http","https","os","url","child_process","net","util","events","stream","zlib"].includes(n)).map(n=>n.startsWith("@")?n.split("/").slice(0,2).join("/"):n.split("/")[0]).filter(n=>!deps.has(n)&&!["react","react-dom","lucide-react","motion"].includes(n));
-if (bad.length) { console.log("imported but not a production dependency: "+[...new Set(bad)].join(", ")); process.exit(1); }
-' "$repo" && ok "server and src/ import no package missing from dependencies (client libraries are bundled by vite)" || bad "a run-time import is not a production dependency"
+# every package the BUILT server bundle loads is a production dependency (the vite dev branch and node:sqlite are the only exceptions).
+# Reads dist/server.cjs (built by `npm run build`, which npm test runs first): static requires and dynamic imports, any import style.
+if [ -f "$repo/dist/server.cjs" ]; then
+  node -e '
+const fs=require("fs"); const {builtinModules}=require("module"); const p=require(process.argv[1]+"/package.json"); const deps=new Set(Object.keys(p.dependencies));
+const src=fs.readFileSync(process.argv[1]+"/dist/server.cjs","utf8");
+const names=[...src.matchAll(/(?:require|import)\(\s*["\x27]([^"\x27]+)["\x27]\s*\)/g)].map(m=>m[1]).filter(n=>!n.startsWith("node:")&&!n.startsWith(".")&&!builtinModules.includes(n)).map(n=>n.startsWith("@")?n.split("/").slice(0,2).join("/"):n.split("/")[0]);
+const bad=[...new Set(names)].filter(n=>!deps.has(n)&&n!=="vite");
+if (bad.length) { console.log("the built server loads a package that is not a production dependency: "+bad.join(", ")); process.exit(1); }
+if (!names.includes("express")) { console.log("scan found no express: the scan itself is broken"); process.exit(1); }
+' "$repo" && ok "the built server bundle loads only production dependencies (plus vite on the dev-only branch)" || bad "the built server loads a non-production package"
+else echo "skip  dist/server.cjs is not built: run npm run build first (npm test builds before this test)"; fi
 [ "$failures" = "0" ] && { echo; echo "All dependency-layout checks passed."; exit 0; } || { echo; echo "$failures check(s) failed."; exit 1; }

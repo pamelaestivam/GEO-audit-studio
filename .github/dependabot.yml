@@ -7,8 +7,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
-  # npm: security updates only, grouped into one pull request, checked weekly. `open-pull-requests-limit: 0` switches off
-  # routine version bumps (they are not wanted: the owner's rule is small, reviewed changes) and leaves security updates on.
+  # npm: security updates only, grouped into one pull request. They fire when an advisory is published; `schedule` governs version
+  # updates only. `open-pull-requests-limit: 0` switches off routine version bumps (the owner's rule is small, reviewed changes).
+  # NOT EFFECTIVE until the repository setting "Dependabot security updates" (and "Dependabot alerts") is on: docs/PROGRAM.md O-9.
   # Three advisories published in October failed the audit step on every branch (docs/INSIGHTS.md I-22).
   - package-ecosystem: npm
     directory: /

@@ -202,6 +202,8 @@ printing, and a test proves it). Labels below are unverified (the assistant cann
    writes the results into `docs/INSIGHTS.md`. Until then every run prints SKIP lines, which is a valid result.
 Why it matters: P2's choice of model (`docs/PLAN_2026-11.md` P2 item 4) is made only on this measurement.
 
+
+**O-9. Turn on Dependabot alerts and security updates (about 2 minutes; assistant cannot: a configuration file cannot switch it on, and the repository reports "Dependabot alerts are disabled").** *Why:* `.github/dependabot.yml` now has an npm entry for security updates, but until these two settings are on it opens nothing, and an advisory is again seen only when CI goes red (I-22). 1. Open https://github.com/pamelaestivam/GEO-audit-studio/settings/security_analysis. 2. Next to "Dependabot alerts" press Enable. 3. Next to "Dependabot security updates" press Enable. 4. Tell the assistant "O-9 done"; the assistant cannot read this setting back through its tools, so it will say it is unverified until the first Dependabot pull request or alert appears.
 ## 4. Verification ledger (what has actually been checked, and what has not)
 
 | Claim | Status | How / date |

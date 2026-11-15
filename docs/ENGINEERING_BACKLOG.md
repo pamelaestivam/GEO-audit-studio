@@ -26,7 +26,7 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 | G1.5 Test runner and shared harness | not started | | |
 | G1.6 CI in parallel under the name `test` | not started | | |
 | G1.7 Live check proves the live commit | not started | | |
-| G1.8 Dependabot for npm; build tools to `devDependencies` | in review | #69 | `test/dependencyLayout.test.sh`; full `npm run verify` 2,481 checks, 0 failed after a clean `npm ci`; production install check passes (part of the verify); the Vercel preview build is the check on the pull request |
+| G1.8 Dependabot for npm; build tools to `devDependencies` | in review (the Dependabot half is NOT effective until the owner does `docs/PROGRAM.md` O-9) | #69 | `test/dependencyLayout.test.sh`; full `npm run verify` 2,481 checks, 0 failed after a clean `npm ci`; production install check passes (part of the verify); the Vercel preview build is the check on the pull request |
 | G1.9 Model calendar | not started | | |
 | G2.1 to G2.8 | not started (G2.6 held by `docs/DECISIONS.md` 2026-11-14) | | |
 | G3 | not built; no design notes asked for | | |
