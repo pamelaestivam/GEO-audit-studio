@@ -11,6 +11,7 @@ for a in adversarial-reviewer eval-pm; do
   f="$repo/.claude/agents/$a.md"
   [ "$(head -1 "$f" | tr -d '\r')" = "---" ] || { fail "$a: front matter does not start on line 1"; continue; }
   fm=$(awk 'NR==1{next} /^---\r?$/ {exit} {print}' "$f")
+  awk 'NR>1 && /^---\r?$/ {f=1} END{exit !f}' "$f" || { fail "$a: front matter is never closed"; continue; }
   n=$(printf '%s\n' "$fm" | grep -c '^model:')
   [ "$n" = "1" ] || { fail "$a: $n model lines in the front matter (need exactly 1)"; continue; }
   m=$(printf '%s\n' "$fm" | grep '^model:' | sed 's/^model:[[:space:]]*//; s/[[:space:]]*#.*$//; s/\r$//; s/[[:space:]]*$//; s/^["\x27]//; s/["\x27]$//' | tr 'A-Z' 'a-z')
