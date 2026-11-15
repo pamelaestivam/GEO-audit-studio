@@ -1209,7 +1209,7 @@ and labelled "Not measured". Showing a real figure needs a keyword data
 provider (Ahrefs, Semrush, Google Keyword Planner) — worth doing, since buyers
 expect it, but it must come from a source rather than a model.
 
-### 2.22 The git-add guard misses some spellings (low)
+### 2.23 The git-add guard misses some spellings (low)
 
 `.claude/hooks/guard-lib.mjs` (G1.2, `docs/ENGINEERING_BACKLOG.md`) is a guard against forgetting, not a security boundary. The
 fresh-context review left these known: a wrapper given an option with a separate value (`sudo -u root git add -A`,
