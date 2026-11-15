@@ -233,6 +233,19 @@ touching anything, so you know whether a failure is yours.
 7. PR using the template, CI green, merge, delete the branch, confirm `main`.
 8. Update `TECH_DEBT.md` / `docs/DECISIONS.md` / docs in the same change.
 
+**Reviewers run on a different model from the author.** A review that is the author's own model re-reading its own work shares its blind
+spots (`docs/INSIGHTS.md` I-6). The pairing is written down here and set in the agents' definitions (`model:` in `.claude/agents/`):
+
+| Seat | Model pinned in its definition | Author models it is independent of |
+|---|---|---|
+| `adversarial-reviewer` | `opus` | sessions authored on Sonnet (the default session model of 2026-11) |
+| `eval-pm` | `opus` | sessions authored on Sonnet |
+| `ux-tourist` | `sonnet` (it drives a browser and reports; it does not judge the code) | not a review seat |
+
+If a session is itself authored on Opus, that session must override the model when it starts the reviewer (the Agent tool's `model`
+parameter, `sonnet`), and say so in the pull request's review section. `test/reviewAgents.test.sh` fails when either review seat has no
+pinned model. Whether a reviewer on another model finds more is not measured (I-50); the claim is only that it is not the same reader.
+
 **The `ux-tourist` agent** drives the built app in a browser and reports what
 looks untrue, inert or malformed. Use it after any UI-visible change; it found
 defects in the 2026-10 round that no assertion could have.

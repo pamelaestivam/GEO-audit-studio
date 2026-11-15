@@ -22,7 +22,7 @@ Status words: **done** (merged, with the pull request and how it was proved), **
 | G1.1 Branch status in a shallow clone | in review | #65 | `test/branchStatus.test.sh` shallow cases; fails when the deepening is switched off; run on the real shallow clone of this session |
 | G1.2 Hard rules as machinery (`.claude/settings.json`) | not started | | |
 | G1.3 `ship` skill | not started | | |
-| G1.4 Reviewers on a different model | not started | | |
+| G1.4 Reviewers on a different model | in review | #68 | `test/reviewAgents.test.sh`; the pinned model of each review seat is `opus`, the author's session model is `sonnet` |
 | G1.5 Test runner and shared harness | not started | | |
 | G1.6 CI in parallel under the name `test` | not started | | |
 | G1.7 Live check proves the live commit | not started | | |
