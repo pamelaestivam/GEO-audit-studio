@@ -33,9 +33,9 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
   {
     engine: 'Gemini',
     modelId: 'gemini-3.6-flash',
-    page: 'https://aistudio.google.com/docs/pricing',
+    page: 'https://aistudio.google.com/docs/pricing and https://aistudio.google.com/docs/deprecations',
     confirmedOn: '2026-11-15',
-    confirmed: 'Listed (deprecations page: "July 21, 2026 | No shutdown date announced"). Pricing page, free tier, "Grounding with Google Search": "Not available" (footnote: can be tested in Google AI Studio); paid: 5,000 free search requests a month shared across Gemini 3 and newer models, then $14 per 1,000.',
+    confirmed: 'Listed (deprecations page, "Gemini 3 models" table: "gemini-3.6-flash | July 21, 2026 | No shutdown date announced"; the date shown is the release date, not a deprecation date). Pricing page, free tier, "Grounding with Google Search": "Not available" (footnote: can be tested in Google AI Studio); paid: 5,000 free search requests a month shared across Gemini 3 and newer models, then $14 per 1,000.',
     endDate: null,
     freeSearch: 'no',
     unverified: 'A tools-section figure of "500 RPD free" was seen in a summary of the page and not verified against the page itself; the account-level quota is visible only in the owner\'s Google console.',
@@ -53,7 +53,7 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
   {
     engine: 'ChatGPT',
     modelId: 'gpt-5',
-    page: 'https://developers.openai.com/api/docs/deprecations',
+    page: 'https://developers.openai.com/api/docs/deprecations and https://developers.openai.com/api/docs/models',
     confirmedOn: '2026-11-15',
     confirmed: '"Upcoming deprecations" table row: "Dec 11, 2026 | gpt-5, gpt-5-2025-08-07 | Deprecated | gpt-6.1-sol | Jun 11, 2026". The models page lists flagships gpt-6-astra, gpt-6.1-sol, gpt-6.1-terra and gpt-6-luna; gpt-5 was not among the cards read.',
     endDate: '2026-12-11',
@@ -63,12 +63,12 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
   {
     engine: 'Perplexity',
     modelId: 'sonar',
-    page: 'https://docs.perplexity.ai/guides/model-cards',
+    page: 'https://docs.perplexity.ai/docs/agent-api/models and https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview',
     confirmedOn: '2026-11-15',
-    confirmed: 'Listed as "perplexity/sonar" ($0.25 input, $2.50 output per million tokens). No deprecation section on the page.',
-    endDate: null,
+    confirmed: 'The models page lists "perplexity/sonar" ($0.25 input, $2.50 output per million tokens) under the Agent API. The "Migrate from Sonar" page says: "Sonar Chat Completions support ended on September 27, 2026. Synchronous and streaming requests keep working: they are being reformulated as Agent API requests, rolling out gradually by model. Asynchronous Sonar requests are not reformulated and are no longer supported." The product posts synchronous requests to api.perplexity.ai/chat/completions with `sonar`.',
+    endDate: '2026-09-27',
     freeSearch: 'not applicable',
-    unverified: 'The page is titled "Agent API Models" and prefixes the id; the product calls chat/completions with the bare id `sonar`. That the bare id is current for that endpoint was not confirmed on this page.',
+    unverified: 'The end date is the end of SUPPORT for the chat-completions endpoint, not a shutdown: requests keep working as rewritten Agent API requests. Whether the reply shape and citations the adapter reads (src/providers.ts) are unchanged by the rewriting was not checked, and the engine is paid and off ($0 directive), so no audit is affected.',
   },
 ];
 
@@ -76,7 +76,13 @@ export const MAX_CONFIRMATION_AGE_DAYS = 90;
 export const END_DATE_WARNING_DAYS = 30;
 
 const DAY = 86_400_000;
-const parse = (d: string): number => Date.parse(`${d}T00:00:00Z`);
+/** UTC midnight of a real calendar date, else NaN (2026-02-30 is not shifted to March 2; it is refused). */
+const parse = (d: string): number => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return NaN;
+  const t = Date.parse(`${d}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === d ? t : NaN;
+};
+export const isCalendarDate = (d: string): boolean => Number.isFinite(parse(d));
 
 /** One sentence per problem; an empty list means nothing is due. `today` is YYYY-MM-DD (the caller supplies it, never the clock). */
 export function checkCalendar(calendar: readonly ModelCalendarEntry[], today: string): string[] {
@@ -86,15 +92,17 @@ export function checkCalendar(calendar: readonly ModelCalendarEntry[], today: st
   for (const e of calendar) {
     const who = `${e.engine} default model ${e.modelId}`;
     const conf = parse(e.confirmedOn);
-    if (!Number.isFinite(conf)) { problems.push(`${who}: the confirmation date "${e.confirmedOn}" is not YYYY-MM-DD.`); continue; }
-    const age = Math.floor((now - conf) / DAY);
-    if (age < 0) problems.push(`${who}: confirmed on ${e.confirmedOn}, which is in the future.`);
-    else if (age > MAX_CONFIRMATION_AGE_DAYS) problems.push(`${who} was last confirmed ${age} days ago (${e.confirmedOn}; the limit is ${MAX_CONFIRMATION_AGE_DAYS}). Re-read ${e.page}, then update the entry in src/modelCalendar.ts with the date and what the page says.`);
+    if (!Number.isFinite(conf)) problems.push(`${who}: the confirmation date "${e.confirmedOn}" is not a real YYYY-MM-DD date.`);
+    else {
+      const age = Math.floor((now - conf) / DAY);
+      if (age < 0) problems.push(`${who}: confirmed on ${e.confirmedOn}, which is in the future.`);
+      else if (age > MAX_CONFIRMATION_AGE_DAYS) problems.push(`${who} was last confirmed ${age} days ago (${e.confirmedOn}; the limit is ${MAX_CONFIRMATION_AGE_DAYS}). Re-read ${e.page}, then update the entry in src/modelCalendar.ts with the date and what the page says.`);
+    }
     if (e.endDate !== null) {
       const end = parse(e.endDate);
-      if (!Number.isFinite(end)) { problems.push(`${who}: the end date "${e.endDate}" is not YYYY-MM-DD.`); continue; }
+      if (!Number.isFinite(end)) { problems.push(`${who}: the end date "${e.endDate}" is not a real YYYY-MM-DD date.`); continue; }
       const left = Math.floor((end - now) / DAY);
-      if (left < 0) problems.push(`${who} reached its published end date ${e.endDate} ${-left} days ago. Choose a replacement (${e.page}) and change the default in src/providers.ts.`);
+      if (left < 0) problems.push(`${who} reached its published end date ${e.endDate} ${-left} days ago. Read ${e.page}, choose a replacement, and change the default in src/providers.ts.`);
       else if (left < END_DATE_WARNING_DAYS) problems.push(`${who} ends on ${e.endDate}, ${left} days from now (the warning is ${END_DATE_WARNING_DAYS} days). Read ${e.page}, choose a replacement, and change the default in src/providers.ts before then.`);
     }
   }
