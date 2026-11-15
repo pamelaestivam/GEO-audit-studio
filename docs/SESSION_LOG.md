@@ -401,3 +401,4 @@ Rows 13 to 15 of `docs/PROGRAM.md` were merged first, so the whole list was open
 a shallow clone that is deepened and judged, and one that cannot be deepened and names the command. Switching the deepening off made 4
 checks fail. Full verify: 2,467 checks, 0 failed (browser suites on the Chromium alias of I-45, PostgreSQL started by
 `scripts/pg-test-cluster.sh`).
+G1.1 review (fresh context, Opus): FIX BEFORE MERGE, all fixed. The "older merge" test was a copy of the first case (its branch had been deleted, so the clone fell back to main); a hung remote cost two timeouts back to back; a single-branch shallow clone lost the Stale line silently after deepening; a feature-branch shallow clone was never deepened. Now: the deepening fetches every branch in the same call, is skipped when the first fetch already failed, runs before the base-ref check, shows git's reason, and the older-merge test uses a branch that exists. Removing the branch refspec made 3 checks fail.

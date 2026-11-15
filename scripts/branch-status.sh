@@ -38,21 +38,24 @@ if ! GIT_TERMINAL_PROMPT=0 timeout 60 git fetch -q --prune "$remote" 2>/dev/null
   fetch_note=" | (fetch failed: may be stale)"
 fi
 
+# Cloud sessions start in a shallow, single-branch clone. Merges older than its history are invisible and
+# other remote branches are unknown, so deepen first (bounded, no prompts) and fetch every branch in the same
+# call, rather than answer "unknown" or silently list no stale branches. It is skipped when the fetch above
+# already failed (a hung remote must not cost two timeouts), and STATUS_NO_DEEPEN=1 turns it off (tests).
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+  deepen_err=""
+  if [ "${STATUS_NO_DEEPEN:-0}" != "1" ] && [ -z "$fetch_note" ]; then
+    deepen_err=$(GIT_TERMINAL_PROMPT=0 timeout 300 git fetch -q --unshallow "$remote" "+refs/heads/*:refs/remotes/$remote/*" 2>&1 >/dev/null | head -n 2 | tr '\n' ' ')
+  fi
+  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+    echo "Branch: unknown | this is a shallow clone and the history could not be fetched${deepen_err:+ ($deepen_err)}; run: git fetch --unshallow $remote | status unknown"
+    exit 1
+  fi
+fi
+
 if ! git rev-parse --verify -q "$base_ref" >/dev/null; then
   echo "Branch: unknown | cannot read $base_ref (is the remote reachable, and is 'origin' a real GitHub URL?) | status unknown"
   exit 1
-fi
-
-if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-  # Cloud sessions start from a shallow clone. Merges older than its history are invisible, so fetch
-  # the rest (bounded, no prompts) rather than answer "unknown". STATUS_NO_DEEPEN=1 turns this off (tests).
-  if [ "${STATUS_NO_DEEPEN:-0}" != "1" ]; then
-    GIT_TERMINAL_PROMPT=0 timeout 300 git fetch -q --unshallow "$remote" 2>/dev/null || true
-  fi
-  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
-    echo "Branch: unknown | this is a shallow clone and the history could not be fetched; run: git fetch --unshallow $remote | status unknown"
-    exit 1
-  fi
 fi
 
 # "<parent-of-a-merge> <merge-commit>" for every second-or-later parent of a merge on the base.

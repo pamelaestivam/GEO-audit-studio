@@ -135,18 +135,40 @@ out=$(status)
 check "a fast-forwarded branch reads as having nothing left to merge" "$out" "nothing to merge (every commit on it is already on main)"
 absent "...and is not reported as unmerged" "$out" "NOT merged"
 
+# Fixture for the shallow cases: a branch merged long ago and left on the remote, then main moves on.
+g checkout -q main
+g checkout -q -b claude/old
+g commit -q --allow-empty -m "old work"
+g push -q origin claude/old 2>/dev/null
+g checkout -q main
+g merge -q --no-ff -m "Merge pull request #3 from owner/claude/old" claude/old
+g commit -q --allow-empty -m "main moves on after old"
+g push -q origin main 2>/dev/null
+g fetch -q origin
+
 # A shallow clone (how every cloud session starts) is deepened, then judged.
 git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/shallow" 2>/dev/null
 check "the fixture really is shallow" "$(git -C "$tmp/shallow" rev-parse --is-shallow-repository)" "true"
 out=$(cd "$tmp/shallow" && bash "$script" 2>/dev/null)
+shallow_out="$out"
 check "a shallow clone is deepened and then judged" "$out" "Branch: main | up to date with origin/main"
 absent "...and does not answer unknown" "$out" "unknown"
 check "...and is no longer shallow afterwards" "$(git -C "$tmp/shallow" rev-parse --is-shallow-repository)" "false"
 
-# A merge that is older than the shallow history is still found once the history is fetched.
-git clone -q --depth 1 --branch claude/feature "file://$tmp/origin.git" "$tmp/shallow2" 2>/dev/null || git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/shallow2" 2>/dev/null
+# A shallow clone is single-branch: deepening must also bring the other branches, so the Stale line is not silently empty.
+check "...and a deepened single-branch clone still lists the merged branch that was never deleted" "$shallow_out" "Stale:"
+check "...naming it" "$shallow_out" "claude/old"
+# A shallow clone of a FEATURE branch has no origin/main until it is fetched; its merge is older than the shallow history.
+git clone -q --depth 1 --branch claude/old "file://$tmp/origin.git" "$tmp/shallow2" 2>/dev/null
+check "the fixture is a shallow clone of a branch that still exists" "$(git -C "$tmp/shallow2" rev-parse --abbrev-ref HEAD)" "claude/old"
 out=$(cd "$tmp/shallow2" && bash "$script" 2>/dev/null)
-absent "a second shallow clone is also judged, not unknown" "$out" "status unknown"
+check "a merge older than the shallow history is found once the history is fetched" "$out" "MERGED (merge commit"
+
+# A remote that fails is not tried twice: the first fetch failing skips the deepening and the line still names the command.
+git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/shallow4" 2>/dev/null
+git -C "$tmp/shallow4" remote set-url origin "$tmp/does-not-exist.git"
+out=$(cd "$tmp/shallow4" && bash "$script" 2>/dev/null)
+check "an unreachable remote on a shallow clone names the command" "$out" "run: git fetch --unshallow origin"
 
 # When the history cannot be fetched, the line names the exact command and exits non-zero.
 git clone -q --depth 1 --branch main "file://$tmp/origin.git" "$tmp/shallow3" 2>/dev/null
