@@ -231,7 +231,7 @@ nothing before the first audit. All replaced with true statements or removed.
 | # | Item | Why | Status |
 |---|---|---|---|
 | 16 | **A UI test layer**: Playwright smoke tests in CI against the real server and the fake-engine harness (sign-in, run, each tab, a phone viewport) | `CLAUDE.md` records this as a known gap; every UI defect in B4/B5 was found by eye. This session's browser script is the starting point. | ✅ `test/uiSmoke.test.ts` (desktop + phone, in CI) |
-| 17 | **Saved history and re-run delta** ("12% -> 34% after the schema fixes") | The paid-tier feature in the PRD; the reason anyone renews. | 🟡 saved history + delete done; re-run delta not |
+| 17 | **Saved history and re-run delta** ("12% -> 34% after the schema fixes") | The paid-tier feature in the PRD; the reason anyone renews. | ✅ saved history + delete done; re-run and "Since the previous run" built 2026-11-15 (`docs/PLAN_2026-11.md` P3, `src/reportCompare.ts`): counts over question-and-engine pairs measured in both runs, never a percentage, refused when the two were not measured the same way |
 | 18 | **Evidence viewer and a forwardable report** (print stylesheet / PDF) | The verbatim answers are already captured; printing currently prints the dark UI. | 🟡 evidence viewer done; forwardable PDF not |
 | 19 | **Scheduled re-audits and alerts - or remove the tab** | Honestly labelled "Preview" now; it should not stay a preview forever. | ⚪ |
 | 20 | **Legal and trust basics**: Terms and Privacy pages (the sign-in footer cites both and neither exists), a data-retention statement, CSP header, `npm audit` in CI | A public MVP needs these before the first stranger. Basic security headers are done; CSP is not. | 🟡 headers + `npm audit` in CI; Terms/Privacy pages and CSP not |

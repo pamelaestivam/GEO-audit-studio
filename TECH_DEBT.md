@@ -809,6 +809,12 @@ specified as server-side wording and no new screen, and each needs its own desig
 - The hint names "this server" and "this key" (an operator's words) and the AI Studio address is plain text, not a link.
 - The "How this was measured" disclosure now says twice that the figures come through the engine's API (the older paragraph and the
   new P2 sentence).
+- **After a failed audit (a re-run included) the header selector and the sidebar counts still describe another audit** ("GEO Score: 0% (2 answers)"
+  beside the failed audit's dashes), so a person could read the counts as the failed audit's (found by the P3 tour).
+- **An Idempotency-Key is scoped to the owner, not to the route or the audit** (`findJobByKey(owner, key)`): reusing a key on `/api/audit/rerun` for a
+  different audit, or on `/api/audit/run`, replays the older job. The page makes a fresh random key per click, so this is not reachable from it; and a
+  retry that arrives after the audit was deleted answers 404 rather than the replay. "Rivals newly named" uses the same capitalised-phrase heuristic as
+  the audit's untracked rivals, so run-to-run noise can show a capitalised non-rival.
 - Not checked by the tour: the export's copied text, and "Add & Audit Query" after a failed audit.
 
 ### 2.18 Sign in with Google: what is proven and what is not (medium until tried with a real Google account)
@@ -1210,6 +1216,15 @@ Roughly in order of value per unit of effort.
 Store audits, then re-run the same query set on a schedule. Show the delta.
 "Your visibility went 12% → 34% after we shipped the schema fixes" is the
 argument that justifies a retainer. Unlocks 2.1 wholesale.
+
+**Built 2026-11-15 (`docs/PLAN_2026-11.md` P3), the on-demand half:** a saved audit has **Run again** (`POST /api/audit/rerun`, the server reads
+the inputs and the questions from the saved audit) and the new saved audit carries `previousAuditId`; the page shows "Since the previous run" from
+`compareReports` (`src/reportCompare.ts`): counts over the question-and-engine pairs measured in both runs, sources that appeared or went, rivals
+newly named, pairs not measured in one of the two runs, and a refusal (the two shown side by side) when the counting rule, the model, the questions or
+the business differ. **Still open:** the scheduled half (re-running on a schedule is not built, there is no server clock on Vercel Hobby); a trend
+over more than two runs (the strip compares one audit with the one before it); the comparison is computed in the browser from two fetched reports
+(a list of many audits would fetch one extra report each time one is opened); a re-run of an audit whose questions were later edited by "Add &
+Audit Query" re-runs only the questions the audit was run with.
 
 ### 3.2 Answer-engine trend alerting
 

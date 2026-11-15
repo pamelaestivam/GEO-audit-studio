@@ -94,6 +94,27 @@ export async function runAuditJob(
   onProgress?: (message: string, progress?: AuditProgress | null) => void,
   timeoutMs = 8 * 60 * 1000
 ): Promise<StartAuditResult> {
+  return runJobAt('/api/audit/run', payload, onProgress, timeoutMs);
+}
+
+/**
+ * Run a SAVED audit again. Only its id travels: the server reads every input and the question list from the saved report
+ * (docs/PLAN_2026-11.md P3), then the audit is started, driven and polled exactly like any other.
+ */
+export async function runAgainJob(
+  auditId: string,
+  onProgress?: (message: string, progress?: AuditProgress | null) => void,
+  timeoutMs = 8 * 60 * 1000
+): Promise<StartAuditResult> {
+  return runJobAt('/api/audit/rerun', { auditId }, onProgress, timeoutMs);
+}
+
+async function runJobAt(
+  startPath: string,
+  payload: unknown,
+  onProgress?: (message: string, progress?: AuditProgress | null) => void,
+  timeoutMs = 8 * 60 * 1000
+): Promise<StartAuditResult> {
   // Full retry budget: this is the request that hits a sleeping instance.
   //
   // Those retries used to start a *new* audit each time. The submit that
@@ -105,7 +126,7 @@ export async function runAuditJob(
   // the retries as the same submit and hand back the job it already started.
   const idempotencyKey = newIdempotencyKey();
 
-  const startRes = await apiFetch('/api/audit/run', {
+  const startRes = await apiFetch(startPath, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(payload),

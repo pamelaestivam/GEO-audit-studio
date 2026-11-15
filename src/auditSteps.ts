@@ -19,6 +19,8 @@ export interface StoredAuditPlan extends AuditPlan {
   driver: 'inline' | 'client';
   /** Engines with a key configured (and allowed) when the audit was submitted, in query order. */
   engines: string[];
+  /** Set on a re-run: the saved audit it was run again from. It ends up on the saved report. */
+  previousAuditId?: string;
   /** Set when nothing can be measured at all; the audit then has a single finishing step. */
   unconfigured?: { reason: string };
   /** The request as it was received, kept only for the failed-audit report if something unexpected breaks the run. */

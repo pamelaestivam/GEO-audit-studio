@@ -133,6 +133,22 @@ search ran); an audit saved before that rule and one run after it are not
 measured the same way, although the page does not mark either, so do not read a
 difference between them as a change in your visibility.
 
+**Run it again and see what changed.** A saved audit has a **Run again** button. It asks the same questions of the same engine, using the
+brand, website and rivals the audit was saved with (what is on the screen is not used; a question you added afterwards with "Add & Audit Query" is
+not part of a saved audit). It counts like any other audit. The new audit shows **Since the previous run** above its card:
+
+- it compares only the answers that were measured in **both** runs, and says how many: for example *named in 2 of 2 before and in 1 of 2 now*.
+  These are counts, not a percentage, because with a handful of answers a percentage looks more certain than it is;
+- the sources that appeared or went and the rivals newly named come from those same answers only. An answer that failed or was not counted
+  in one run is listed as *not measured in one of the two runs* and adds nothing, so a failed answer can never look like a lost source or a new rival;
+- if the two audits were not measured the same way (another counting rule, another model, other questions, another business or rival list)
+  the page shows the two side by side and says why the difference is not shown as a change. An audit saved before the rule of 2026-11 and one run
+  after it are not measured the same way, although the page does not mark either;
+- every comparison ends with *Answer engines vary from run to run; a change in one answer is an observation, not a trend.* Read it as exactly that.
+
+If the earlier audit has been deleted the strip says so and shows nothing else. A re-run that fails is shown as a failed audit, is not saved,
+and the earlier audit is untouched.
+
 **The modules (left side; on a phone, the list above the report)**
 
 - **Query Intent Matrix** - each question, and where you ranked per engine.

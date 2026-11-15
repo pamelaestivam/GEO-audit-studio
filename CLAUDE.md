@@ -369,6 +369,13 @@ have to be rediscovered from scratch, not so it can be skipped.
   modes `unsearched_answer`, `unsearched_second`, `search_refused`, `search_500`): an unsearched answer is not counted (1 of 2, the same
   calls as a searched audit), all unsearched is a failed audit with 1 call, a refused search fails as before (baseline measured on main) plus
   the hint, the cap carries no hint, and each readiness case (two calls, breaker not tripped by a refused search, cached = 0 calls) (needs a current `dist/`)
+- `npx tsx test/reportCompare.test.ts` — `compareReports` (`src/reportCompare.ts`), pure: every reason two audits are not comparable, a failed look-up
+  on each side with its sources, a rival named only in a pair that failed in the other run, identical, empty and one-question audits
+- `npx tsx test/rerunE2E.test.ts` — the real built server and a fake Gemini that changes its answer between two runs: `/api/audit/rerun` reads
+  every input from the saved audit (a junk body is ignored), costs exactly what the audit costs, carries `previousAuditId` on the saved report, a second
+  user gets the not-found answer, a retried click is one audit, a failed re-run is not saved, the limiter and sign-in apply (needs a current `dist/`)
+- `npx tsx test/rerunUi.test.ts` — "Run again" and the "Since the previous run" strip in Chromium, desktop and phone (counts, the caveat, no percentage,
+  no sideways scroll, the strip on the first screen, the deleted-earlier-audit sentence, a failed re-run) (needs a current `dist/` and a Chromium)
 - `npx tsx test/testHarness.test.ts` — a guard on the tests themselves: no test may `return` early after a failed check without setting an exit status (that printed FAIL and exited 0, so the suite stayed green without having run the test; source scan, checked against fixtures of each shape)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
   quota-breaker rule (including the several-engine cases no end-to-end test can reach)

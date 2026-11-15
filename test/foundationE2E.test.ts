@@ -212,6 +212,7 @@ async function main() {
       ['POST', '/api/audit/parse-url'],
       ['POST', '/api/audit/generate-queries'],
       ['POST', '/api/audit/evaluate-query'],
+      ['POST', '/api/audit/rerun'],
       ['GET', '/api/audit/job/anything'],
       ['GET', '/api/audits'],
       ['GET', '/api/audits/anything'],
