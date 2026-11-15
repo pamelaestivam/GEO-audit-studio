@@ -9,7 +9,8 @@ import { readFileSync, existsSync } from 'node:fs';
 let failures = 0;
 function check(name: string, ok: boolean, detail = '') { if (!ok) failures++; console.log(`${ok ? 'pass' : 'FAIL'}  ${name}${!ok && detail ? `\n        ${detail}` : ''}`); }
 
-const wf = readFileSync('.github/workflows/ci.yml', 'utf8');
+// comments are removed before any match (a commented-out `if: always()` must not count)
+const wf = readFileSync('.github/workflows/ci.yml', 'utf8').split('\n').filter((l) => !/^\s*#/.test(l)).map((l) => l.replace(/\s+#\s.*$/, '')).join('\n');
 const jobsText = wf.slice(wf.indexOf('\njobs:') + 6);
 // job id -> its text (a job starts at two-space indent `id:`)
 const jobs: Record<string, string> = {};
@@ -22,12 +23,14 @@ const others = ids.filter((i) => i !== 'test');
 check('the workflow has the gate job `test` and other jobs', ids.includes('test') && others.length >= 4, ids.join());
 check('the gate job is named exactly `test` (the name the repository\'s rules wait for)', /name: test\n/.test(jobs.test));
 check('...needs every other job', others.every((j) => new RegExp(`needs:\\s*\\[[^\\]]*\\b${j}\\b`).test(jobs.test)), others.join());
-check('...runs even when another job failed or was cancelled (a skipped gate can read as passing)', /if: always\(\)/.test(jobs.test));
-check('...and fails unless every result is "success"', /!= "success"/.test(jobs.test) && others.every((j) => jobs.test.includes(`needs.${j}.result`)));
+check('...runs even when another job failed or was cancelled (a skipped gate can read as passing)', /^    if: always\(\)$/m.test(jobs.test));
+check('...and exits 1 unless every result is "success"', /if \[ "\$r" != "success" \]; then[^\n]*exit 1; fi/.test(jobs.test) && others.every((j) => jobs.test.includes(`needs.${j}.result`)));
+check('no job may carry continue-on-error (it would turn a failure into "success")', !/continue-on-error/.test(wf));
+check('no other job has a job-level `if:` (a skipped job is not a green one)', others.every((j) => !/^    if:/m.test(jobs[j])));
 check('every other job has a time limit', others.every((j) => /timeout-minutes:/.test(jobs[j])));
 const manifest = JSON.parse(readFileSync('test/manifest.json', 'utf8')).tests as Array<{ tier: string }>;
 const tiers = [...new Set(manifest.map((t) => t.tier))];
-check('every test tier in the manifest is run by some job', tiers.every((t) => others.some((j) => new RegExp(`run-tests\\.mjs --tier ${t}\\b`).test(jobs[j]))), tiers.join());
+check('every test tier in the manifest is run by some job', tiers.every((t) => others.some((j) => new RegExp(`^\\s+- run: node scripts/run-tests\\.mjs --tier ${t}\\b`, 'm').test(jobs[j]))), tiers.join());
 check('the server tier is run as two shards that cover each other (1/2 and 2/2 through a matrix)', /--tier server --shard \$\{\{ matrix\.shard \}\}\/2/.test(wf) && /shard: \[1, 2\]/.test(wf));
 check('the PostgreSQL job requires its database and the browser job installs Chromium', /REQUIRE_POSTGRES: '1'/.test(jobs.postgres || '') && /playwright install --with-deps chromium/.test(jobs.browser || ''));
 check('the unit job has the symlink guard, the audit and the type check', /git ls-files -s/.test(jobs.unit) && /npm audit --omit=dev/.test(jobs.unit) && /npm run lint/.test(jobs.unit));
