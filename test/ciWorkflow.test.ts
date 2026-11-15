@@ -34,6 +34,7 @@ check('every test tier in the manifest is run by some job', tiers.every((t) => o
 check('the server tier is run as two shards that cover each other (1/2 and 2/2 through a matrix)', /--tier server --shard \$\{\{ matrix\.shard \}\}\/2/.test(wf) && /shard: \[1, 2\]/.test(wf));
 check('the PostgreSQL job requires its database and the browser job installs Chromium', /REQUIRE_POSTGRES: '1'/.test(jobs.postgres || '') && /playwright install --with-deps chromium/.test(jobs.browser || ''));
 check('the unit job has the symlink guard, the audit and the type check', /git ls-files -s/.test(jobs.unit) && /npm audit --omit=dev/.test(jobs.unit) && /npm run lint/.test(jobs.unit));
+check('...and the compiler ratchet (a rise in the strict-flag error counts fails CI)', /^\s+- run: node scripts\/tsc-ratchet\.mjs$/m.test(jobs.unit));
 check('the production install check still runs, after a build', /npm run build/.test(jobs.install || '') && /prod-install-check\.sh/.test(jobs.install || ''));
 check('every job that runs tests sets CI (a skipped test file fails there)', others.filter((j) => /run-tests\.mjs/.test(jobs[j])).every((j) => /CI: 'true'/.test(jobs[j])));
 check('the shared setup is a local action that exists, and every job uses it', existsSync('.github/actions/setup/action.yml') && others.every((j) => /uses: \.\/\.github\/actions\/setup/.test(jobs[j])));

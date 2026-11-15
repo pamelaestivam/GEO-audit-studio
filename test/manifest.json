@@ -437,6 +437,13 @@
    "tier": "unit",
    "needsBuild": false,
    "what": "The protections ledger runner against a fixture repository: defended, undefended, stale, already-red, the fixture never modified; the real ledger is well formed."
+  },
+  {
+   "file": "test/tscRatchet.test.ts",
+   "runner": "tsx",
+   "tier": "unit",
+   "needsBuild": false,
+   "what": "The compiler ratchet: the pure rules and the real script against this repository (the stored baseline matches the compiler today)."
   }
  ]
 }

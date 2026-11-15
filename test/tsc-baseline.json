@@ -1,0 +1,7 @@
+{
+  "comment": "Compiler errors each stricter flag would give over everything tsconfig.json covers. CI fails when a count rises; this file is lowered with: node scripts/tsc-ratchet.mjs --update",
+  "counts": {
+    "strictNullChecks": 97,
+    "noImplicitAny": 1869
+  }
+}
