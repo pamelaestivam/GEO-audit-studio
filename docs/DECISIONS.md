@@ -5,7 +5,19 @@ One entry per non-trivial product or architecture decision, per
 
 ---
 
-## 2026-11-15 - The review seats run on `opus`, not the author's model
+## 2026-11-15 (second entry) - Sonnet is the model for everything; no paid engines
+
+**Decision (owner, Ricardo, in chat, 2026-11-15):** (1) "Sonnet is the model to be used": every session and every agent runs on Sonnet,
+recorded as `docs/OWNER_DIRECTIVES.md` D-11 and hard rule 12 in `CLAUDE.md`; the agents are pinned back to `sonnet`, which **reverses** the
+Opus pin of the entry below (an assistant decision that went against what the owner wanted). (2) "No paid engines": the ChatGPT, Perplexity
+and Claude engines stay switched off; O-10 is closed on that answer, and the model calendar no longer raises an alarm for the models of
+engines that are switched off: their end dates and old confirmations are ignored for the weekly issue, and their end dates are printed as notes in the
+weekly run's log only (a malformed date still fails). (3) "Always give a recommendation and use plain words when asking the owner for
+anything": D-10 and hard rule 11. **Rejected alternative:** keeping Opus reviewers for independence (owner said Sonnet). **Cost of the
+decision, said plainly:** reviews by the author's own model are less independent (I-6); we keep the fresh context, the read-only brief and the
+deliberate-break checks, and the owner may say otherwise at any time.
+
+## 2026-11-15 - The review seats run on `opus`, not the author's model (SUPERSEDED the same day by the entry above: the owner wants Sonnet everywhere)
 
 **Decision (assistant, executing item G1.4 of `docs/ENGINEERING_BACKLOG.md`, which the owner authorised):** `adversarial-reviewer` and
 `eval-pm` are pinned to `opus`; the rule for other authors is in `docs/ENGINEERING_STANDARDS.md` section 10; `test/reviewAgents.test.sh`
