@@ -97,6 +97,10 @@ export function configuredEngines(): EngineName[] {
 }
 
 /**
+ * The default model ids. When each was last confirmed on the vendor's page, what the page said, and any published end date are in
+ * `src/modelCalendar.ts` (a weekly workflow checks it); change an id here and its calendar entry together (test/modelCalendar.test.ts
+ * fails when they disagree).
+ *
  * The default Claude model. `claude-sonnet-4-5` was the default until it was
  * deprecated (2026-09-30, retired 2026-11-30 per Anthropic's model deprecations
  * page): a default that stops answering turns every Claude observation into a
