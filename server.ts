@@ -1920,6 +1920,8 @@ Return valid JSON matching the schema.`;
       : !hasUsable
         ? noEvidencePayload(plan, evidenceByQuery)
         : assemblePayload(plan, evidenceByQuery, narrativeResult?.narrative ?? null, narrativeResult ? narrativeResult.narrativeFailure : 'The analysis step returned nothing usable.');
+    // A re-run's saved report carries the id of the audit it was run again from (job rows are pruned, so the link lives here).
+    if (plan.previousAuditId && (payload as any).report && !(payload as any).report.degraded) (payload as any).report.previousAuditId = plan.previousAuditId;
     // A report whose own figures contradicted each other is a bug in this code. The person already got a failed
     // audit that says so; the owner gets an incident, because nothing else would tell them.
     const violations: string[] | undefined = (payload as any).invariantViolations;
@@ -2008,11 +2010,15 @@ Return valid JSON matching the schema.`;
     }
   }
 
-  app.post(
-    '/api/audit/run',
-    handle(async (req, res) => {
-      const rawName = typeof req.body?.businessName === 'string' ? req.body.businessName.trim() : '';
-      // (req.body can be undefined for an empty POST; every read below is optional-chained.)
+  /**
+   * Plan and start one audit from an already-read request body. `/api/audit/run` passes the page's body; `/api/audit/rerun` passes
+   * what the SERVER read from a saved audit (docs/PLAN_2026-11.md P3), so both go through the same cleaning, caps, admission,
+   * idempotency and step plan. `previousAuditId` is carried on the stored plan and lands on the saved report (job rows are pruned
+   * after a week, so the link cannot live on the job).
+   */
+  async function startAudit(req: express.Request, res: express.Response, body: any, previousAuditId?: string) {
+      const rawName = typeof body?.businessName === 'string' ? body.businessName.trim() : '';
+      // (body can be undefined for an empty POST; every read below is optional-chained.)
       if (!rawName) {
         return res.status(400).json({ error: 'A business or brand name is required to run an audit.' });
       }
@@ -2023,14 +2029,14 @@ Return valid JSON matching the schema.`;
       }
 
       // Normalise the shape once so the pipeline never sees ragged input.
-      req.body.businessName = rawName;
-      req.body.domain = cleanText(req.body?.domain, 200);
-      req.body.industry = cleanText(req.body?.industry, 200);
-      req.body.coreOfferings = cleanText(req.body?.coreOfferings, 300);
-      req.body.targetAudience = cleanText(req.body?.targetAudience, 300);
-      req.body.competitors = cleanCompetitors(req.body?.competitors);
+      body.businessName = rawName;
+      body.domain = cleanText(body?.domain, 200);
+      body.industry = cleanText(body?.industry, 200);
+      body.coreOfferings = cleanText(body?.coreOfferings, 300);
+      body.targetAudience = cleanText(body?.targetAudience, 300);
+      body.competitors = cleanCompetitors(body?.competitors);
 
-      req.body.queries = (Array.isArray(req.body?.queries) ? req.body.queries : [])
+      body.queries = (Array.isArray(body?.queries) ? body.queries : [])
         .filter((q: any) => q && typeof q.queryText === 'string' && q.queryText.trim().length > 0)
         .slice(0, MAX_AUDIT_QUERIES)
         .map((q: any, i: number) => ({
@@ -2043,7 +2049,7 @@ Return valid JSON matching the schema.`;
       const owner: string = res.locals.user.owner;
       const budgetKey: string = res.locals.user.budgetKey;
 
-      const planned = planAudit(req.body, { fallbackQueries: getFallbackQueries, maxQueries: MAX_AUDIT_QUERIES });
+      const planned = planAudit(body, { fallbackQueries: getFallbackQueries, maxQueries: MAX_AUDIT_QUERIES });
       if ('error' in planned) return res.status(400).json({ error: planned.error });
 
       // The single most expensive thing to get wrong. A cold instance stalls
@@ -2079,6 +2085,7 @@ Return valid JSON matching the schema.`;
             ...planned,
             driver: AUDIT_DRIVER,
             engines,
+            ...(previousAuditId ? { previousAuditId } : {}),
             unconfigured: measurable
               ? undefined
               : {
@@ -2088,12 +2095,12 @@ Return valid JSON matching the schema.`;
                       : noEngineReason('nothing could be measured') + ' Fix that and re-run.',
                 },
             request: {
-              businessName: req.body.businessName,
-              domain: req.body.domain,
-              industry: req.body.industry,
-              coreOfferings: req.body.coreOfferings,
-              competitors: req.body.competitors,
-              queries: req.body.queries,
+              businessName: body.businessName,
+              domain: body.domain,
+              industry: body.industry,
+              coreOfferings: body.coreOfferings,
+              competitors: body.competitors,
+              queries: body.queries,
             },
           };
           const job: StoredJob = {
@@ -2135,6 +2142,46 @@ Return valid JSON matching the schema.`;
       // already finished or failed (the client's next poll would say so anyway).
       const current = await store.getJob(outcome.id);
       res.status(202).json({ jobId: outcome.id, status: current?.status ?? 'running', driver: (current?.plan as StoredAuditPlan | undefined)?.driver ?? 'inline' });
+  }
+
+  app.post(
+    '/api/audit/run',
+    handle(async (req, res) => {
+      await startAudit(req, res, req.body);
+    })
+  );
+
+  /**
+   * Run a saved audit again. The request carries only the saved audit's id (and an Idempotency-Key): every input and the question
+   * list are read HERE from the saved report, because what the page holds can differ (a question added with "Add & Audit Query" is never
+   * saved). Only the owner can re-run an audit; anyone else gets the answer for an audit that does not exist.
+   */
+  app.post(
+    '/api/audit/rerun',
+    handle(async (req, res) => {
+      const auditId = typeof req.body?.auditId === 'string' ? req.body.auditId.trim().slice(0, 200) : '';
+      const saved = auditId ? await store.getAudit(res.locals.user.owner, auditId) : null;
+      if (!saved) return res.status(404).json({ error: 'That saved audit was not found. It may have been deleted.' });
+      const queries = (Array.isArray(saved.queriesTested) ? saved.queriesTested : []).map((q: any) => ({
+        id: q?.id,
+        intent: q?.intent,
+        queryText: q?.queryText,
+        targetPersona: q?.targetPersona,
+      }));
+      await startAudit(
+        req,
+        res,
+        {
+          businessName: saved.businessName,
+          domain: saved.domain,
+          industry: saved.industry,
+          coreOfferings: saved.coreOfferings,
+          targetAudience: saved.targetAudience,
+          competitors: saved.competitors,
+          queries,
+        },
+        saved.id
+      );
     })
   );
 

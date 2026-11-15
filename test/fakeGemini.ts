@@ -8,7 +8,7 @@
  */
 import http from 'http';
 
-export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only' | 'unsearched_answer' | 'unsearched_second' | 'search_refused' | 'search_500';
+export type FakeMode = 'ok' | 'narrative_fails' | 'narrative_findings' | 'narrative_unattributable' | 'narrative_remediation' | 'narrative_invented_numbers' | 'lookup_placeholder' | 'lookup_good' | 'unauthorized' | 'slow' | 'many_vendors' | 'partial_failure' | 'narrative_odd_values' | 'daily_quota' | 'daily_quota_after_first' | 'cited_only' | 'unsearched_answer' | 'unsearched_second' | 'search_refused' | 'search_500' | 'changed_answer';
 
 export const FAKE_ANSWER = `For poke in Austin, top picks are:
 
@@ -157,6 +157,9 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
                 body.includes('poke house menu')
                 ? FAKE_ANSWER
                 : FAKE_ANSWER.replace('* **Poke House** - solid fresh fish.\n', '')
+            : mode === 'changed_answer'
+              ? // a later run of the same questions: the brand is no longer named, a new rival is, and the cited site is another one
+                FAKE_ANSWER.replace('* **Poke House** - solid fresh fish.\n', '* **Wild Tuna Co** - sustainable fish.\n')
             : mode === 'many_vendors'
               ? // the second question's answer never names the brand, so "who took the answer" is exercised
                 body.includes('poke house menu')
@@ -173,7 +176,7 @@ export function startFakeGemini(port: number, getMode: () => FakeMode, slowMs = 
               // carried it, so no check on "did a search run" could ever fail (docs/PLAN_2026-11.md P2).
               ...(hasSearchTool && !answeredFromMemory ? { groundingMetadata: {
                 groundingChunks: [
-                  { web: { uri: 'https://yelp.com/biz/x', title: 'yelp.com' } },
+                  mode === 'changed_answer' && !wantsJson ? { web: { uri: 'https://tripadvisor.com/x', title: 'tripadvisor.com' } } : { web: { uri: 'https://yelp.com/biz/x', title: 'yelp.com' } },
                   ...(mode === 'cited_only' && !wantsJson ? [{ web: { uri: 'https://poke.house/menu', title: 'poke.house' } }] : []),
                 ],
                 webSearchQueries: ['poke austin'],

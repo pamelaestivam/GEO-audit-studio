@@ -15,6 +15,8 @@ import { ExportReportModal } from './components/ExportReportModal';
 import { CleanStartDashboard } from './components/CleanStartDashboard';
 import { AuthPage, type Session } from './components/AuthPage';
 import { apiFetch, onSessionRejected, setAuthToken } from './apiClient';
+import { runAgainJob } from './auditClient';
+import { SincePreviousRun } from './components/SincePreviousRun';
 import { useAuditStatus } from './useQuotaStatus';
 import { DEFAULT_MONITORING_CONFIG } from './data/sampleAudits';
 import { AuditReport, MonitoringConfig, User } from './types';
@@ -257,6 +259,27 @@ export default function App() {
     );
   };
 
+  // Run a saved audit again. The server reads every input and the question list from the saved audit; the page sends only its id.
+  // A re-run that fails is shown like any failed audit (it is not saved and the earlier audit is untouched).
+  const [rerun, setRerun] = useState<{ running: boolean; message: string; error: string | null } | null>(null);
+  const rerunRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    // On a phone the button is below the fold of what happens next: bring the progress or the problem into view.
+    if (rerun) rerunRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [rerun?.running, rerun?.error]);
+  const handleRunAgain = async (id: string) => {
+    if (rerun?.running) return;
+    setRerun({ running: true, message: 'Starting the audit...', error: null });
+    try {
+      const data = await runAgainJob(id, (message) => setRerun({ running: true, message, error: null }));
+      if (!data.report) throw new Error('The audit returned no report. Please try again.');
+      setRerun(null);
+      handleAddNewAudit(data.report);
+    } catch (err: any) {
+      setRerun({ running: false, message: '', error: `${err?.message || 'The audit could not be run again.'} The earlier audit is unchanged.` });
+    }
+  };
+
   const handleAddNewAudit = (newReport: AuditReport) => {
     setAudits((prev) => [newReport, ...prev]);
     setFreshSearch(false);
@@ -349,7 +372,21 @@ export default function App() {
           ) : activeAudit ? (
             <>
               {/* Executive Summary Card */}
-              <ExecutiveSummaryCard audit={activeAudit} onNavigate={setActiveTab} onDelete={handleDeleteAudit} />
+              <div ref={rerunRef} className="scroll-mt-24">
+                {rerun?.running && (
+                  <div role="status" className="mb-4 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs font-medium">
+                    Running the audit again: {rerun.message}
+                  </div>
+                )}
+                {rerun?.error && (
+                  <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-medium">
+                    {rerun.error}
+                  </div>
+                )}
+              </div>
+              {/* Above the card on purpose: on a phone the card is tall, and what changed is the reason for running again. */}
+              <SincePreviousRun audit={activeAudit} />
+              <ExecutiveSummaryCard audit={activeAudit} onNavigate={setActiveTab} onDelete={handleDeleteAudit} onRunAgain={handleRunAgain} rerunning={!!rerun?.running} />
 
               {/* Active Module Content Pane */}
               <div className="mt-6 scroll-mt-4" ref={contentRef}>

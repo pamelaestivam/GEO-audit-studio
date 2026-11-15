@@ -30,9 +30,13 @@ interface ExecutiveSummaryCardProps {
   onNavigate?: (tab: TabType) => void;
   /** Delete this audit from storage. Offered only for audits the server kept. */
   onDelete?: (id: string) => void;
+  /** Run this saved audit again. Offered only for audits the server kept: it reads the inputs from the saved copy. */
+  onRunAgain?: (id: string) => void;
+  /** True while a re-run is under way, so the button cannot start a second one. */
+  rerunning?: boolean;
 }
 
-export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audit, onNavigate, onDelete }) => {
+export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audit, onNavigate, onDelete, onRunAgain, rerunning }) => {
   // Every headline metric is backed by a module. The tiles used to be inert
   // divs, so tapping the number a user cared about did nothing at all.
   const tileClass =
@@ -112,6 +116,16 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
             <span className="text-amber-300/90">
               Not saved. This audit is lost if you refresh or close the tab - use Export to keep a copy.
             </span>
+          )}
+          {audit.saved && onRunAgain && (
+            <button
+              type="button"
+              onClick={() => onRunAgain(audit.id)}
+              disabled={rerunning}
+              className="min-h-[36px] px-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold"
+            >
+              {rerunning ? 'Running again...' : 'Run again'}
+            </button>
           )}
           {audit.saved && onDelete && (
             <button

@@ -1211,6 +1211,15 @@ Store audits, then re-run the same query set on a schedule. Show the delta.
 "Your visibility went 12% → 34% after we shipped the schema fixes" is the
 argument that justifies a retainer. Unlocks 2.1 wholesale.
 
+**Built 2026-11-15 (`docs/PLAN_2026-11.md` P3), the on-demand half:** a saved audit has **Run again** (`POST /api/audit/rerun`, the server reads
+the inputs and the questions from the saved audit) and the new saved audit carries `previousAuditId`; the page shows "Since the previous run" from
+`compareReports` (`src/reportCompare.ts`): counts over the question-and-engine pairs measured in both runs, sources that appeared or went, rivals
+newly named, pairs not measured in one of the two runs, and a refusal (the two shown side by side) when the counting rule, the model, the questions or
+the business differ. **Still open:** the scheduled half (re-running on a schedule is not built, there is no server clock on Vercel Hobby); a trend
+over more than two runs (the strip compares one audit with the one before it); the comparison is computed in the browser from two fetched reports
+(a list of many audits would fetch one extra report each time one is opened); a re-run of an audit whose questions were later edited by "Add &
+Audit Query" re-runs only the questions the audit was run with.
+
 ### 3.2 Answer-engine trend alerting
 
 Once history exists, alert on drops: a competitor overtaking the client on a

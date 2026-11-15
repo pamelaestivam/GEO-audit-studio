@@ -168,6 +168,8 @@ export interface AuditReport {
   degradedReason?: string;
   /** Said under the reason when a failed audit ran into Gemini's quota or rate limit (never for the operator's own cap). */
   degradedHint?: string;
+  /** Set on a saved audit that was run again from another: the id of that earlier audit (it may since have been deleted). */
+  previousAuditId?: string;
   observationsAttempted?: number;
   observationsWithEvidence?: number;
   /** Of observationsWithEvidence, how many named the brand (numerator of geoVisibilityScore). */
