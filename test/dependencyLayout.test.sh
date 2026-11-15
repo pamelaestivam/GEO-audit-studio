@@ -14,6 +14,7 @@ if (d!==want) { console.log("dependencies are: "+d+" (expected "+want+")"); proc
 const dev=p.devDependencies; for (const m of ["vite","@vitejs/plugin-react","@tailwindcss/vite","react","react-dom"]) if(!dev[m]) { console.log(m+" is not a devDependency"); process.exit(1); }
 ' "$repo" && ok "dependencies are exactly the server's run-time packages; build tools are devDependencies" || bad "dependency layout"
 y="$repo/.github/dependabot.yml"
+grep -q '"installCommand": "npm ci --include=dev"' "$repo/vercel.json" && ok "Vercel installs devDependencies whatever NODE_ENV is (vercel.json installCommand)" || bad "vercel.json has no installCommand with --include=dev"
 grep -q 'package-ecosystem: npm' "$y" && ok "dependabot watches npm" || bad "dependabot does not watch npm"
 awk '/package-ecosystem: /{f=($0 ~ /npm/)} f&&/interval: weekly/{w=1} f&&/applies-to: security-updates/{s=1} f&&/patterns:/{g=1} END{exit !(w&&s&&g)}' "$y" && ok "...weekly, security updates, grouped" || bad "...weekly / security / grouped missing"
 grep -q 'open-pull-requests-limit: 0' "$y" && ok "...routine version bumps are off" || bad "open-pull-requests-limit: 0 is missing"
