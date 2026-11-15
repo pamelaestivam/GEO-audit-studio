@@ -71,9 +71,10 @@ function property(name: string, law: (s: ReturnType<typeof scenario>, r: R) => s
     try { why = law(sc, r); } catch (e) { why = `threw: ${(e as Error).message}`; }
     if (why) bad = { seed: caseSeed, why, sc };
   }
-  if (!bad) { console.log(`pass  ${name}`); return; }
+  if (!bad) { console.log(`pass  ${name}`); } else {
   failures++;
   console.log(`FAIL  ${name}\n        ${bad.why}\n        replay: PROP_SEED=${bad.seed} PROP_RUNS=1 npx tsx test/properties.test.ts   (run seed ${SEED})\n        case: ${JSON.stringify({ matchers: (bad.sc as any).matchers.map((m: BrandMatcher) => m.label), texts: (bad.sc as any).evidence.map((e: QueryEvidence) => e.answerText) }).slice(0, 1200)}`);
+  }
 }
 const sameCards = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
