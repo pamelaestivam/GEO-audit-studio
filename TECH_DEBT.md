@@ -1221,6 +1221,10 @@ tracked symlink and every merge is reviewed.
 
 `scripts/smoke.mjs --expect-commit` (G1.7) is tested against a stand-in site and the workflow wiring is checked as text. It has not run against the real Vercel site, so two things are unconfirmed: that `/api/health` reports `VERCEL_GIT_COMMIT_SHA` in production (the daily check of 2026-11-14 printed no commit line), and that `github.event.deployment.sha` is set for the deployment-triggered run. If `/api/health` reports no commit the check FAILS with a sentence (Vercel's "Automatically expose System Environment Variables" setting must be on); if the deployment sha is empty the run quietly compares against the head of main instead, which can read as a false RED in the minutes after a merge (the same happens on a scheduled or manual run made while a just-merged commit is still deploying; the next deployment-triggered run closes it). A manual run with a non-production `url` input (a preview) is compared against the head of main too, so it fails unless that URL runs the head; it never touches the tracking issue. Read the first run's log and fix the cause (`docs/ENGINEERING_BACKLOG.md` G1.7).
 
+### 2.24 CI does not cache the Playwright browser (low)
+
+G1.6 split CI into parallel jobs and moved the Chromium install into the one job that needs it (browser), which saves the install in the other four. Caching the browser between runs needs `actions/cache`, a third-party action that this repository pins to a commit like every other; the commit id cannot be looked up from a session limited to this repository, and an unpinned tag would break the repository's own rule (`test/ciWorkflow.test.ts` fails on a tag-only `uses:`). Dependabot (`.github/dependabot.yml`) keeps pins current, so the way to add it is: someone with access looks up the commit of the current `actions/cache` release, adds the step to the browser job with that pin, and Dependabot maintains it. Cost of not doing it: about 25 seconds per run in the browser job.
+
 ## 3. Expansion — worth building next
 
 Roughly in order of value per unit of effort.

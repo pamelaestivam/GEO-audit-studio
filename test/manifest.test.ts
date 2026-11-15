@@ -65,6 +65,10 @@ check('one at a time, a failure does not stop the files after it in the same tie
 const onlyServer = run(fake, ['--tier', 'server']);
 check('--tier selects only that tier', onlyServer.code === 0 && !/good\.test\.sh/.test(onlyServer.out) && /last\.test\.sh/.test(onlyServer.out));
 check('an unknown tier is refused with a sentence', run(fake, ['--tier', 'fast']).code === 2);
+const sh1 = run(fake, ['--tier', 'unit', '--shard', '1/2', '--list']).out, sh2 = run(fake, ['--tier', 'unit', '--shard', '2/2', '--list']).out;
+const names = (o: string) => (o.match(/test\/[\w.-]+/g) || []).sort().join();
+check('--shard i/n splits a selection into disjoint parts that together are all of it', names(sh1) !== '' && names(sh2) !== '' && !names(sh1).split(',').some((f) => names(sh2).split(',').includes(f)) && [...names(sh1).split(','), ...names(sh2).split(',')].sort().join() === names(run(fake, ['--tier', 'unit', '--list']).out));
+check('a bad --shard is refused with a sentence', run(fake, ['--shard', '3/2']).code === 2 && run(fake, ['--shard', 'x']).code === 2 && run(fake, ['--shard']).code === 2);
 const one = run(fake, ['test/good.test.sh']);
 check('naming a file runs exactly that file', one.code === 0 && /2 checks/.test(one.out) && !/bad\.test\.sh/.test(one.out));
 check('naming a file that is not in the manifest is refused', run(fake, ['test/nope.test.sh']).code === 2);

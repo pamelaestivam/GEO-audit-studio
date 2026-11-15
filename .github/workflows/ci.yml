@@ -1,8 +1,10 @@
 name: CI
 
 # Every push and PR runs the same gate the owner's working notes require before
-# a merge: typecheck, then `npm test` (build + unit + real-server E2E + contract
-# checks). main auto-deploys, so a red run here is a red release.
+# a merge: typecheck, then every test (build + unit + real-server E2E + contract
+# checks). main auto-deploys, so a red run here is a red release. The work runs as
+# parallel jobs (unit, two server shards, browser, postgres, production install) and the
+# LAST job, still named `test`, needs all of them: the required-check name did not change.
 #
 # This workflow is the whole merge gate and needs no container registry (it still
 # downloads npm packages and the Playwright browser). The Docker image build is a separate, optional workflow
@@ -22,7 +24,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  unit:
+    name: unit and lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -38,15 +41,49 @@ jobs:
             echo "$links"
             exit 1
           fi
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # same pin as the confidenceHigh repository
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      # The browser tests drive the real built app in Chromium.
-      - run: npx playwright install --with-deps chromium
+      - uses: ./.github/actions/setup
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
+      - run: node scripts/run-tests.mjs --tier unit
+        env:
+          CI: 'true'
+
+  server:
+    name: server ${{ matrix.shard }}/2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
+      - uses: ./.github/actions/setup
+      - run: node scripts/run-tests.mjs --tier server --shard ${{ matrix.shard }}/2
+        env:
+          CI: 'true'
+
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
+      - uses: ./.github/actions/setup
+      # The browser tests drive the real built app in Chromium. Only this job installs it (a job-level saving instead of a cache:
+      # caching it needs a pinned third-party action, and a pin cannot be looked up from here; see TECH_DEBT.md 2.24).
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/run-tests.mjs --tier browser
+        env:
+          CI: 'true'
+
+  postgres:
+    name: postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
+      - uses: ./.github/actions/setup
       # The PostgreSQL store is tested against a real server. The runner image ships PostgreSQL; starting it pulls no
       # container image, so there is no registry to rate-limit this gate. REQUIRE_POSTGRES makes a missing database a
       # failure instead of a skip.
@@ -54,15 +91,44 @@ jobs:
         run: |
           sudo systemctl start postgresql.service
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres'"
-      - run: npm test
+      - run: node scripts/run-tests.mjs --tier postgres
         env:
           CI: 'true'
           REQUIRE_POSTGRES: '1'
           TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+
+  install:
+    name: production install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # same pin as the confidenceHigh repository
+      - uses: ./.github/actions/setup
       # The built server must run from a clean directory with ONLY production
       # dependencies - what a Docker/Render/VPS build actually has. It also boots the
       # server, runs the smoke test, restarts it on the same data directory, proves the
       # database file kept the data and that the restarted server writes to that same file,
       # and takes and checks a backup. It does NOT prove the Docker image builds: that is
       # docker.yml, which is not a merge gate.
+      - run: npm run build
       - run: bash scripts/prod-install-check.sh
+
+  # The required check. Its name is `test` (the name the repository's rules wait for) and it passes only when EVERY job above did.
+  # `if: always()` so a failed or cancelled job makes this one fail instead of leaving it "skipped", which GitHub can read as passing.
+  test:
+    name: test
+    needs: [unit, server, browser, postgres, install]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job must have succeeded
+        run: |
+          echo "unit:     ${{ needs.unit.result }}"
+          echo "server:   ${{ needs.server.result }}"
+          echo "browser:  ${{ needs.browser.result }}"
+          echo "postgres: ${{ needs.postgres.result }}"
+          echo "install:  ${{ needs.install.result }}"
+          for r in "${{ needs.unit.result }}" "${{ needs.server.result }}" "${{ needs.browser.result }}" "${{ needs.postgres.result }}" "${{ needs.install.result }}"; do
+            if [ "$r" != "success" ]; then echo "A job did not succeed, so the gate fails."; exit 1; fi
+          done

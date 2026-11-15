@@ -1,0 +1,11 @@
+name: Set up Node and install
+description: Node from .nvmrc with the npm cache, then npm ci. Used by every job of ci.yml (checkout must already have run).
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # same pin as the confidenceHigh repository
+      with:
+        node-version-file: .nvmrc
+        cache: npm
+    - run: npm ci
+      shell: bash
