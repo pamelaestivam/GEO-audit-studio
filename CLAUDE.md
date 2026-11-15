@@ -354,6 +354,11 @@ have to be rediscovered from scratch, not so it can be skipped.
   over after its claim expires with the repeat recorded; nothing lost when every server is killed; readiness says postgres (needs a
   current `dist/` and `TEST_DATABASE_URL`)
 - `npx tsx test/recentTrouble.test.ts` — the "recent trouble" sentence the deep readiness check reports: quiet is healthy, a step that threw or ran out of tries is a fault, restarts and slow audits are noted but are not (pure checks; the end-to-end proof is in `auditStepsE2E`)
+- `npx tsx test/engineProbe.test.ts` — the engine probe (`scripts/engine-probe.mjs`, started by hand as the `engine-probe` workflow) as a real
+  child process against local fakes of Gemini, Mistral and Groq: the printed blocks (status, whether a search ran, source count, field names,
+  the reply cut at 4,000 characters), the call budget (13 calls at 2 questions, 17 at 3; a bigger run or a bad `--questions` is refused before
+  any call), SKIP lines for a missing key, and that no key, `projects/<digits>` or ten-digit number reaches the public log although the fake
+  failures carry them (no network, no `dist/` needed)
 - `npx tsx test/testHarness.test.ts` — a guard on the tests themselves: no test may `return` early after a failed check without setting an exit status (that printed FAIL and exited 0, so the suite stayed green without having run the test; source scan, checked against fixtures of each shape)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
   quota-breaker rule (including the several-engine cases no end-to-end test can reach)
