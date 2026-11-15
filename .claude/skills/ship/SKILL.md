@@ -28,7 +28,7 @@ In a cloud session `gh` has no valid token (observed 2026-11-15); use the GitHub
 ## 2. Open the pull request
 
 1. One short-lived branch per change (`claude/<topic>`), commit message says the root cause, ends with the attribution lines of the session.
-2. Push with `git push -u origin <branch>`. Create the pull request with the GitHub tool (there is no `gh` here) and fill
+2. Push with `git push -u origin <branch>`. Create the pull request with the GitHub tool (`gh` has no valid token in a cloud session) and fill
    `.github/pull_request_template.md` completely: every section, "N/A" with a reason, **What was NOT verified** honestly.
 3. Do not skip hooks, do not force-push, do not touch `origin`. If the harness blocks a git operation (push, fetch, ref change), **stop and report**; do not look for a variation (hard rule 10). The GitHub tools are the sanctioned route for small files; for anything else ask the owner for the exact commands.
 

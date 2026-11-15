@@ -18,11 +18,11 @@ for p in $(grep -o '`[A-Za-z0-9_./-]*\.\(md\|sh\|ts\|yml\|json\)`' "$f" | tr -d 
   if [ -e "$repo/$p" ]; then ok "points at a file that exists: $p"; else bad "points at a missing file: $p"; fi
 done
 # the safety sentences themselves, not only keywords: weakening one fails here
-for sentence in 'Merge as a **merge commit** (not squash, not rebase' 'Only **SHIP** merges' 'Not green means not merged' 'Never type a hash from memory' 'git add -A`, `git add .` or `git commit -a`' 'is restarted from the start, never accepted as final' 'a red gate twice for the same cause means stop and report' 'stop and report**; do not look for a variation' 'with the same read-only briefing' 'shows `test` green' 'a red `main` is a stop-the-line event' 'first line LAST in the reply'; do
+for sentence in 'Merge as a **merge commit** (not squash, not rebase' 'Only **SHIP** merges' 'Not green means not merged' 'Never type a hash from memory' 'git add -A`, `git add .` or `git commit -a`' 'is restarted from the start, never accepted as final' 'a red gate twice for the same cause means stop and report' 'stop and report**; do not look for a variation' 'with the same read-only briefing' 'shows `test` green' 'a red `main` is a stop-the-line event' 'first line LAST in the reply' "waits for the owner's yes" 'briefed read-only: it may experiment only in a `git init` inside `mktemp -d`' 'Run the `eval-pm` agent on the pull request'; do
   grep -q -F -- "$sentence" "$f" && ok "keeps: $sentence" || bad "weakened or removed: $sentence"
 done
 # front matter is closed (a skill with broken front matter does not load)
-[ "$(awk 'NR>1 && /^---$/ {print NR; exit}' "$f")" -gt 2 ] 2>/dev/null && ok "front matter is closed" || bad "front matter is not closed"
+[ "$(awk 'NR>1 && /^---$/ {print NR; exit}' "$f")" -gt 2 ] && [ "$(awk 'NR>1 && /^---$/ {print NR; exit}' "$f")" -lt 8 ] 2>/dev/null && ok "front matter is closed" || bad "front matter is not closed"
 # every npm script, agent and script it names exists
 for n in $(grep -o 'npm run [a-z:-]*' "$f" | awk '{print $3}' | sort -u); do node -e 'process.exit(require(process.argv[1]+"/package.json").scripts[process.argv[2]]?0:1)' "$repo" "$n" && ok "npm script exists: $n" || bad "npm script missing: $n"; done
 for a in $(grep -o '`[a-z-]*` agent' "$f" | tr -d '` ' | sed 's/agent$//' | sort -u); do [ -f "$repo/.claude/agents/$a.md" ] && ok "agent exists: $a" || bad "agent missing: $a"; done
