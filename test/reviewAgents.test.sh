@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The owner's rule (docs/OWNER_DIRECTIVES.md D-11): every agent runs on Sonnet. The two review seats must pin exactly `sonnet` in a
+# The owner's rule (docs/OWNER_DIRECTIVES.md D-11): every agent runs on Sonnet. The three agents must pin exactly `sonnet` in a
 # front matter that starts on line 1, is closed, and holds exactly one model line; the value is normalised (case, quotes, comments,
 # trailing spaces, CR) before it is judged, so `inherit`, `opus`, `"Sonnet-x"` and a missing line all fail.
 #   bash test/reviewAgents.test.sh

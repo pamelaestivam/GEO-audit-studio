@@ -110,11 +110,12 @@ export function checkCalendar(calendar: readonly ModelCalendarEntry[], today: st
     else {
       const age = Math.floor((now - conf) / DAY);
       if (age < 0) problems.push(`${who}: confirmed on ${e.confirmedOn}, which is in the future.`);
-      else if (age > MAX_CONFIRMATION_AGE_DAYS) problems.push(`${who} was last confirmed ${age} days ago (${e.confirmedOn}; the limit is ${MAX_CONFIRMATION_AGE_DAYS}). Re-read ${e.page}, then update the entry in src/modelCalendar.ts with the date and what the page says.`);
+      else if (age > MAX_CONFIRMATION_AGE_DAYS && e.inUse) problems.push(`${who} was last confirmed ${age} days ago (${e.confirmedOn}; the limit is ${MAX_CONFIRMATION_AGE_DAYS}). Re-read ${e.page}, then update the entry in src/modelCalendar.ts with the date and what the page says.`);
     }
-    if (e.endDate !== null && e.inUse) {
+    if (e.endDate !== null) {
       const end = parse(e.endDate);
       if (!Number.isFinite(end)) { problems.push(`${who}: the end date "${e.endDate}" is not a real YYYY-MM-DD date.`); continue; }
+      if (!e.inUse) continue; // a switched-off engine: the end date is a note (calendarNotes), never an alarm
       const left = Math.floor((end - now) / DAY);
       if (left < 0) problems.push(`${who} reached its published end date ${e.endDate} ${-left} days ago. Read ${e.page}, choose a replacement, and change the default in src/providers.ts.`);
       else if (left < END_DATE_WARNING_DAYS) problems.push(`${who} ends on ${e.endDate}, ${left} days from now (the warning is ${END_DATE_WARNING_DAYS} days). Read ${e.page}, choose a replacement, and change the default in src/providers.ts before then.`);

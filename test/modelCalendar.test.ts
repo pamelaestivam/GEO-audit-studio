@@ -36,7 +36,9 @@ const off = e({ inUse: false, endDate: '2026-11-10' });
 check('an end date on a switched-off engine is not a problem', checkCalendar([off], '2026-11-15').length === 0);
 check('...it is a note that says nothing is affected', calendarNotes([off], '2026-11-15').length === 1 && /switched off/.test(calendarNotes([off], '2026-11-15')[0]));
 check('...and a note for an engine that IS in use is not given (it is a problem instead)', calendarNotes([e({ endDate: '2026-11-10' })], '2026-11-15').length === 0);
-check('...but an old confirmation on a switched-off engine is still a problem', checkCalendar([e({ inUse: false, confirmedOn: '2026-01-01' })], '2026-11-15').length === 1);
+check('an old confirmation on a switched-off engine is not an alarm either (nobody is affected), and gives no note', checkCalendar([e({ inUse: false, confirmedOn: '2026-01-01' })], '2026-11-15').length === 0 && calendarNotes([e({ inUse: false, confirmedOn: '2026-01-01' })], '2026-11-15').length === 0);
+check('...but a malformed end date on a switched-off engine IS a problem (a typo must never hide)', checkCalendar([e({ inUse: false, endDate: '2026-02-30' })], '2026-11-15').length === 1);
+check('an engine in use with an old confirmation is still a problem', checkCalendar([e({ confirmedOn: '2026-01-01' })], '2026-11-15').length === 1);
 check('only Gemini is in use (no paid engines: the owner, 2026-11-15)', MODEL_CALENDAR.filter((m) => m.inUse).map((m) => m.engine).join() === 'Gemini');
 
 // the data agrees with the code that sends the ids
