@@ -5,6 +5,11 @@
  *
  * The generator is seeded and plain TypeScript (no library). Every failure prints the seed and the failing case; pass the seed back to
  * replay it:  PROP_SEED=12345 npx tsx test/properties.test.ts   (PROP_RUNS=n sets the cases per law; default 400).
+ *
+ * What these laws do NOT catch (said plainly): a single removal of one of the three NFC normalisations (the other two make it redundant);
+ * duplicate brand labels (the generator never makes them: the pipeline removes duplicates with dedupeMatchers first); and anything about how
+ * scorecards are chosen, worded or shown. The ORACLE laws recompute every number independently, so a wrong formula is caught; a wrong formula
+ * that the oracle shares with the code (both mistaken the same way) would not be.
  */
 import { analyseAnswer, buildBrandMatcher, buildScorecards, type BrandMatcher, type BrandQueryResult, type QueryEvidence } from '../src/analysis.ts';
 
@@ -39,6 +44,8 @@ function genMatchers(r: R): BrandMatcher[] {
   return out;
 }
 function genText(r: R, names: string[]): string {
+  // sometimes a LONG answer with a brand only at the very end (so prominence rounds to the 1 that a mention is never below)
+  if (names.length && r() < 0.15) { const parts: string[] = []; for (let i = 0; i < int(r, 150, 400); i++) parts.push(pick(r, FILLER.filter((f) => !names.some((nm) => f.includes(nm))))); return `${parts.join(' ')} ${pick(r, names)}`; }
   const n = int(r, 0, 12); const parts: string[] = [];
   for (let i = 0; i < n; i++) parts.push(r() < 0.35 && names.length ? pick(r, names) : pick(r, FILLER));
   return parts.join(r() < 0.5 ? ' ' : '\n');
@@ -96,6 +103,32 @@ property('LAW within one answer, ranks of the mentioned brands are 1..k in order
     const res = analyseAnswer(e, matchers); const mentioned = res.filter((x) => x.mentioned).sort((a, b) => a.firstMentionIndex - b.firstMentionIndex);
     if (mentioned.some((x, i) => x.rank !== i + 1)) return `ranks ${mentioned.map((x) => x.rank)} for "${e.answerText}"`;
     if (res.some((x) => !x.mentioned && x.rank !== null)) return 'an unmentioned brand has a rank';
+  }
+  return null;
+});
+property('LAW ORACLE every scorecard number equals an independent recomputation from the per-query results', ({ matchers, perQuery }) => {
+  const n = perQuery.length;
+  const totalMentions = perQuery.reduce((s, rs) => s + rs.filter((r) => r.mentioned).length, 0);
+  for (const c of buildScorecards(perQuery, matchers)) {
+    const rows = perQuery.map((rs) => rs.find((r) => r.brand === c.brand)).filter((r): r is BrandQueryResult => !!r);
+    const mentioned = rows.filter((r) => r.mentioned);
+    const want = {
+      timesMentioned: mentioned.length, timesFirst: rows.filter((r) => r.rank === 1).length,
+      visibility: n ? Math.round((mentioned.length / n) * 100) : 0, shareOfVoice: totalMentions ? Math.round((mentioned.length / totalMentions) * 100) : 0,
+      leaderShare: n ? Math.round((rows.filter((r) => r.rank === 1).length / n) * 100) : 0,
+      avgProminence: mentioned.length ? Math.round(mentioned.reduce((s, r) => s + r.prominence, 0) / mentioned.length) : 0,
+      citedAsSourceCount: rows.filter((r) => r.citedAsSource).length, citedOnlyCount: rows.filter((r) => r.citedOnly).length,
+    };
+    for (const [k, v] of Object.entries(want)) if ((c as any)[k] !== v) return `${c.brand}: ${k} is ${(c as any)[k]}, the recomputation says ${v}`;
+  }
+  return null;
+});
+property('LAW ORACLE prominence is the rounded share of the answer after the first mention, never below 1 for a mention (an answer of any length)', ({ matchers, evidence }) => {
+  for (const e of evidence) for (const r of analyseAnswer(e, matchers)) {
+    if (!r.mentioned) continue;
+    const text = e.answerText.normalize('NFC');
+    const want = Math.max(1, Math.round((1 - r.firstMentionIndex / text.length) * 100));
+    if (r.prominence !== want) return `${r.brand}: prominence ${r.prominence}, expected ${want}`;
   }
   return null;
 });

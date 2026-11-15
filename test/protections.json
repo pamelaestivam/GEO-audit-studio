@@ -1,0 +1,65 @@
+{
+  "comment": "The protections ledger (G2.8). Each guarantee the product makes, the one-line change to ONE file that breaks it, and the test file that must then FAIL. scripts/mutate.mjs applies each change in a temporary copy and runs only that test. A guarantee whose test still passes is undefended; a change that no longer applies means the ledger is stale. Add a row when a guarantee is added; never delete one to make the run green. Each row breaks ONE narrow thing (a single line): a defended row proves that line is defended, not the whole guarantee. For example, paid-engines-off breaks the decision function, not the server call sites that consult it; session-signature breaks the signature compare, not expiry or the route checks; number-guard breaks one filter line. Add rows for the other sides as they are thought of.",
+  "protections": [
+    {
+      "id": "paid-engines-off",
+      "guarantee": "A paid engine is queried only when ALLOW_PAID_ENGINES=1 (the $0 directive, D-1)",
+      "file": "src/spendGuard.ts",
+      "find": "return env.ALLOW_PAID_ENGINES === '1';",
+      "replace": "return true;",
+      "tests": [
+        "test/spendGuard.test.ts"
+      ]
+    },
+    {
+      "id": "session-signature",
+      "guarantee": "A session token with a wrong signature is refused",
+      "file": "src/auth.ts",
+      "find": "if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {",
+      "replace": "if (false) {",
+      "tests": [
+        "test/auth.test.ts"
+      ]
+    },
+    {
+      "id": "number-guard",
+      "guarantee": "A sentence of the written analysis that states a figure is dropped (the model is never the source of a number)",
+      "file": "src/reportGuard.ts",
+      "find": "const kept = sentences.filter((s) => !containsFigure(s, names));",
+      "replace": "const kept = sentences;",
+      "tests": [
+        "test/reportGuard.test.ts"
+      ]
+    },
+    {
+      "id": "probe-key-scrub",
+      "guarantee": "No API key reaches the engine probe's public log",
+      "file": "scripts/engine-probe.mjs",
+      "find": "  let s = String(text ?? '');\n  for (const k of keys) {",
+      "replace": "  let s = String(text ?? '');\n  return s;\n  for (const k of keys) {",
+      "tests": [
+        "test/engineProbe.test.ts"
+      ]
+    },
+    {
+      "id": "database-address-scrub",
+      "guarantee": "A database address with its password never appears in a message",
+      "file": "src/postgresStore.ts",
+      "find": "export function scrubDbText(text: string, raw?: string): string {",
+      "replace": "export function scrubDbText(text: string, raw?: string): string {\n  return text;",
+      "tests": [
+        "test/postgresConfig.test.ts"
+      ]
+    },
+    {
+      "id": "one-claim-per-step",
+      "guarantee": "A step whose lease is still live is busy: nobody else may take it, so one call is made, not two",
+      "file": "src/store.ts",
+      "find": "if (step.state === 'leased' && (step.leaseUntil ?? 0) > now) return { result: { outcome: 'busy', step }, index };",
+      "replace": "if (false) return { result: { outcome: 'busy', step }, index };",
+      "tests": [
+        "test/store.test.ts"
+      ]
+    }
+  ]
+}
