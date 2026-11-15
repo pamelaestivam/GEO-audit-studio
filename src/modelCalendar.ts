@@ -38,7 +38,7 @@ export const MODEL_CALENDAR: readonly ModelCalendarEntry[] = [
     confirmed: 'Listed (deprecations page, "Gemini 3 models" table: "gemini-3.6-flash | July 21, 2026 | No shutdown date announced"; the date shown is the release date, not a deprecation date). Pricing page, free tier, "Grounding with Google Search": "Not available" (footnote: can be tested in Google AI Studio); paid: 5,000 free search requests a month shared across Gemini 3 and newer models, then $14 per 1,000.',
     endDate: null,
     freeSearch: 'no',
-    unverified: 'A tools-section figure of "500 RPD free" was seen in a summary of the page and not verified against the page itself; the account-level quota is visible only in the owner\'s Google console.',
+    unverified: 'A "500 RPD free" figure on the same pricing page belongs to Gemini 2.5 Flash, not to this model, and is not used; the account-level quota is visible only in the owner\'s Google console.',
   },
   {
     engine: 'Claude',

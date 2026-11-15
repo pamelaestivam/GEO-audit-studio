@@ -46,9 +46,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
       - name: Open, update or close the one tracking issue
+        if: always()
         run: |
           set -e
-          code="${{ steps.calendar.outputs.code }}"
+          code="${{ steps.calendar.outputs.code || 1 }}"   # a step that never ran (a failed install) counts as due
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           gh label create model-calendar --color FBCA04 --description "Opened by the model-calendar workflow" 2>/dev/null || true
           number=$(gh issue list --state open --label model-calendar --limit 1 --json number --jq '.[0].number')
