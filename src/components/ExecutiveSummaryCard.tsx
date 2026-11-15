@@ -14,6 +14,7 @@ import {
   lowSampleReason,
   engineModelsLine,
   MEASUREMENT_DISCLOSURE,
+  MEASURED_THROUGH_API,
   visibilityBasis,
   citedOnlyLine,
   CITED_ONLY_EXPLAINER,
@@ -77,6 +78,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
               {audit.degradedReason ||
                 'No evidence could be collected from the answer engines, so this report contains placeholder values rather than findings about this brand.'}
             </p>
+            {audit.degradedHint && <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">{audit.degradedHint}</p>}
           </div>
         </div>
       )}
@@ -221,7 +223,7 @@ export const ExecutiveSummaryCard: React.FC<ExecutiveSummaryCardProps> = ({ audi
                 <summary className="cursor-pointer text-slate-300 underline underline-offset-2">How this was measured</summary>
                 <p className="mt-1">{MEASUREMENT_DISCLOSURE}</p>
                 {rangeText && <p className="mt-1">{rangeText}</p>}
-                {modelsLine && <p className="mt-1">Models requested: {modelsLine}.</p>}
+                {modelsLine && <p className="mt-1">Models requested: {modelsLine}. {MEASURED_THROUGH_API}</p>}
                 {audit.answersCapturedFrom && (
                   <p className="mt-1">Answers captured {new Date(audit.answersCapturedFrom).toUTCString()}.</p>
                 )}

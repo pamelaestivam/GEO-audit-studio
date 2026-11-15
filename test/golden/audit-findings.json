@@ -84,7 +84,7 @@
   "measuredEngines": [
     "Gemini"
   ],
-  "metricVersion": 2,
+  "metricVersion": 3,
   "narrativeAvailable": true,
   "notCounted": [
     {

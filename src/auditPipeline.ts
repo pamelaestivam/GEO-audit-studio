@@ -241,7 +241,7 @@ export function assembleReport(input: {
           engine: ev.engine,
           status: 'retrieval_failed',
           position: null,
-          excerpt: `${endSentence(`No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}`)} This query was excluded from all metrics.`,
+          excerpt: `${ev.errorKind === 'not_searched' && ev.error ? endSentence(ev.error) : endSentence(`No answer captured from ${ev.engine}${ev.error ? `: ${ev.error}` : ''}`)} This query was excluded from all metrics.`,
           citations: [],
         };
         continue;
@@ -444,7 +444,7 @@ export function assembleReport(input: {
     observationsMentioned: clientScore.timesMentioned,
     // Answers that cite the brand's own website without naming it: its own number, never blended into the headline.
     observationsCitedOnly: clientScore.citedOnlyCount,
-    metricVersion: 2,
+    metricVersion: 3,
     enginesRequested: engines,
   };
 

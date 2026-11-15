@@ -166,6 +166,8 @@ export interface AuditReport {
   /** True when the audit could not collect evidence; metrics are not measurements. */
   degraded?: boolean;
   degradedReason?: string;
+  /** Said under the reason when a failed audit ran into Gemini's quota or rate limit (never for the operator's own cap). */
+  degradedHint?: string;
   observationsAttempted?: number;
   observationsWithEvidence?: number;
   /** Of observationsWithEvidence, how many named the brand (numerator of geoVisibilityScore). */

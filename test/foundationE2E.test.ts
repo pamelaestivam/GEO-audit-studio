@@ -336,12 +336,12 @@ async function main() {
     const ready = await (await rawFetch(`${A3.base}/api/audit/readiness`, { headers: authed(alice.body.token) })).json();
     check('readiness passes on a healthy deployment', ready.ok, true);
     const byName = Object.fromEntries(ready.checks.map((c: any) => [c.name, c]));
-    check('...it made one real Gemini call', fake.hits() - hitsBefore, 1);
+    check('...it made two real Gemini calls: the plain one and the one that searches', fake.hits() - hitsBefore, 2);
     check('...and says gemini was verified', [byName.gemini.ok, byName.gemini.verified], [true, true]);
     check('...storage is verified durable', [byName.storage.ok, byName.storage.verified], [true, true]);
     check('...sign-in is verified configured', byName['sign-in'].ok, true);
     const again = await (await rawFetch(`${A3.base}/api/audit/readiness`, { headers: authed(alice.body.token) })).json();
-    check('a repeat within minutes is served from cache, costing no quota', [again.cached, fake.hits() - hitsBefore], [true, 1]);
+    check('a repeat within minutes is served from cache, costing no quota', [again.cached, fake.hits() - hitsBefore], [true, 2]);
     check('readiness needs a session', (await rawFetch(`${A3.base}/api/audit/readiness`)).status, 401);
 
     // --- the post-deploy smoke script, run for real against a real server
@@ -534,7 +534,7 @@ async function main() {
       const before = fake.hits();
       const all = await Promise.all(Array.from({ length: 15 }, () => rawFetch(`${RD.base}/api/audit/readiness`, { headers: authed(t) }).then((r) => r.json())));
       check('15 simultaneous cold readiness requests all answer', all.every((r) => Array.isArray(r.checks)), true);
-      check('...and made ONE real Gemini call between them, not one each', fake.hits() - before, 1);
+      check('...and made ONE readiness check (two real Gemini calls) between them, not one each', fake.hits() - before, 2);
     }
 
     // --- a restart or deploy must not cost anyone a second allowance: the interrupted audit is resumed and counted ONCE

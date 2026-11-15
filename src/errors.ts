@@ -10,7 +10,7 @@ export interface ReadableError {
   /** One sentence, no JSON, safe to render. */
   message: string;
   /** Machine-readable cause for tests and conditional UI. */
-  kind: 'quota' | 'auth' | 'timeout' | 'rate_limit' | 'network' | 'unknown';
+  kind: 'quota' | 'auth' | 'timeout' | 'rate_limit' | 'network' | 'not_searched' | 'unknown';
   /** Seconds the provider asked us to wait, when it said so. */
   retryAfterSeconds?: number;
   /** True when the quota exhausted is a daily cap rather than a per-minute one. */
@@ -203,6 +203,22 @@ function modelEnvFor(provider: string): string {
  * joining a message to the next sentence never produces a run-on ("... CAP Visibility ...") or a double
  * stop ("..CAP.. This query"). Messages come from several places and not all end the same way.
  */
+/**
+ * Gemini returned text but no web search ran (no search query and no grounding chunk), so the answer is not counted: a
+ * from-memory answer must never be scored as "the engine searched and did not name you". True whether the model chose not
+ * to search or could not. Carried as errorKind 'not_searched'; it is the whole reason, never wrapped in "No answer was
+ * captured", because an answer WAS captured.
+ */
+export const NOT_SEARCHED_MESSAGE =
+  'Gemini answered without searching the web, so the answer was not counted. Run it again; if it keeps happening, the model is not searching for this question.';
+
+/**
+ * Said under the reason of a failed audit that ran into Gemini's quota or rate limit (never for the operator's own call cap):
+ * an allowance of zero looks exactly like a used-up one, and this is the only hint that costs no extra call.
+ */
+export const DEGRADED_HINT =
+  'If this happens on every audit, the model this server uses may have no free web search on this key. The rate-limit page in Google AI Studio shows the search allowance for the model.';
+
 export function endSentence(message: string): string {
   const m = String(message ?? '').trim();
   if (m === '') return m;
@@ -366,7 +382,7 @@ export function summariseFailures(errors: unknown[], provider = 'The answer engi
       ? (e as ReadableError)
       : describeProviderError(e, provider)
   );
-  const priority: ReadableError['kind'][] = ['auth', 'quota', 'rate_limit', 'network', 'timeout', 'unknown'];
+  const priority: ReadableError['kind'][] = ['auth', 'quota', 'rate_limit', 'network', 'timeout', 'not_searched', 'unknown'];
   for (const kind of priority) {
     const hit = described.find((d) => d.kind === kind);
     if (hit) return hit;

@@ -24,6 +24,13 @@ export interface QueryEvidence {
   error?: string;
   /** Machine-readable cause of `error`, so failures can be summarised without re-parsing prose. */
   errorKind?: string;
+  /**
+   * Gemini only: whether a web search ran (a search query or a grounding chunk came back). Absent for the other engines:
+   * unknown, not false. Stays on the evidence inside the server; it is not copied into the report.
+   */
+  searched?: boolean;
+  /** True when the failure was the operator's own daily call cap, not the provider's. */
+  capReached?: boolean;
 }
 
 export interface BrandMatcher {

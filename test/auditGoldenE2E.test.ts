@@ -153,7 +153,7 @@ async function main() {
           report.observationsMentioned === 1 &&
           report.observationsCitedOnly === 1 &&
           report.geoVisibilityScore === 50 &&
-          report.metricVersion === 2 &&
+          report.metricVersion === 3 &&
           report.queriesTested.map((q: any) => [q.engines.Gemini.status === 'omitted', q.engines.Gemini.citedOnly === true]).flat().join() === 'true,true,false,false' &&
           /In 1 more, the website of Poke House was cited as a source but the name "Poke House" as typed did not appear in the answer text; that is not counted as visibility\./.test(report.executiveSummary);
         if (ok) pass('cited-only: visibility counts the named answer only (50%), the cited-only answer is its own number, and the summary says so');

@@ -164,6 +164,7 @@ async function main() {
     assert('the disclosure says it is the developer API, once, not the consumer apps', /not what people see in the ChatGPT, Gemini, Claude or Perplexity apps/.test(how) && /once/.test(how), how);
     assert('...states what the range is and is not', /plausibly lie between 34%-100%/.test(how) && /not fully independent/.test(how), how);
     assert('...names the model requested and when the answers were captured', /Models requested: Gemini \(gemini-3\.6-flash\)/.test(how) && /Answers captured .* GMT/.test(how), how);
+    assert('...and says the figures are measured through each engine\'s API, which can differ from its app', /Measured through each engine's API, which can differ from what its app shows\./.test(how), how);
     await page.click('summary:has-text("How this was measured")'); // close it again so later steps see only their own <details>
     const ringClass = (await page.locator('main .border-4').first().getAttribute('class')) || '';
     assert('a 2-answer score has a neutral ring, no colour verdict', /text-slate-400/.test(ringClass) && !/emerald|amber|rose/.test(ringClass), ringClass);

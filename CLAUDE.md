@@ -231,7 +231,7 @@ project with no billing account (`src/spendGuard.ts`).
 
 | Engine | Env var | Notes |
 |---|---|---|
-| Gemini | `GEMINI_API_KEY` | Google Search grounding |
+| Gemini | `GEMINI_API_KEY` | Google Search grounding; an answer with no search behind it is not counted (`errorKind: 'not_searched'`, `metricVersion` 3). A free key may have no search on newer models (`TECH_DEBT.md` 2.19); readiness line `gemini search` asks |
 | ChatGPT | `OPENAI_API_KEY` | Responses API + `web_search` tool |
 | Perplexity | `PERPLEXITY_API_KEY` | `sonar` models, search is native |
 | Claude | `ANTHROPIC_API_KEY` | Messages API + `web_search` server tool |
@@ -280,6 +280,11 @@ before theorising about the quota.
 
 **What the app itself now does about this**, so the next session doesn't
 have to re-derive it:
+- **A refused search is not a used-up quota, and an unsearched answer is not a measurement (`TECH_DEBT.md` 2.19, narrowed).** The
+  readiness check has a second Gemini call, `gemini search`, that asks what an audit asks (the search tool and the audit's own
+  instruction); it is made OUTSIDE `generateContentWithRetry`, so it is paced, counted and capped like any call but can never trip the
+  breaker. A readiness run therefore makes two real Gemini calls. A failed audit that ran into the quota or rate limit carries
+  `degradedHint` (never for the operator's own cap). The audit's quota sentence itself is unchanged.
 - `GET /api/audit/status` reports whether the quota is currently known to be
   exhausted (from the circuit breaker's own memory of the last failure), a
   human-readable reason, and a reset time. This is *inferred from failures
@@ -359,6 +364,11 @@ have to be rediscovered from scratch, not so it can be skipped.
   the reply cut at 4,000 characters), the call budget (13 calls at 2 questions, 17 at 3; a bigger run or a bad `--questions` is refused before
   any call), SKIP lines for a missing key, and that no key, `projects/<digits>` or ten-digit number reaches the public log although the fake
   failures carry them (no network, no `dist/` needed)
+- `npx tsx test/searchedAnswer.test.ts` — the searched-or-not rule on reply shapes and the exact not-searched and hint sentences (pure)
+- `npx tsx test/unsearchedE2E.test.ts` — the real built server and the fake Gemini (grounding only when the request carries the search tool;
+  modes `unsearched_answer`, `unsearched_second`, `search_refused`, `search_500`): an unsearched answer is not counted (1 of 2, the same
+  calls as a searched audit), all unsearched is a failed audit with 1 call, a refused search fails as before (baseline measured on main) plus
+  the hint, the cap carries no hint, and each readiness case (two calls, breaker not tripped by a refused search, cached = 0 calls) (needs a current `dist/`)
 - `npx tsx test/testHarness.test.ts` — a guard on the tests themselves: no test may `return` early after a failed check without setting an exit status (that printed FAIL and exited 0, so the suite stayed green without having run the test; source scan, checked against fixtures of each shape)
 - `npx tsx test/auditSteps.test.ts` — pure checks of the step plan, which answers the steps produced, and the
   quota-breaker rule (including the several-engine cases no end-to-end test can reach)

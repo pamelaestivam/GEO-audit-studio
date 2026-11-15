@@ -245,6 +245,9 @@ export function lowSampleReason(audit: Pick<AuditReport, 'observationsWithEviden
  * consumer app: the apps can use other models, personalise, and apply location,
  * and the same question can return a different answer on another run.
  */
+/** Said once wherever the report names the engine models (the summary card and the export). */
+export const MEASURED_THROUGH_API = "Measured through each engine's API, which can differ from what its app shows.";
+
 export const MEASUREMENT_DISCLOSURE =
   'Measured by sending each question to the engine\'s developer API with web search switched on, once, at the time shown. This is not what people see in the ChatGPT, Gemini, Claude or Perplexity apps, which can use other models and personalise by account and location, and a repeat run can name different brands.';
 
